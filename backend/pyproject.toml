@@ -1,0 +1,100 @@
+[project]
+name = "world-skills"
+version = "0.1.0"
+description = "A system for managing worldSkills competition"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "fastapi[standard]>=0.139.2",
+    "passlib[bcrypt]>=1.7.4",
+    "psycopg2-binary>=2.9.12",
+    "pydantic-settings>=2.14.2",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.32",
+    "sqlalchemy>=2.0.51",
+]
+
+[dependency-groups]
+dev = [
+    {include-group = "lint"},
+    {include-group = "test"},
+    "alembic>=1.18.5",
+    "alembic-postgresql-enum>=1.10.0",
+    "alembic-utils>=0.8.8",
+    "pre-commit>=4.6.0",
+]
+lint = [
+    "black>=26.5.1",
+    "flake8>=7.3.0",
+    "isort>=8.0.1",
+    "mypy>=2.3.0",
+    "ruff>=0.15.22",
+]
+test = [
+    "coverage>=7.15.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-mock>=3.15.1",
+    "pytest-postgresql>=8.1.0",
+]
+
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+exclude = ["venv", ".venv", "alembic"]
+
+[tool.alembic]
+script_location = "alembic"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+exclude = [
+"alembic",
+  "tools",
+  "test",
+  "bkp"
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG001", # unused arguments in functions
+    "T201",   # print statements are not allowed
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "W191",  # indentation contains tabs
+    "B904",  # Allow raising exceptions without from e, for HTTPException
+]
+
+[tool.ruff.lint.pyupgrade]
+# Preserve types, even if a file imports `from __future__ import annotations`.
+keep-runtime-typing = true
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401", "F403"]
+"app/main.py" = ["F403", "E402", "ARG001"]
+
+[tool.coverage.run]
+source = ["app"]
+dynamic_context = "test_function"
+
+[tool.coverage.report]
+show_missing = true
+sort = "-Cover"
+
+[tool.coverage.html]
+show_contexts = true
