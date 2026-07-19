@@ -493,6 +493,32 @@ class Score(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class ModerationFlag(Base):
+    """Flagged judgement criterion awaiting / after moderation (US-ASM-02)."""
+
+    __tablename__ = "moderation_flags"
+    __table_args__ = (
+        UniqueConstraint("submission_id", "criterion_id", name="uq_moderation_flags_submission_criterion"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_id = Column(
+        UUID(as_uuid=True), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    criterion_id = Column(String(64), nullable=False)
+    spread = Column(Integer, nullable=True)
+    raw_marks = Column(JSON, nullable=False, default=list)
+    flagged = Column(Boolean, default=True, nullable=False)
+    # OPEN | NEEDS_SECOND_JUDGE | RESOLVED
+    state = Column(String(32), nullable=False, default="OPEN")
+    method = Column(String(32), nullable=True)  # STANDARDISE | MANUAL
+    standardised_value = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    moderator_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+
 class Stage(Base):
     __tablename__ = "stages"
     __table_args__ = (

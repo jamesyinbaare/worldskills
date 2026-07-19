@@ -131,23 +131,32 @@ def compute_assessor_total(marks: list[Score], penalties: list[Score]) -> int:
 
 
 def compute_submission_total(all_scores: list[Score]) -> int:
-    """Aggregate: measurement average across assessors + judgement average across judges − penalties."""
-    # Group criterion marks
-    by_crit: dict[str, list[int]] = {}
+    """Aggregate criterion totals − penalties.
+
+    Measurement: average of raw across assessors.
+    Judgement: if any standardised value is set, use that single value (raw preserved on rows);
+    otherwise average raw marks across judges.
+    """
+    by_crit: dict[str, list[Score]] = {}
     penalty_total = 0
     for s in all_scores:
-        if s.status != "FINAL" and s.score_type != "PENALTY":
-            # Include DRAFT in running total for transparency when any marks exist
-            pass
         if s.score_type == "PENALTY":
-            penalty_total += int(s.penalty or s.raw or 0)
+            penalty_total += int(s.penalty or abs(s.raw or 0))
             continue
-        if s.raw is None:
+        if s.score_type not in {"MEASUREMENT", "JUDGEMENT"}:
             continue
-        by_crit.setdefault(s.criterion_id, []).append(int(s.raw))
+        by_crit.setdefault(s.criterion_id, []).append(s)
+
     total = 0
-    for values in by_crit.values():
-        total += round(sum(values) / len(values))
+    for rows in by_crit.values():
+        standardised_vals = [int(r.standardised) for r in rows if r.standardised is not None]
+        if standardised_vals:
+            # Spec: standardised is additive; all judge rows get the same standardised value
+            total += standardised_vals[0]
+            continue
+        raws = [int(r.raw) for r in rows if r.raw is not None]
+        if raws:
+            total += round(sum(raws) / len(raws))
     return total - penalty_total
 
 

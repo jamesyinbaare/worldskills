@@ -11,12 +11,15 @@ from app.dependencies.database import DBSessionDep
 from app.models import User
 from app.schemas.assessment import AssessmentViewOut, ScorePut, ScorePutOut
 from app.schemas.assignments import AssessorQueueOut
+from app.schemas.moderation import ModerationAnalyseOut, ModerationApplyIn, ModerationApplyOut
 from app.services import assessment as assessment_service
 from app.services import assignments as assignment_service
+from app.services import moderation as moderation_service
 
 router = APIRouter(tags=["assessment"])
 
 ScorerDep = Annotated[User, Depends(require_capability(Capability.SCORE_SUBMISSION))]
+ModeratorDep = Annotated[User, Depends(require_capability(Capability.MODERATE_SCORE))]
 
 
 @router.get("/assessors/{expert_id}/queue", response_model=AssessorQueueOut)
@@ -59,5 +62,35 @@ async def put_scores(
 ) -> ScorePutOut:
     ip, ua = client_meta(request)
     return await assessment_service.put_scores(
+        session, submission_id, payload, actor=actor, ip=ip, user_agent=ua
+    )
+
+
+@router.post(
+    "/submissions/{submission_id}/moderation:analyse",
+    response_model=ModerationAnalyseOut,
+)
+async def analyse_moderation(
+    submission_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: ModeratorDep,
+    request: Request,
+) -> ModerationAnalyseOut:
+    ip, ua = client_meta(request)
+    return await moderation_service.analyse_moderation(
+        session, submission_id, actor=actor, ip=ip, user_agent=ua
+    )
+
+
+@router.post("/submissions/{submission_id}/moderation", response_model=ModerationApplyOut)
+async def apply_moderation(
+    submission_id: uuid.UUID,
+    payload: ModerationApplyIn,
+    session: DBSessionDep,
+    actor: ModeratorDep,
+    request: Request,
+) -> ModerationApplyOut:
+    ip, ua = client_meta(request)
+    return await moderation_service.apply_moderation(
         session, submission_id, payload, actor=actor, ip=ip, user_agent=ua
     )
