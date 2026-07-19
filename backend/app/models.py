@@ -424,6 +424,9 @@ class Score(Base):
 
 class Stage(Base):
     __tablename__ = "stages"
+    __table_args__ = (
+        UniqueConstraint("skill_id", "order", name="uq_stages_skill_id_order"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -433,9 +436,14 @@ class Stage(Base):
     stage_type = Column(String(64), nullable=False, default="GENERIC")
     opens_at = Column(DateTime, nullable=True)
     closes_at = Column(DateTime, nullable=True)
+    # Rollup of quota_by_zone totals (activation / legacy clone compat).
     quota = Column(Integer, nullable=True)
+    # Per-zone advancement quotas: { "<zoneUuid>": int >= 0 }
+    quota_by_zone = Column(JSON, nullable=True)
     min_score = Column(Integer, nullable=True)
     scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
+    # Branch map: {"default": <order>, "byFamily": {"practical_trades": <order>}}
+    branch = Column(JSON, nullable=True)
 
     cycle = relationship("Cycle", back_populates="stages")
 

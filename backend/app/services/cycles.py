@@ -219,8 +219,10 @@ async def clone_cycle(
             opens_at=stage.opens_at,
             closes_at=stage.closes_at,
             quota=stage.quota,
+            quota_by_zone=dict(stage.quota_by_zone) if stage.quota_by_zone else None,
             min_score=stage.min_score,
             scheme_id=scheme_map[stage.scheme_id].id if stage.scheme_id and stage.scheme_id in scheme_map else None,
+            branch=dict(stage.branch) if stage.branch else None,
         )
         session.add(cloned)
 
@@ -286,7 +288,10 @@ async def validate_cycle(session: AsyncSession, cycle_id: uuid.UUID) -> tuple[bo
                     link=f"/admin/cycles/{cycle_id}/stages/{stage.id}",
                 )
             )
-        if stage.quota is None:
+        effective_quota = stage.quota
+        if effective_quota is None and stage.quota_by_zone:
+            effective_quota = sum(int(v) for v in stage.quota_by_zone.values())
+        if effective_quota is None:
             issues.append(
                 ValidationIssue(
                     code="CONFIG_INCOMPLETE",
@@ -304,14 +309,20 @@ async def validate_cycle(session: AsyncSession, cycle_id: uuid.UUID) -> tuple[bo
         ordered = sorted(stages, key=lambda s: s.order)
         for i in range(1, len(ordered)):
             prior, curr = ordered[i - 1], ordered[i]
-            if prior.quota is not None and curr.quota is not None and curr.quota > prior.quota:
+            prior_q = prior.quota
+            if prior_q is None and prior.quota_by_zone:
+                prior_q = sum(int(v) for v in prior.quota_by_zone.values())
+            curr_q = curr.quota
+            if curr_q is None and curr.quota_by_zone:
+                curr_q = sum(int(v) for v in curr.quota_by_zone.values())
+            if prior_q is not None and curr_q is not None and curr_q > prior_q:
                 issues.append(
                     ValidationIssue(
                         code="QUOTA_INCONSISTENT",
                         entity=str(curr.id),
                         message=(
-                            f"Stage '{curr.name}' quota ({curr.quota}) exceeds "
-                            f"upstream '{prior.name}' quota ({prior.quota})"
+                            f"Stage '{curr.name}' quota ({curr_q}) exceeds "
+                            f"upstream '{prior.name}' quota ({prior_q})"
                         ),
                         link=f"/admin/cycles/{cycle_id}/stages/{curr.id}",
                     )

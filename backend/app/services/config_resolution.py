@@ -54,6 +54,36 @@ class CycleConfig:
             raise ConfigIncompleteError(f"Age rule missing for skill {skill_id}", entity=str(skill_id))
         return rule
 
+    def stages_for_skill(self, skill_id: uuid.UUID) -> list[Stage]:
+        return sorted(
+            [s for s in self.stages if s.skill_id == skill_id],
+            key=lambda s: s.order,
+        )
+
+    def stage(self, skill_id: uuid.UUID, order: int) -> Stage:
+        for s in self.stages_for_skill(skill_id):
+            if s.order == order:
+                return s
+        raise ConfigIncompleteError(
+            f"Stage order {order} missing for skill {skill_id}",
+            entity=str(skill_id),
+        )
+
+    def quota_by_zone(self, skill_id: uuid.UUID, order: int) -> dict[str, int]:
+        stage = self.stage(skill_id, order)
+        if stage.quota_by_zone:
+            return {str(k): int(v) for k, v in stage.quota_by_zone.items()}
+        if stage.quota is not None:
+            # Legacy scalar quota — fail closed for per-zone resolution
+            raise ConfigIncompleteError(
+                f"Stage order {order} has no quotaByZone for skill {skill_id}",
+                entity=str(stage.id),
+            )
+        raise ConfigIncompleteError(
+            f"Stage order {order} has no quota for skill {skill_id}",
+            entity=str(stage.id),
+        )
+
 
 async def load_cycle_config(session: AsyncSession, cycle_id: uuid.UUID) -> CycleConfig:
     stmt = (
