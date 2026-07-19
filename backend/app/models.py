@@ -163,6 +163,13 @@ class MarkingScheme(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(120), nullable=False)
+    # US-ASM-01 rubric config — fail closed when scoring if missing criteria
+    # {
+    #   "blindMode": true,
+    #   "criteria":[{"id":"c1","name":"Accuracy","type":"MEASUREMENT","max":15}],
+    #   "penalties":[{"code":"MINOR_NON_COMPLIANCE","deduction":2,"cap":5}]
+    # }
+    rubric = Column(JSON, nullable=True)
 
     cycle = relationship("Cycle", back_populates="marking_schemes")
 
@@ -421,6 +428,9 @@ class Submission(Base):
     timed_expires_at = Column(DateTime, nullable=True)
     upload_locked = Column(Boolean, default=False, nullable=False)
     receipt = Column(String(64), nullable=True)
+    # Blind assessment anonymised code (US-ASM-01)
+    anon_code = Column(String(32), nullable=True, index=True)
+    score_total = Column(Integer, nullable=True)
 
 
 class Artefact(Base):
@@ -451,9 +461,18 @@ class Artefact(Base):
 
 
 class Score(Base):
-    """Minimal score row for segregation-of-duties checks (full assessment later)."""
+    """Per-criterion (or penalty) mark for a submission (US-ASM-01)."""
 
     __tablename__ = "scores"
+    __table_args__ = (
+        UniqueConstraint(
+            "submission_id",
+            "criterion_id",
+            "assessor_id",
+            "score_type",
+            name="uq_scores_submission_criterion_assessor_type",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     submission_id = Column(
@@ -461,7 +480,17 @@ class Score(Base):
     )
     assessor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     criterion_id = Column(String(64), nullable=False, default="overall")
+    # MEASUREMENT | JUDGEMENT | PENALTY
+    score_type = Column(String(32), nullable=False, default="MEASUREMENT")
     raw = Column(Integer, nullable=True)
+    standardised = Column(Integer, nullable=True)
+    penalty = Column(Integer, nullable=True)
+    comment = Column(Text, nullable=True)
+    judge_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # DRAFT | FINAL
+    status = Column(String(32), nullable=False, default="DRAFT")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class Stage(Base):

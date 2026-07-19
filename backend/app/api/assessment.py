@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Request
+
+from app.core.rbac import Capability
+from app.dependencies.auth import CurrentUserDep, client_meta, require_capability
+from app.dependencies.database import DBSessionDep
+from app.models import User
+from app.schemas.assessment import AssessmentViewOut, ScorePut, ScorePutOut
+from app.schemas.assignments import AssessorQueueOut
+from app.services import assessment as assessment_service
+from app.services import assignments as assignment_service
+
+router = APIRouter(tags=["assessment"])
+
+ScorerDep = Annotated[User, Depends(require_capability(Capability.SCORE_SUBMISSION))]
+
+
+@router.get("/assessors/{expert_id}/queue", response_model=AssessorQueueOut)
+async def get_assessor_queue_spec(
+    expert_id: uuid.UUID,
+    session: DBSessionDep,
+    user: CurrentUserDep,
+    cycle_id: uuid.UUID = Query(..., alias="cycleId"),
+) -> AssessorQueueOut:
+    """US-ASM-01 queue — experts may fetch their own; admins may fetch any."""
+    from app.core.rbac import is_admin_role
+
+    if user.id != expert_id and not is_admin_role(user.role):
+        from app.core.errors import AppError
+
+        raise AppError("FORBIDDEN", "Cannot view another assessor's queue", status_code=403)
+    return await assignment_service.get_assessor_queue(session, cycle_id, expert_id)
+
+
+@router.get("/submissions/{submission_id}/assessment", response_model=AssessmentViewOut)
+async def get_assessment(
+    submission_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: ScorerDep,
+    request: Request,
+) -> AssessmentViewOut:
+    ip, ua = client_meta(request)
+    return await assessment_service.get_assessment_view(
+        session, submission_id, actor=actor, ip=ip, user_agent=ua
+    )
+
+
+@router.put("/submissions/{submission_id}/scores", response_model=ScorePutOut)
+async def put_scores(
+    submission_id: uuid.UUID,
+    payload: ScorePut,
+    session: DBSessionDep,
+    actor: ScorerDep,
+    request: Request,
+) -> ScorePutOut:
+    ip, ua = client_meta(request)
+    return await assessment_service.put_scores(
+        session, submission_id, payload, actor=actor, ip=ip, user_agent=ua
+    )

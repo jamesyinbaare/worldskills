@@ -30,9 +30,12 @@ class DelegateIn(BaseModel):
 
 class QueueSubmissionOut(BaseModel):
     submissionId: UUID
-    competitorId: UUID
+    competitorId: UUID | None = None
+    anonCode: str | None = None
     state: str
 
 
 class AssessorQueueOut(BaseModel):
     submissions: list[QueueSubmissionOut]
+    # Spec alias US-ASM-01
+    items: list[QueueSubmissionOut] | None = None

@@ -249,6 +249,8 @@ async def get_assessor_queue(
     cycle_id: uuid.UUID,
     expert_id: uuid.UUID,
 ) -> AssessorQueueOut:
+    from app.models import MarkingScheme, Skill, Stage
+
     assignments = (
         await session.execute(
             select(ExpertAssignment).where(
@@ -258,7 +260,7 @@ async def get_assessor_queue(
         )
     ).scalars().all()
     if not assignments:
-        return AssessorQueueOut(submissions=[])
+        return AssessorQueueOut(submissions=[], items=[])
 
     expert = await session.get(User, expert_id)
     expert_institution = expert.institution_id if expert else None
@@ -267,6 +269,13 @@ async def get_assessor_queue(
     submissions_out: list[QueueSubmissionOut] = []
 
     for skill_id, zone_id in skill_zone_pairs:
+        skill = await session.get(Skill, skill_id)
+        blind = False
+        if skill and skill.scheme_id:
+            scheme = await session.get(MarkingScheme, skill.scheme_id)
+            if scheme and isinstance(scheme.rubric, dict):
+                blind = bool(scheme.rubric.get("blindMode", False))
+
         comps = (
             await session.execute(
                 select(Competitor).where(
@@ -287,19 +296,44 @@ async def get_assessor_queue(
                     select(Submission).where(
                         Submission.cycle_id == cycle_id,
                         Submission.competitor_id == comp.id,
+                        Submission.state.in_(["ACCEPTED", "LATE"]),
                     )
                 )
             ).scalars().all()
+            # Fall back: include any submission when no ACCEPTED yet (SEC-01 stubs often set ACCEPTED)
+            if not subs:
+                subs = (
+                    await session.execute(
+                        select(Submission).where(
+                            Submission.cycle_id == cycle_id,
+                            Submission.competitor_id == comp.id,
+                        )
+                    )
+                ).scalars().all()
             for sub in subs:
+                anon = sub.anon_code
+                if not anon:
+                    anon = f"A-{(comp.ref_no or str(comp.id))[-8:].upper()}"
+                    sub.anon_code = anon
+                # Prefer stage scheme blind flag if stage linked
+                item_blind = blind
+                if sub.stage_id:
+                    stage = await session.get(Stage, sub.stage_id)
+                    if stage and stage.scheme_id:
+                        stage_scheme = await session.get(MarkingScheme, stage.scheme_id)
+                        if stage_scheme and isinstance(stage_scheme.rubric, dict):
+                            item_blind = bool(stage_scheme.rubric.get("blindMode", False))
                 submissions_out.append(
                     QueueSubmissionOut(
                         submissionId=sub.id,
-                        competitorId=comp.id,
+                        competitorId=None if item_blind else comp.id,
+                        anonCode=anon,
                         state=sub.state,
                     )
                 )
 
-    return AssessorQueueOut(submissions=submissions_out)
+    await session.flush()
+    return AssessorQueueOut(submissions=submissions_out, items=submissions_out)
 
 
 async def assert_can_score(
