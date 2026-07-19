@@ -16,6 +16,7 @@ from app.api import assignments as assignments_api
 from app.api import auth as auth_api
 from app.api import consent as consent_api
 from app.api import cycles as cycles_api
+from app.api import eligibility as eligibility_api
 from app.api import nominations as nominations_api
 from app.api import registrations as registrations_api
 from app.api import skills as skills_api
@@ -176,6 +177,7 @@ app.include_router(assignments_api.router)
 app.include_router(nominations_api.router)
 app.include_router(registrations_api.router)
 app.include_router(consent_api.router)
+app.include_router(eligibility_api.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

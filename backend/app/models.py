@@ -142,6 +142,7 @@ class AgeRule(Base):
     name = Column(String(120), nullable=False)
     max_age = Column(Integer, nullable=False)
     reference_date = Column(Date, nullable=True)
+    open_category_enabled = Column(Boolean, default=False, nullable=False)
 
     cycle = relationship("Cycle", back_populates="age_rules")
 
@@ -180,6 +181,8 @@ class Skill(Base):
     scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
     capacity = Column(Integer, nullable=True)
     active = Column(Boolean, default=True, nullable=False)
+    # Extra eligibility checks beyond age, e.g. {"requireNationality":["GH"],"requireEnrolmentAttestation":true}
+    eligibility_rules = Column(JSON, nullable=True)
 
     cycle = relationship("Cycle", back_populates="skills")
 
@@ -250,6 +253,15 @@ class Competitor(Base):
     consent_public_at = Column(DateTime, nullable=True)
     consent_public_by = Column(String(255), nullable=True)
     public_profile_visible = Column(Boolean, default=False, nullable=False)
+    # Eligibility (US-ELG-01)
+    nationality = Column(String(8), nullable=True)
+    enrolment_attested = Column(Boolean, default=False, nullable=False)
+    eligibility_status = Column(String(32), nullable=True)  # ELIGIBLE | INELIGIBLE | OPEN_CATEGORY
+    eligibility_failed_rules = Column(JSON, nullable=False, default=list)
+    eligibility_category = Column(String(32), nullable=True)  # COMPETITIVE | OPEN
+    eligibility_override_reason = Column(Text, nullable=True)
+    eligibility_override_at = Column(DateTime, nullable=True)
+    eligibility_override_by = Column(UUID(as_uuid=True), nullable=True)
 
 
 class ConsentRequest(Base):
