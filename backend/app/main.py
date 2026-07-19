@@ -14,8 +14,10 @@ from starlette.types import ASGIApp
 
 from app.api import assignments as assignments_api
 from app.api import auth as auth_api
+from app.api import consent as consent_api
 from app.api import cycles as cycles_api
 from app.api import nominations as nominations_api
+from app.api import registrations as registrations_api
 from app.api import skills as skills_api
 from app.config import logging_settings, settings
 from app.core.errors import (
@@ -172,6 +174,8 @@ app.include_router(cycles_api.router)
 app.include_router(skills_api.router)
 app.include_router(assignments_api.router)
 app.include_router(nominations_api.router)
+app.include_router(registrations_api.router)
+app.include_router(consent_api.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

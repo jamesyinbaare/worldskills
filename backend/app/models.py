@@ -215,9 +215,10 @@ class ExpertAssignment(Base):
 
 
 class Competitor(Base):
-    """Minimal competitor for COI / queue filtering / nominations (full registration later)."""
+    """Competitor record — nomination shell or full registration (US-REG-01)."""
 
     __tablename__ = "competitors"
+    __table_args__ = (UniqueConstraint("cycle_id", "ref_no", name="uq_competitors_cycle_id_ref_no"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -228,6 +229,86 @@ class Competitor(Base):
     )
     ref_no = Column(String(64), nullable=False)
     status = Column(String(32), nullable=False, default="REGISTERED")
+    # Registration profile (nullable when created via nomination shell)
+    given_names = Column(String(100), nullable=True)
+    family_name = Column(String(100), nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    email = Column(String(255), nullable=True)
+    mobile = Column(String(32), nullable=True)
+    whatsapp = Column(String(32), nullable=True)
+    national_id = Column(String(64), nullable=True, index=True)
+    photo_key = Column(String(512), nullable=True)
+    coach = Column(JSON, nullable=True)
+    flags = Column(JSON, nullable=False, default=list)
+    registration_payload = Column(JSON, nullable=True)
+    # Guardian consent (US-REG-02) — privacy by default for minors
+    guardian_name = Column(String(200), nullable=True)
+    guardian_email = Column(String(255), nullable=True)
+    guardian_phone = Column(String(32), nullable=True)
+    consent_participation_at = Column(DateTime, nullable=True)
+    consent_participation_by = Column(String(255), nullable=True)
+    consent_public_at = Column(DateTime, nullable=True)
+    consent_public_by = Column(String(255), nullable=True)
+    public_profile_visible = Column(Boolean, default=False, nullable=False)
+
+
+class ConsentRequest(Base):
+    """Tokenised guardian consent request (OTP/link)."""
+
+    __tablename__ = "consent_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+
+
+class RegistrationWindow(Base):
+    """Cycle registration open/close window — fail closed if missing."""
+
+    __tablename__ = "registration_windows"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    opens_at = Column(DateTime, nullable=False)
+    closes_at = Column(DateTime, nullable=False)
+
+
+class RegistrationFormDefinition(Base):
+    """Configurable registration form (FR-6.13) — never hard-code field rules in code paths."""
+
+    __tablename__ = "registration_form_definitions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    fields = Column(JSON, nullable=False, default=list)
+    max_skills = Column(Integer, nullable=False, default=1)
+    photo_max_mb = Column(Integer, nullable=False, default=2)
+    photo_formats = Column(JSON, nullable=False, default=list)
+    national_id_pattern = Column(String(128), nullable=True)
+    # Age under this threshold (on reference date) requires guardian consent
+    minor_age_under = Column(Integer, nullable=True)
+    minor_reference_date = Column(Date, nullable=True)
+
+
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (UniqueConstraint("cycle_id", "key", name="uq_idempotency_records_cycle_key"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    key = Column(String(128), nullable=False)
+    status_code = Column(Integer, nullable=False)
+    response_body = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class InstitutionCycleMembership(Base):
