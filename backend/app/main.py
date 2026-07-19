@@ -21,6 +21,7 @@ from app.api import nominations as nominations_api
 from app.api import registrations as registrations_api
 from app.api import skills as skills_api
 from app.api import stages as stages_api
+from app.api import submissions as submissions_api
 from app.config import logging_settings, settings
 from app.core.errors import (
     AppError,
@@ -175,6 +176,7 @@ app.include_router(auth_api.router)
 app.include_router(cycles_api.router)
 app.include_router(skills_api.router)
 app.include_router(stages_api.router)
+app.include_router(submissions_api.router)
 app.include_router(assignments_api.router)
 app.include_router(nominations_api.router)
 app.include_router(registrations_api.router)

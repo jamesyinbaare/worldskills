@@ -230,6 +230,8 @@ class Competitor(Base):
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Bound login account for competitor portal actions (US-SUB-02)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     ref_no = Column(String(64), nullable=False)
     status = Column(String(32), nullable=False, default="REGISTERED")
     # Registration profile (nullable when created via nomination shell)
@@ -396,16 +398,56 @@ class NotificationOutbox(Base):
 
 
 class Submission(Base):
-    """Minimal submission for assessor queue (full submission lifecycle later)."""
+    """Stage submission lifecycle (US-SUB-02)."""
 
     __tablename__ = "submissions"
+    __table_args__ = (
+        UniqueConstraint("competitor_id", "stage_id", name="uq_submissions_competitor_stage"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
     competitor_id = Column(
         UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    state = Column(String(32), nullable=False, default="ACCEPTED")
+    stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="CASCADE"), nullable=True, index=True)
+    # OPEN | UPLOADED | SCANNING | ACCEPTED | QUARANTINED | LATE | ACCEPTED_PENDING_SCAN
+    state = Column(String(32), nullable=False, default="OPEN")
+    deadline_at = Column(DateTime, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    late = Column(Boolean, default=False, nullable=False)
+    content_hash = Column(String(128), nullable=True)
+    timed_started_at = Column(DateTime, nullable=True)
+    timed_expires_at = Column(DateTime, nullable=True)
+    upload_locked = Column(Boolean, default=False, nullable=False)
+    receipt = Column(String(64), nullable=True)
+
+
+class Artefact(Base):
+    """A deliverable file attached to a submission."""
+
+    __tablename__ = "artefacts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_id = Column(
+        UUID(as_uuid=True), ForeignKey("submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    deliverable_code = Column(String(64), nullable=False)
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(128), nullable=True)
+    size = Column(Integer, nullable=False, default=0)
+    storage_key = Column(String(512), nullable=True)
+    sha256 = Column(String(128), nullable=True)
+    # PENDING | CLEAN | INFECTED
+    scan_status = Column(String(32), nullable=False, default="PENDING")
+    quarantined = Column(Boolean, default=False, nullable=False)
+    # Resumable upload tracking
+    upload_id = Column(String(64), nullable=True, unique=True, index=True)
+    total_size = Column(Integer, nullable=True)
+    received_bytes = Column(Integer, nullable=False, default=0)
+    complete = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class Score(Base):
@@ -444,6 +486,14 @@ class Stage(Base):
     scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
     # Branch map: {"default": <order>, "byFamily": {"practical_trades": <order>}}
     branch = Column(JSON, nullable=True)
+    # US-SUB-02 (US-SUB-01 stub): required deliverables, formats, late policy, timed duration
+    # Example:
+    # {
+    #   "requiredDeliverables":[{"code":"main","formats":["pdf","zip"],"maxMb":20}],
+    #   "latePolicy":"block",
+    #   "timedDurationSeconds": null
+    # }
+    submission_rules = Column(JSON, nullable=True)
 
     cycle = relationship("Cycle", back_populates="stages")
 
