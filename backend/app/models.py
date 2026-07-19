@@ -391,7 +391,7 @@ class Nomination(Base):
 
 
 class NotificationOutbox(Base):
-    """Stub outbox until US-NOT-01 — tests assert notify happened."""
+    """Notification delivery log / outbox (US-NOT-01)."""
 
     __tablename__ = "notification_outbox"
 
@@ -402,6 +402,52 @@ class NotificationOutbox(Base):
     template = Column(String(128), nullable=False)
     payload = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # US-NOT-01 delivery fields
+    event_key = Column(String(128), nullable=True, index=True)
+    channel = Column(String(32), nullable=True)
+    language = Column(String(16), nullable=True)
+    rendered_subject = Column(String(512), nullable=True)
+    rendered_body = Column(Text, nullable=True)
+    # QUEUED | SENT | FAILED | SKIPPED | FALLBACK_SENT
+    status = Column(String(32), nullable=False, default="QUEUED")
+    error = Column(Text, nullable=True)
+    dedupe_key = Column(String(128), nullable=True, index=True)
+
+
+class NotificationTemplate(Base):
+    """Editable per-event localised template (US-NOT-01)."""
+
+    __tablename__ = "notification_templates"
+    __table_args__ = (
+        UniqueConstraint("event_key", "language", name="uq_notification_templates_event_language"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_key = Column(String(128), nullable=False, index=True)
+    language = Column(String(16), nullable=False, default="en")
+    subject = Column(String(512), nullable=False)
+    body = Column(Text, nullable=False)
+    essential = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class NotificationPreference(Base):
+    """Per-user channel + language preferences (US-NOT-01)."""
+
+    __tablename__ = "notification_preferences"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    preferred_channel = Column(String(32), nullable=False, default="EMAIL")  # EMAIL | SMS | WHATSAPP
+    fallback_channel = Column(String(32), nullable=True, default="SMS")
+    language = Column(String(16), nullable=False, default="en")
+    email = Column(String(255), nullable=True)
+    phone = Column(String(32), nullable=True)
+    whatsapp = Column(String(32), nullable=True)
+    opt_out_non_essential = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class Submission(Base):

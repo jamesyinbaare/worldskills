@@ -50,13 +50,19 @@ async def enqueue_notification(
     payload: dict[str, Any],
     recipient_id: uuid.UUID | None = None,
 ) -> None:
+    """Legacy enqueue used by nominations/registration — still writes outbox rows.
+
+    Prefer `app.services.notifications.emit` for full multi-channel delivery (US-NOT-01).
+    """
     session.add(
         NotificationOutbox(
             cycle_id=cycle_id,
             recipient_role=recipient_role,
             recipient_id=recipient_id,
             template=template,
+            event_key=template,
             payload=payload,
+            status="QUEUED",
         )
     )
 
