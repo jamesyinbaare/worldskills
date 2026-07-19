@@ -169,7 +169,7 @@ class TestingDatabaseSessionManager(DatabaseSessionManager):
             host=result.hostname,
             port=result.port,  # type: ignore
             dbname=result.path.strip("/"),
-            version=14,
+            version=16,
             password=result.password,
         )  # type: ignore
 
@@ -214,15 +214,15 @@ if db_settings.mock_database:
         raise Exception("Database URL is not set")
     elif db_settings.use_null_pool:
         sessionmanager: DatabaseSessionManager = TestingDatabaseSessionManager(
-            db_settings.database_url,
+            convert_to_async_url(db_settings.database_url),
             {
                 "echo": db_settings.echo_sql,
                 "poolclass": NullPool,
             },
         )
     else:
-        sessionmanager: DatabaseSessionManager | None = TestingDatabaseSessionManager(
-            db_settings.database_url,
+        sessionmanager = TestingDatabaseSessionManager(
+            convert_to_async_url(db_settings.database_url),
             {
                 "echo": db_settings.echo_sql,
                 "pool_size": db_settings.pool_size,
@@ -235,7 +235,7 @@ elif db_settings.database_use:
     if db_settings.database_url is None:
         raise Exception("Database URL is not set")
     sessionmanager = DatabaseSessionManager(
-        db_settings.database_url,
+        convert_to_async_url(db_settings.database_url),
         {
             "echo": db_settings.echo_sql,
             "pool_size": db_settings.pool_size,

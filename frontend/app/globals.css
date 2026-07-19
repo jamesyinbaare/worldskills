@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 :root {
   /* Brand aliases — from ctvet.gov.gh + WorldSkills Ghana logos */
@@ -100,57 +101,6 @@
         #ffffff 45%,
         color-mix(in srgb, var(--brand-green) 14%, #f7f7f7) 100%
       );
-  }
-
-  .btn-primary,
-  .btn-accent,
-  .btn-secondary {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    border-radius: var(--radius);
-    padding: 0.625rem 1.25rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    line-height: 1.25rem;
-    text-decoration: none;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-  }
-
-  .btn-primary:focus-visible,
-  .btn-accent:focus-visible,
-  .btn-secondary:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-
-  .btn-primary {
-    background-color: var(--primary);
-    color: var(--primary-foreground);
-  }
-
-  .btn-primary:hover {
-    background-color: color-mix(in srgb, var(--primary) 88%, #000000);
-  }
-
-  .btn-accent {
-    background-color: var(--accent);
-    color: var(--accent-foreground);
-  }
-
-  .btn-accent:hover {
-    background-color: color-mix(in srgb, var(--accent) 88%, #000000);
-  }
-
-  .btn-secondary {
-    border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
-    background-color: transparent;
-    color: var(--foreground);
-  }
-
-  .btn-secondary:hover {
-    background-color: var(--muted);
   }
 
   .animate-hero-fade {

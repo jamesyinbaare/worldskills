@@ -12,7 +12,9 @@ services:
       # Live-reload source without rebuilding the image (fastapi dev watches /app/app).
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
-      - ./backend/tests:/app/tests
+      - ./backend/pytest_tests:/app/pytest_tests
+      # legacy empty root-owned mount kept optional; prefer pytest_tests
+      - ./backend/pytest_tests:/app/tests
     develop:
       watch:
         - action: rebuild
@@ -48,12 +50,12 @@ services:
       - frontend_next_cache:/app/.next
     develop:
       watch:
+        # Only rebuild when Docker build inputs change — not on lockfile
+        # rewrites from host-side npm installs (avoids recreate loops).
         - action: rebuild
           path: ./frontend/Dockerfile
         - action: rebuild
           path: ./frontend/package.json
-        - action: rebuild
-          path: ./frontend/package-lock.json
     depends_on:
       - fastapi-app
     restart: always

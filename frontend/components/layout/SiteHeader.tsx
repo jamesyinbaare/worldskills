@@ -1,24 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { MenuIcon } from "lucide-react";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 const navItems = [
   { href: "/", label: "Home" },
-  { href: "#skills", label: "Skills" },
-  { href: "#login", label: "Login" },
+  { href: "/admin/cycles", label: "Cycles" },
+  { href: "/login", label: "Login" },
 ];
 
 export function SiteHeader() {
-  const [open, setOpen] = useState(false);
-
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur-sm">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <Link
           href="/"
-          className="flex items-center gap-3 min-w-0"
+          className="flex min-w-0 items-center gap-3"
           aria-label="WorldSkills Ghana home"
         >
           <CrestLogo className="h-10 w-auto shrink-0 object-contain sm:h-12" priority />
@@ -30,76 +37,47 @@ export function SiteHeader() {
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
           {navItems.map((item) => (
-            <Link
-              key={item.label}
-              href={item.href}
-              className="rounded-md px-3 py-2 text-sm font-medium text-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
-            >
-              {item.label}
-            </Link>
+            <Button key={item.label} variant="ghost" size="sm" asChild>
+              <Link href={item.href}>{item.label}</Link>
+            </Button>
           ))}
-          <Link href="#login" className="btn-accent ml-2">
-            Enter portal
-          </Link>
+          <Button variant="accent" size="default" className="ml-2" asChild>
+            <Link href="/login">Enter portal</Link>
+          </Button>
         </nav>
 
-        <button
-          type="button"
-          className="inline-flex items-center justify-center rounded-md p-2 text-foreground md:hidden"
-          aria-expanded={open}
-          aria-controls="mobile-nav"
-          aria-label={open ? "Close menu" : "Open menu"}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className="sr-only">Menu</span>
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden
-          >
-            {open ? (
-              <path d="M6 6l12 12M18 6L6 18" />
-            ) : (
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            )}
-          </svg>
-        </button>
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              aria-label="Open menu"
+            >
+              <MenuIcon />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="right" className="w-[min(100%,20rem)]">
+            <SheetHeader>
+              <SheetTitle>Menu</SheetTitle>
+            </SheetHeader>
+            <nav className="mt-4 flex flex-col gap-1" aria-label="Mobile">
+              {navItems.map((item) => (
+                <SheetClose key={item.label} asChild>
+                  <Button variant="ghost" className="justify-start" asChild>
+                    <Link href={item.href}>{item.label}</Link>
+                  </Button>
+                </SheetClose>
+              ))}
+              <SheetClose asChild>
+                <Button variant="accent" className="mt-2" asChild>
+                  <Link href="/login">Enter portal</Link>
+                </Button>
+              </SheetClose>
+            </nav>
+          </SheetContent>
+        </Sheet>
       </div>
-
-      {open && (
-        <nav
-          id="mobile-nav"
-          className="border-t border-border bg-background px-4 py-3 md:hidden"
-          aria-label="Mobile"
-        >
-          <ul className="flex flex-col gap-1">
-            {navItems.map((item) => (
-              <li key={item.label}>
-                <Link
-                  href={item.href}
-                  className="block rounded-md px-3 py-2.5 text-sm font-medium text-foreground hover:bg-muted"
-                  onClick={() => setOpen(false)}
-                >
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-            <li className="pt-2">
-              <Link
-                href="#login"
-                className="btn-accent w-full"
-                onClick={() => setOpen(false)}
-              >
-                Enter portal
-              </Link>
-            </li>
-          </ul>
-        </nav>
-      )}
     </header>
   );
 }

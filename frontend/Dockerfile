@@ -10,4 +10,6 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev:docker"]
+# Fresh named volumes for /app/node_modules start empty and hide the
+# image layer. npm ci never rewrites package-lock.json (avoids watch loops).
+CMD ["sh", "-c", "npm ci && npm run dev:docker"]

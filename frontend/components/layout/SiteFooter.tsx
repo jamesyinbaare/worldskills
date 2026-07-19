@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CrestLogo } from "@/components/brand/LogoMark";
+import { Button } from "@/components/ui/button";
 
 export function SiteFooter() {
   return (
@@ -50,27 +51,37 @@ export function SiteFooter() {
             </h2>
             <ul className="mt-3 space-y-1.5 text-sm">
               <li>
-                <a
-                  href="https://ctvet.gov.gh/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline-offset-2 hover:underline"
+                <Button
+                  variant="link"
+                  className="h-auto px-0 text-sm text-primary-foreground"
+                  asChild
                 >
-                  About CTVET
-                </a>
+                  <a
+                    href="https://ctvet.gov.gh/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    About CTVET
+                  </a>
+                </Button>
               </li>
               <li>
-                <Link href="/" className="underline-offset-2 hover:underline">
-                  WorldSkills Ghana
-                </Link>
+                <Button
+                  variant="link"
+                  className="h-auto px-0 text-sm text-primary-foreground"
+                  asChild
+                >
+                  <Link href="/">WorldSkills Ghana</Link>
+                </Button>
               </li>
               <li>
-                <Link
-                  href="#login"
-                  className="underline-offset-2 hover:underline"
+                <Button
+                  variant="link"
+                  className="h-auto px-0 text-sm text-primary-foreground"
+                  asChild
                 >
-                  Competition portal
-                </Link>
+                  <Link href="/login">Competition portal</Link>
+                </Button>
               </li>
             </ul>
           </div>

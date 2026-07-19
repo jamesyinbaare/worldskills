@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { WorldSkillsLogo } from "@/components/brand/LogoMark";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   return (
     <>
       <section className="relative isolate min-h-[calc(100dvh-4.5rem)] overflow-hidden bg-brand-atmosphere">
-        {/* WorldSkills-inspired ribbons */}
         <div
           className="pointer-events-none absolute inset-0 overflow-hidden"
           aria-hidden
@@ -35,12 +35,12 @@ export default function Home() {
               Ghana — registration through results, under CTVET governance.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
-              <Link href="#login" className="btn-primary">
-                Enter competition portal
-              </Link>
-              <Link href="#about" className="btn-secondary">
-                Learn more
-              </Link>
+              <Button size="lg" asChild>
+                <Link href="/login">Enter competition portal</Link>
+              </Button>
+              <Button size="lg" variant="outline" asChild>
+                <Link href="#about">Learn more</Link>
+              </Button>
             </div>
           </div>
         </div>
@@ -61,9 +61,6 @@ export default function Home() {
           </p>
         </div>
       </section>
-
-      <div id="skills" className="sr-only" aria-hidden />
-      <div id="login" className="sr-only" aria-hidden />
     </>
   );
 }

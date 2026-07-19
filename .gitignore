@@ -61,3 +61,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+plan/
+SCMS_Developer_SRS.docx
