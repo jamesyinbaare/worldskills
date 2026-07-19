@@ -84,19 +84,77 @@ def apply_quota_threshold(
 
     When quota exceeds available eligible competitors in a zone, advance all available.
     """
-    eligible = [
-        c for c in candidates if min_score is None or c.score >= min_score
+    ranked = rank_for_shortlist(candidates, quota_by_zone=quota_by_zone, min_score=min_score)
+    return [
+        Candidate(competitor_id=r.competitor_id, zone_id=r.zone_id, score=r.score)
+        for r in ranked
+        if r.outcome == "ADVANCE"
     ]
+
+
+@dataclass(frozen=True)
+class RankedEntry:
+    competitor_id: str
+    zone_id: str
+    score: float
+    rank: int
+    outcome: str  # ADVANCE | WAITLIST | EXCLUDED
+    reason: str | None = None
+
+
+def rank_for_shortlist(
+    candidates: Sequence[Candidate],
+    *,
+    quota_by_zone: Mapping[str, int],
+    min_score: int | None,
+) -> list[RankedEntry]:
+    """Rank per zone; mark ADVANCE / WAITLIST / EXCLUDED (BELOW_MIN_SCORE)."""
     by_zone: dict[str, list[Candidate]] = {}
-    for c in eligible:
+    for c in candidates:
         by_zone.setdefault(c.zone_id, []).append(c)
 
-    advanced: list[Candidate] = []
+    results: list[RankedEntry] = []
     for zone_id, group in by_zone.items():
+        ranked = sorted(group, key=lambda c: (-c.score, c.competitor_id))
         n = int(quota_by_zone.get(zone_id, 0))
-        ranked = sorted(group, key=lambda c: c.score, reverse=True)
-        advanced.extend(ranked[:n] if n > 0 else [])
-    return advanced
+        advanced_count = 0
+        for idx, c in enumerate(ranked, start=1):
+            if min_score is not None and c.score < min_score:
+                results.append(
+                    RankedEntry(
+                        competitor_id=c.competitor_id,
+                        zone_id=c.zone_id,
+                        score=c.score,
+                        rank=idx,
+                        outcome="EXCLUDED",
+                        reason="BELOW_MIN_SCORE",
+                    )
+                )
+                continue
+            if advanced_count < n:
+                results.append(
+                    RankedEntry(
+                        competitor_id=c.competitor_id,
+                        zone_id=c.zone_id,
+                        score=c.score,
+                        rank=idx,
+                        outcome="ADVANCE",
+                        reason=None,
+                    )
+                )
+                advanced_count += 1
+            else:
+                results.append(
+                    RankedEntry(
+                        competitor_id=c.competitor_id,
+                        zone_id=c.zone_id,
+                        score=c.score,
+                        rank=idx,
+                        outcome="WAITLIST",
+                        reason=None,
+                    )
+                )
+    return results
 
 
 def compute_finalists_per_skill(stages: Sequence[StageNode]) -> int:

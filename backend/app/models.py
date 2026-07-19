@@ -553,6 +553,43 @@ class Stage(Base):
     cycle = relationship("Cycle", back_populates="stages")
 
 
+class Shortlist(Base):
+    """Provisional / confirmed shortlist for a stage (US-SHL-01)."""
+
+    __tablename__ = "shortlists"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
+    # PROVISIONAL | CONFIRMED
+    state = Column(String(32), nullable=False, default="PROVISIONAL")
+    is_final_stage = Column(Boolean, default=False, nullable=False)
+    generated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    confirmed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    payload = Column(JSON, nullable=True)  # byZone snapshot
+
+
+class ShortlistEntry(Base):
+    __tablename__ = "shortlist_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shortlist_id = Column(
+        UUID(as_uuid=True), ForeignKey("shortlists.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    rank = Column(Integer, nullable=False)
+    # ADVANCE | WAITLIST | EXCLUDED
+    outcome = Column(String(32), nullable=False)
+    reason = Column(String(64), nullable=True)
+    advanced = Column(Boolean, default=False, nullable=False)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
