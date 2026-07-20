@@ -18,7 +18,6 @@ from app.schemas.consent import (
     ConsentRequestIn,
     ConsentRequestOut,
     ConsentWithdrawOut,
-    PublicCompetitorOut,
 )
 from app.services.audit import write_audit_event
 from app.services.nominations import enqueue_notification
@@ -371,27 +370,4 @@ async def withdraw_consent(
         status=competitor.status,
         flags=_flag_list(competitor),
         publicProfileVisible=False,
-    )
-
-
-async def get_public_competitor_profile(
-    session: AsyncSession, competitor_ref: str
-) -> PublicCompetitorOut:
-    """Stub for US-PUB-01 — enforces privacy-by-default for minors (US-REG-02-AC3)."""
-    competitor = (
-        await session.execute(select(Competitor).where(Competitor.ref_no == competitor_ref))
-    ).scalar_one_or_none()
-    if competitor is None or not is_public_profile_visible(competitor):
-        raise AppError(
-            "PROFILE_NOT_PUBLIC",
-            "Competitor profile is not publicly visible",
-            status_code=status.HTTP_404_NOT_FOUND,
-        )
-    display = None
-    if competitor.given_names or competitor.family_name:
-        display = " ".join(p for p in [competitor.given_names, competitor.family_name] if p)
-    return PublicCompetitorOut(
-        competitorRef=competitor.ref_no,
-        displayName=display,
-        public=True,
     )

@@ -12,7 +12,6 @@ from app.schemas.consent import (
     ConsentRequestIn,
     ConsentRequestOut,
     ConsentWithdrawOut,
-    PublicCompetitorOut,
 )
 from app.services import consent as consent_service
 
@@ -53,12 +52,3 @@ async def withdraw_consent(
     return await consent_service.withdraw_consent(
         session, competitor_id, actor_role="GUARDIAN", ip=ip, user_agent=ua
     )
-
-
-@router.get("/public/competitors/{competitor_ref}", response_model=PublicCompetitorOut)
-async def public_competitor_profile(
-    competitor_ref: str,
-    session: DBSessionDep,
-) -> PublicCompetitorOut:
-    """Privacy-gated stub used by US-REG-02-AC3 (full portal in US-PUB-01)."""
-    return await consent_service.get_public_competitor_profile(session, competitor_ref)

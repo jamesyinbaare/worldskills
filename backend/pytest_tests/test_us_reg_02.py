@@ -18,6 +18,7 @@ from app.models import (
     Institution,
     MarkingScheme,
     Pathway,
+    PublicPortalConfig,
     RegistrationFormDefinition,
     RegistrationWindow,
     Skill,
@@ -91,6 +92,14 @@ async def _seed(session_manager: DBManager, cycle_id: uuid.UUID) -> dict[str, uu
                 national_id_pattern=r"GHA-\d{9}",
                 minor_age_under=18,
                 minor_reference_date=date(2026, 1, 1),
+            )
+        )
+        session.add(
+            PublicPortalConfig(
+                cycle_id=cycle_id,
+                public_fields=["displayName", "photo", "institution", "skill", "stageStatus", "zone", "competitorRef"],
+                rate_limit_per_minute=1000,
+                max_page_size=50,
             )
         )
         await session.commit()

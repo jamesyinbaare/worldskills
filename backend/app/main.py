@@ -20,6 +20,7 @@ from app.api import cycles as cycles_api
 from app.api import eligibility as eligibility_api
 from app.api import lifecycle as lifecycle_api
 from app.api import nominations as nominations_api
+from app.api import public_portal as public_portal_api
 from app.api import registrations as registrations_api
 from app.api import scheduling as scheduling_api
 from app.api import skills as skills_api
@@ -194,6 +195,7 @@ app.include_router(eligibility_api.router)
 app.include_router(lifecycle_api.router)
 app.include_router(appeals_api.router)
 app.include_router(scheduling_api.router)
+app.include_router(public_portal_api.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

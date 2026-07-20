@@ -782,6 +782,21 @@ class HealthSafetyIncident(Base):
     recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class PublicPortalConfig(Base):
+    """Cycle public-portal field set + anti-scraping limits (US-PUB-01). Fail closed if missing."""
+
+    __tablename__ = "public_portal_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    # Allowed public field keys, e.g. ["displayName","photo","institution","skill","stageStatus","zone"]
+    public_fields = Column(JSON, nullable=False, default=list)
+    rate_limit_per_minute = Column(Integer, nullable=False, default=60)
+    max_page_size = Column(Integer, nullable=False, default=50)
+
+
 class ResultsConfig(Base):
     """Cycle results publication config — embargo/audience (US-RES-01). Fail closed if missing."""
 
