@@ -80,8 +80,6 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
 
 _KNOWN_REASONS = {
     "INVALID_TIMEZONE",
-    "AT_LEAST_ONE_LANGUAGE",
-    "UNSUPPORTED_LANGUAGE",
     "BEFORE_START",
     "REQUIRED",
     "DUPLICATE",

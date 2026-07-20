@@ -24,9 +24,7 @@ from app.services.notifications import SelectiveFailSender, emit, render_templat
 async def _ensure_templates(session) -> None:
     desired = [
         ("PROJECT_REMINDER", "en", "Reminder for {{name}}", "Hello {{name}}, deadline is {{deadline}}.", False),
-        ("PROJECT_REMINDER", "fr", "Rappel pour {{name}}", "Bonjour {{name}}, échéance {{deadline}}.", False),
         ("RESULT_PUBLISHED", "en", "Results for {{name}}", "Your result is ready, {{name}}.", True),
-        ("RESULT_PUBLISHED", "fr", "Résultats pour {{name}}", "Votre résultat est prêt, {{name}}.", True),
     ]
     for event_key, language, subject, body, essential in desired:
         existing = (
@@ -170,22 +168,23 @@ async def test_US_NOT_01_AC3_opt_out_respected(session_manager: DBManager) -> No
 
 
 @pytest.mark.asyncio
-async def test_US_NOT_01_AC4_localised(session_manager: DBManager) -> None:
+async def test_US_NOT_01_AC4_english_only(session_manager: DBManager) -> None:
+    """Recipient language preference is ignored; English template is always used."""
     user, uid = await _seed_user_prefs_templates(session_manager, language="fr")
     async with session_manager.session() as session:
         result = await emit(
             session,
             event="PROJECT_REMINDER",
             recipient_id=uid,
-            context={"name": "Ada", "deadline": "demain"},
+            context={"name": "Ada", "deadline": "tomorrow"},
             actor=user,
         )
         assert result.status == "SENT"
-        assert result.language == "fr"
+        assert result.language == "en"
         row = await session.get(NotificationOutbox, result.outbox_id)
         assert row is not None
-        assert row.rendered_subject == "Rappel pour Ada"
-        assert "Bonjour Ada" in (row.rendered_body or "")
+        assert row.rendered_subject == "Reminder for Ada"
+        assert "Hello Ada" in (row.rendered_body or "")
 
 
 @pytest.mark.asyncio

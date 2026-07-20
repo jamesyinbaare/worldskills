@@ -16,9 +16,10 @@ class Capability(str, Enum):
     NOMINATE_COMPETITOR = "nominate_competitor"
     REGISTER_SUBMIT = "register_submit"
     RULE_ON_APPEAL = "rule_on_appeal"
+    PUBLISH_RESULTS = "publish_results"
 
 
-# plan.md RBAC matrix (default roles)
+# plan.md RBAC matrix (default roles) + US-RES-01 publish results (Secretariat Admin)
 _ROLE_CAPABILITIES: dict[UserRole, set[Capability]] = {
     UserRole.SUPER_ADMIN: set(Capability),
     UserRole.ADMIN: {
@@ -26,6 +27,7 @@ _ROLE_CAPABILITIES: dict[UserRole, set[Capability]] = {
         Capability.PUBLISH_TEST_PROJECT,
         Capability.APPROVE_SHORTLIST,
         Capability.RULE_ON_APPEAL,
+        Capability.PUBLISH_RESULTS,
     },
     UserRole.CHIEF_EXPERT: {
         Capability.PUBLISH_TEST_PROJECT,
@@ -37,6 +39,7 @@ _ROLE_CAPABILITIES: dict[UserRole, set[Capability]] = {
     UserRole.MODERATOR: {Capability.MODERATE_SCORE},
     UserRole.INSTITUTION: {Capability.NOMINATE_COMPETITOR},
     UserRole.COMPETITOR: {Capability.REGISTER_SUBMIT},
+    UserRole.APPEALS_OFFICER: {Capability.RULE_ON_APPEAL},
 }
 
 

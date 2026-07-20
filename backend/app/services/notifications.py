@@ -123,7 +123,8 @@ async def emit(
             fields=[FieldError("recipientId", "NO_CONTACT_CHANNEL")],
         )
 
-    language = prefs.language or "en"
+    # Product is English-only — ignore recipient language preference.
+    language = "en"
     tmpl = (
         await session.execute(
             select(NotificationTemplate).where(
@@ -132,23 +133,11 @@ async def emit(
             )
         )
     ).scalars().first()
-    if tmpl is None and language != "en":
-        # Fallback to English template if preferred language missing
-        tmpl = (
-            await session.execute(
-                select(NotificationTemplate).where(
-                    NotificationTemplate.event_key == event,
-                    NotificationTemplate.language == "en",
-                )
-            )
-        ).scalars().first()
-        if tmpl is not None:
-            language = "en"
 
     if tmpl is None:
         raise AppError(
             "TEMPLATE_MISSING",
-            f"No template for event '{event}' language '{prefs.language}'",
+            f"No English template for event '{event}'",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("event", "TEMPLATE_MISSING")],
         )

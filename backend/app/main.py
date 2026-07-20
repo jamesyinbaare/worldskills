@@ -12,17 +12,21 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 
+from app.api import appeals as appeals_api
 from app.api import assignments as assignments_api
 from app.api import auth as auth_api
 from app.api import consent as consent_api
 from app.api import cycles as cycles_api
 from app.api import eligibility as eligibility_api
+from app.api import lifecycle as lifecycle_api
 from app.api import nominations as nominations_api
 from app.api import registrations as registrations_api
+from app.api import scheduling as scheduling_api
 from app.api import skills as skills_api
 from app.api import stages as stages_api
 from app.api import submissions as submissions_api
 from app.api import assessment as assessment_api
+from app.api import results as results_api
 from app.api import shortlists as shortlists_api
 from app.config import logging_settings, settings
 from app.core.errors import (
@@ -181,11 +185,15 @@ app.include_router(stages_api.router)
 app.include_router(submissions_api.router)
 app.include_router(assessment_api.router)
 app.include_router(shortlists_api.router)
+app.include_router(results_api.router)
 app.include_router(assignments_api.router)
 app.include_router(nominations_api.router)
 app.include_router(registrations_api.router)
 app.include_router(consent_api.router)
 app.include_router(eligibility_api.router)
+app.include_router(lifecycle_api.router)
+app.include_router(appeals_api.router)
+app.include_router(scheduling_api.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

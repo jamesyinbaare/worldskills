@@ -96,7 +96,7 @@ async def create_cycle(
         period_end=payload.period.end,
         time_zone=payload.timeZone,
         status=CycleStatus.DRAFT,
-        languages=list(payload.languages),
+        languages=["en"],
         organising_body=payload.organisingBody,
         branding=payload.branding,
     )

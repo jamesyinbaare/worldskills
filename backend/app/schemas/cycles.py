@@ -5,9 +5,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
-SUPPORTED_LOCALES = {"en", "en-GH", "fr", "ak", "ee", "ga"}
-
-
 class PeriodIn(BaseModel):
     start: date
     end: date
@@ -19,7 +16,8 @@ class CycleCreate(BaseModel):
     timeZone: str
     organisingBody: dict[str, Any] | None = None
     branding: dict[str, Any] | None = None
-    languages: list[str] = Field(min_length=1)
+    # Accepted for API compatibility; ignored — product is English-only.
+    languages: list[str] | None = None
 
     @field_validator("timeZone")
     @classmethod
@@ -30,16 +28,6 @@ class CycleCreate(BaseModel):
             ZoneInfo(v)
         except (ZoneInfoNotFoundError, KeyError) as exc:
             raise ValueError("INVALID_TIMEZONE") from exc
-        return v
-
-    @field_validator("languages")
-    @classmethod
-    def validate_languages(cls, v: list[str]) -> list[str]:
-        if not v:
-            raise ValueError("AT_LEAST_ONE_LANGUAGE")
-        for lang in v:
-            if lang not in SUPPORTED_LOCALES:
-                raise ValueError("UNSUPPORTED_LANGUAGE")
         return v
 
 

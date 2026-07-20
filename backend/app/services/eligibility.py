@@ -30,6 +30,7 @@ async def screen_competitor(
     actor: User | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
+    commit: bool = True,
 ) -> ScreenOut:
     competitor = await session.get(Competitor, competitor_id)
     if competitor is None:
@@ -121,8 +122,11 @@ async def screen_competitor(
         ip=ip,
         user_agent=user_agent,
     )
-    await session.commit()
-    await session.refresh(competitor)
+    if commit:
+        await session.commit()
+        await session.refresh(competitor)
+    else:
+        await session.flush()
 
     return ScreenOut(
         competitorId=competitor.id,

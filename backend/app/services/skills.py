@@ -93,6 +93,13 @@ async def _resolve_in_cycle(
     return entity_id
 
 
+async def list_skills(session: AsyncSession, cycle_id: uuid.UUID) -> list[Skill]:
+    result = await session.execute(
+        select(Skill).where(Skill.cycle_id == cycle_id).order_by(Skill.name)
+    )
+    return list(result.scalars().all())
+
+
 async def create_skill(
     session: AsyncSession,
     cycle_id: uuid.UUID,

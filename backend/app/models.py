@@ -29,6 +29,7 @@ class UserRole(str, enum.Enum):
     MODERATOR = "MODERATOR"
     INSTITUTION = "INSTITUTION"
     COMPETITOR = "COMPETITOR"
+    APPEALS_OFFICER = "APPEALS_OFFICER"
 
 
 class CycleStatus(str, enum.Enum):
@@ -271,6 +272,20 @@ class Competitor(Base):
     eligibility_override_reason = Column(Text, nullable=True)
     eligibility_override_at = Column(DateTime, nullable=True)
     eligibility_override_by = Column(UUID(as_uuid=True), nullable=True)
+    # US-LCY-01 withdrawal / substitution
+    withdrawn_at = Column(DateTime, nullable=True)
+    withdrawn_reason = Column(Text, nullable=True)
+    withdrawn_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    substitutes_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    substituted_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # US-APP-01 disqualification
+    dq_reason = Column(String(64), nullable=True)
+    dq_at = Column(DateTime, nullable=True)
+    dq_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class ConsentRequest(Base):
@@ -634,6 +649,239 @@ class ShortlistEntry(Base):
     outcome = Column(String(32), nullable=False)
     reason = Column(String(64), nullable=True)
     advanced = Column(Boolean, default=False, nullable=False)
+
+
+class LifecycleConfig(Base):
+    """Cycle lifecycle config — substitution cut-off & waitlist order (US-LCY-01)."""
+
+    __tablename__ = "lifecycle_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    substitution_cutoff_at = Column(DateTime, nullable=False)
+    # RANK = promote lowest rank number among WAITLIST in the same zone
+    waitlist_order = Column(String(32), nullable=False, default="RANK")
+
+
+class AppealsConfig(Base):
+    """Cycle appeals / DQ / tie-break config (US-APP-01). Fail closed if missing."""
+
+    __tablename__ = "appeals_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    appeal_window_opens_at = Column(DateTime, nullable=False)
+    appeal_window_closes_at = Column(DateTime, nullable=False)
+    # Allowed DQ reason codes, e.g. ["CHEATING", "MISCONDUCT"]
+    dq_reasons = Column(JSON, nullable=False, default=list)
+    # Ordered tie-break rules, e.g. ["SCORE_DESC", "YOUNGER_FIRST", "REF_NO_ASC", "JURY_DECISION"]
+    tie_break_rules = Column(JSON, nullable=False, default=list)
+
+
+class AppealCase(Base):
+    """Appeal case lifecycle (US-APP-01)."""
+
+    __tablename__ = "appeal_cases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    # SUBMITTED | UNDER_REVIEW | UPHELD | DISMISSED | REMEDIED
+    state = Column(String(32), nullable=False, default="SUBMITTED")
+    officer_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # UPHELD | DISMISSED
+    ruling_outcome = Column(String(32), nullable=True)
+    ruling_reason = Column(Text, nullable=True)
+    # RE_SCORE | RE_RANK | REINSTATE
+    remedy = Column(String(32), nullable=True)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_at = Column(DateTime, nullable=True)
+    ruled_at = Column(DateTime, nullable=True)
+    lodged_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class Venue(Base):
+    """Physical venue with capacity (US-SCH-01; full US-ZON-01 later)."""
+
+    __tablename__ = "venues"
+    __table_args__ = (UniqueConstraint("cycle_id", "name", name="uq_venues_cycle_id_name"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
+    name = Column(String(200), nullable=False)
+    capacity = Column(Integer, nullable=False)
+    workstations = Column(Integer, nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ScheduleSession(Base):
+    """Timed venue session with workstation capacity (US-SCH-01)."""
+
+    __tablename__ = "schedule_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", ondelete="CASCADE"), nullable=False, index=True)
+    starts_at = Column(DateTime, nullable=False)
+    ends_at = Column(DateTime, nullable=False)
+    # Session size — must be ≤ venue.capacity
+    workstations = Column(Integer, nullable=False)
+    # SCHEDULED | IN_PROGRESS | COMPLETED | CANCELLED
+    state = Column(String(32), nullable=False, default="SCHEDULED")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class SlotAssignment(Base):
+    """Competitor → workstation assignment within a session (US-SCH-01)."""
+
+    __tablename__ = "slot_assignments"
+    __table_args__ = (
+        UniqueConstraint("session_id", "workstation", name="uq_slot_assignments_session_workstation"),
+        UniqueConstraint("session_id", "competitor_id", name="uq_slot_assignments_session_competitor"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True), ForeignKey("schedule_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workstation = Column(String(64), nullable=False)
+    # PENDING | READY | NOT_READY
+    readiness = Column(String(32), nullable=False, default="PENDING")
+    checklist = Column(JSON, nullable=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    assigned_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class HealthSafetyIncident(Base):
+    """H&S incident recorded against a physical session (US-SCH-01)."""
+
+    __tablename__ = "health_safety_incidents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True), ForeignKey("schedule_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    summary = Column(Text, nullable=False)
+    severity = Column(String(32), nullable=True)
+    recorded_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ResultsConfig(Base):
+    """Cycle results publication config — embargo/audience (US-RES-01). Fail closed if missing."""
+
+    __tablename__ = "results_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(
+        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    release_at = Column(DateTime, nullable=False)
+    # e.g. ["PUBLIC", "COMPETITOR", "INSTITUTION"]
+    audience = Column(JSON, nullable=False, default=list)
+    neutral_status = Column(String(64), nullable=False, default="IN_PROGRESS")
+    # {"1": "GOLD", "2": "SILVER", "3": "BRONZE"}
+    award_by_rank = Column(JSON, nullable=False, default=dict)
+    default_outcome = Column(String(64), nullable=False, default="FINALIST")
+
+
+class CertificateTemplate(Base):
+    """Certificate body template per outcome for a cycle (US-RES-01)."""
+
+    __tablename__ = "certificate_templates"
+    __table_args__ = (
+        UniqueConstraint("cycle_id", "outcome", "language", name="uq_certificate_templates_cycle_outcome_lang"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    outcome = Column(String(64), nullable=False)
+    language = Column(String(16), nullable=False, default="en")
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ResultPublication(Base):
+    """Prepared / released result set under embargo (US-RES-01)."""
+
+    __tablename__ = "result_publications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Partial release: one skill; null = whole-cycle publication covering all prepared skills
+    skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
+    # EMBARGOED | RELEASED
+    state = Column(String(32), nullable=False, default="EMBARGOED")
+    release_at = Column(DateTime, nullable=False)
+    audience = Column(JSON, nullable=False, default=list)
+    neutral_status = Column(String(64), nullable=False, default="IN_PROGRESS")
+    prepared_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    prepared_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    released_at = Column(DateTime, nullable=True)
+    released_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class ResultEntry(Base):
+    """Versioned competitor result row (US-RES-01)."""
+
+    __tablename__ = "result_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    publication_id = Column(
+        UUID(as_uuid=True), ForeignKey("result_publications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    outcome = Column(String(64), nullable=False)
+    score = Column(Integer, nullable=True)
+    rank = Column(Integer, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    is_current = Column(Boolean, default=True, nullable=False)
+    supersedes_id = Column(UUID(as_uuid=True), ForeignKey("result_entries.id", ondelete="SET NULL"), nullable=True)
+    payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Certificate(Base):
+    """Issued certificate artefact for a result entry (US-RES-01)."""
+
+    __tablename__ = "certificates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    publication_id = Column(
+        UUID(as_uuid=True), ForeignKey("result_publications.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    result_entry_id = Column(
+        UUID(as_uuid=True), ForeignKey("result_entries.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    outcome = Column(String(64), nullable=False)
+    rendered_body = Column(Text, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    is_current = Column(Boolean, default=True, nullable=False)
+    supersedes_id = Column(UUID(as_uuid=True), ForeignKey("certificates.id", ondelete="SET NULL"), nullable=True)
+    issued_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class AuditEvent(Base):

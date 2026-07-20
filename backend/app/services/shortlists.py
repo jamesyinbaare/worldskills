@@ -27,6 +27,7 @@ from app.schemas.shortlists import (
     ShortlistGenerateOut,
     ShortlistRankedItem,
 )
+from app.services.appeals import require_tie_break_rules_if_needed
 from app.services.audit import write_audit_event
 from app.services.pathway_engine import (
     Candidate,
@@ -135,12 +136,16 @@ async def generate_shortlist(
         comp = await session.get(Competitor, sub.competitor_id)
         if comp is None:
             continue
+        if comp.status == "DISQUALIFIED":
+            continue
         competitor_cache[comp.id] = comp
         candidates.append(
             Candidate(
                 competitor_id=str(comp.id),
                 zone_id=str(comp.zone_id),
                 score=float(sub.score_total or 0),
+                date_of_birth=comp.date_of_birth,
+                ref_no=comp.ref_no,
             )
         )
 
@@ -149,10 +154,18 @@ async def generate_shortlist(
         zones = {c.zone_id for c in candidates}
         quota_by_zone = {z: int(stage.quota) for z in zones}
 
+    tie_break_rules = await require_tie_break_rules_if_needed(
+        session,
+        cycle_id,
+        candidates=candidates,
+        quota_by_zone=quota_by_zone,
+        min_score=stage.min_score,
+    )
     ranked = rank_for_shortlist(
         candidates,
         quota_by_zone=quota_by_zone,
         min_score=stage.min_score,
+        tie_break_rules=tie_break_rules,
     )
 
     skill_stages: list[Stage] = []
