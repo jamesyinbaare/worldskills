@@ -1,4 +1,4 @@
-"""Cycle configuration resolution — fail closed with CONFIG_INCOMPLETE."""
+"""Competition configuration resolution — fail closed with CONFIG_INCOMPLETE."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import AppError, FieldError
-from app.models import AgeRule, Cycle, MarkingScheme, Pathway, Skill, Stage
+from app.models import AgeRule, Competition, MarkingScheme, Pathway, Skill, Stage
 
 
 class ConfigIncompleteError(AppError):
@@ -27,8 +27,17 @@ class ConfigIncompleteError(AppError):
 
 
 @dataclass
+class ResolvedAgeRule:
+    """Age rule resolved for a competition skill (embedded or legacy AgeRule row)."""
+
+    max_age: int
+    reference_date: Any
+    open_category_enabled: bool
+
+
+@dataclass
 class CycleConfig:
-    cycle: Cycle
+    cycle: Competition
     skills: list[Skill]
     stages: list[Stage]
     age_rules: dict[uuid.UUID, AgeRule]
@@ -46,8 +55,18 @@ class CycleConfig:
                 return s
         raise ConfigIncompleteError(f"Skill {skill_id} not found in cycle config", entity=str(skill_id))
 
-    def age_rule_for_skill(self, skill_id: uuid.UUID) -> AgeRule:
+    def age_rule_for_skill(self, skill_id: uuid.UUID) -> ResolvedAgeRule | AgeRule:
         skill = self.skill(skill_id)
+        # Preferred: embedded per-cycle-skill age rule
+        if skill.max_age is not None:
+            return ResolvedAgeRule(
+                max_age=skill.max_age,
+                reference_date=skill.age_reference_date,
+                open_category_enabled=bool(skill.open_category_enabled)
+                if skill.open_category_enabled is not None
+                else False,
+            )
+        # Legacy: shared cycle AgeRule via FK
         rule_id = self.require("ageRuleId", skill.age_rule_id, entity=str(skill_id))
         rule = self.age_rules.get(rule_id)
         if rule is None:
@@ -85,22 +104,22 @@ class CycleConfig:
         )
 
 
-async def load_cycle_config(session: AsyncSession, cycle_id: uuid.UUID) -> CycleConfig:
+async def load_competition_config(session: AsyncSession, competition_id: uuid.UUID) -> CompetitionConfig:
     stmt = (
-        select(Cycle)
-        .where(Cycle.id == cycle_id)
+        select(Competition)
+        .where(Competition.id == competition_id)
         .options(
-            selectinload(Cycle.skills),
-            selectinload(Cycle.stages),
-            selectinload(Cycle.age_rules),
-            selectinload(Cycle.pathways),
-            selectinload(Cycle.marking_schemes),
+            selectinload(Competition.skills),
+            selectinload(Competition.stages).selectinload(Stage.exercise),
+            selectinload(Competition.age_rules),
+            selectinload(Competition.pathways),
+            selectinload(Competition.marking_schemes),
         )
     )
     result = await session.execute(stmt)
     cycle = result.scalar_one_or_none()
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=status.HTTP_404_NOT_FOUND)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=status.HTTP_404_NOT_FOUND)
 
     return CycleConfig(
         cycle=cycle,
@@ -112,6 +131,6 @@ async def load_cycle_config(session: AsyncSession, cycle_id: uuid.UUID) -> Cycle
     )
 
 
-def config(cycle_id: uuid.UUID) -> str:
-    """Opaque handle style used in plan.md examples; real loading via load_cycle_config."""
-    return str(cycle_id)
+def config(competition_id: uuid.UUID) -> str:
+    """Opaque handle style used in plan.md examples; real loading via load_competition_config."""
+    return str(competition_id)

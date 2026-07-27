@@ -41,3 +41,29 @@ class PublicDirectoryQuery(BaseModel):
     cursor: str | None = None
     limit: int | None = Field(default=None, ge=1)
     format: str | None = None
+
+
+class ProgressionCounts(BaseModel):
+    advanced: int = 0
+    waitlisted: int = 0
+    excluded: int = 0
+
+
+class ProgressionStageOut(BaseModel):
+    stageId: UUID
+    stage: str
+    order: int
+    status: str  # IN_PROGRESS (embargo/neutral) | RELEASED
+    counts: ProgressionCounts | None = None
+
+
+class ProgressionZoneOut(BaseModel):
+    zoneId: UUID
+    zoneName: str
+    stages: list[ProgressionStageOut]
+
+
+class SkillProgressionOut(BaseModel):
+    skillId: UUID
+    skillName: str
+    byZone: list[ProgressionZoneOut]

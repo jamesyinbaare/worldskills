@@ -26,36 +26,36 @@ from app.models import (
     Zone,
 )
 from app.services.pathway_engine import Candidate, rank_for_shortlist
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 # Fixture: zone quota 2, minScore 50
 # Scores: A=90, B=80, C=70, D=40 (below min) → advance A,B; waitlist C; exclude D
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_shortlist_world(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     with_next_stage: bool = True,
     min_score: int = 50,
     quota: int = 2,
 ) -> dict:
     async with session_manager.session() as session:
-        age = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
+        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
         session.add_all([age, path, scheme, zone])
         await session.flush()
 
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -67,14 +67,13 @@ async def _seed_shortlist_world(
         await session.flush()
 
         stage1 = Stage(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill.id,
             name="Regional",
             order=1,
             quota=quota,
             quota_by_zone={str(zone.id): quota},
             min_score=min_score,
-            scheme_id=scheme.id,
         )
         session.add(stage1)
         await session.flush()
@@ -82,14 +81,13 @@ async def _seed_shortlist_world(
         stage2 = None
         if with_next_stage:
             stage2 = Stage(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 skill_id=skill.id,
                 name="National",
                 order=2,
                 quota=1,
                 quota_by_zone={str(zone.id): 1},
                 min_score=min_score,
-                scheme_id=scheme.id,
             )
             session.add(stage2)
             await session.flush()
@@ -99,7 +97,7 @@ async def _seed_shortlist_world(
         submissions: dict[str, Submission] = {}
         for label, score in scores.items():
             comp = Competitor(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 skill_id=skill.id,
                 zone_id=zone.id,
                 ref_no=f"REF-{label}-{uuid.uuid4().hex[:4]}",
@@ -111,7 +109,7 @@ async def _seed_shortlist_world(
             session.add(comp)
             await session.flush()
             sub = Submission(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 competitor_id=comp.id,
                 stage_id=stage1.id,
                 state="ACCEPTED",
@@ -156,12 +154,12 @@ async def test_US_SHL_01_AC1_provisional_shortlist(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_shortlist_world(session_manager, competition_id)
     headers = await _chief_headers(client, ctx["chief"])
 
     resp = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -200,12 +198,12 @@ async def test_US_SHL_01_AC2_confirmation_gate(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_shortlist_world(session_manager, competition_id)
     headers = await _chief_headers(client, ctx["chief"])
 
     await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
 
@@ -214,7 +212,11 @@ async def test_US_SHL_01_AC2_confirmation_gate(
             comp = await session.get(Competitor, cid)
             assert comp is not None
             assert comp.status == "ACTIVE_IN_STAGE"
-        notes = (await session.execute(select(NotificationOutbox))).scalars().all()
+        notes = (
+            await session.execute(
+                select(NotificationOutbox).where(NotificationOutbox.competition_id == competition_id)
+            )
+        ).scalars().all()
         assert notes == []
         shortlist = (
             await session.execute(
@@ -236,16 +238,16 @@ async def test_US_SHL_01_AC3_advance_on_confirm(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id, with_next_stage=True)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_shortlist_world(session_manager, competition_id, with_next_stage=True)
     headers = await _chief_headers(client, ctx["chief"])
 
     await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
     confirm = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:confirm-shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:confirm-shortlist",
         headers=headers,
     )
     assert confirm.status_code == 200, confirm.text
@@ -268,7 +270,7 @@ async def test_US_SHL_01_AC3_advance_on_confirm(
         notes = (
             await session.execute(
                 select(NotificationOutbox).where(
-                    NotificationOutbox.cycle_id == cycle_id,
+                    NotificationOutbox.competition_id == competition_id,
                     NotificationOutbox.template.in_(
                         ["SHORTLIST_ADVANCED", "SHORTLIST_WAITLIST"]
                     ),
@@ -284,12 +286,12 @@ async def test_US_SHL_01_AC4_threshold_excludes(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_shortlist_world(session_manager, competition_id)
     headers = await _chief_headers(client, ctx["chief"])
 
     resp = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -321,20 +323,20 @@ async def test_US_SHL_01_AC5_finalist_output(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
+    competition_id = await _create_competition(client, auth_headers)
     # Final stage only (no next)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id, with_next_stage=False)
+    ctx = await _seed_shortlist_world(session_manager, competition_id, with_next_stage=False)
     headers = await _chief_headers(client, ctx["chief"])
 
     gen = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
     assert gen.status_code == 200, gen.text
     assert gen.json()["isFinalStage"] is True
 
     confirm = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:confirm-shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:confirm-shortlist",
         headers=headers,
     )
     assert confirm.status_code == 200, confirm.text
@@ -357,15 +359,114 @@ async def test_US_SHL_01_not_authorised_for_competitor(
     session_manager: DBManager,
     competitor_user: User,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_shortlist_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_shortlist_world(session_manager, competition_id)
     login = await client.post(
         "/auth/login",
         json={"email": competitor_user.email, "password": "comp-pass-123"},
     )
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     denied = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage1_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage1_id']}:shortlist",
         headers=headers,
     )
     assert denied.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_US_SHL_01_AC6_national_pool_shortlist(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    async with session_manager.session() as session:
+        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        z1 = Zone(competition_id=competition_id, name="Zone A", active=True)
+        z2 = Zone(competition_id=competition_id, name="Zone B", active=True)
+        session.add_all([age, path, scheme, z1, z2])
+        await session.flush()
+        skill = Skill(
+            competition_id=competition_id,
+            name="Web Development",
+            age_rule_id=age.id,
+            pathway_id=path.id,
+            scheme_id=scheme.id,
+            active=True,
+        )
+        session.add(skill)
+        await session.flush()
+        stage = Stage(
+            competition_id=competition_id,
+            skill_id=skill.id,
+            name="National final",
+            order=1,
+            stage_type="VIRTUAL",
+            selection_mode="NATIONAL_POOL",
+            quota=2,
+            min_score=50,
+        )
+        session.add(stage)
+        await session.flush()
+        comps = {}
+        for label, zone, score in (
+            ("A", z1.id, 90),
+            ("B", z2.id, 80),
+            ("C", z1.id, 70),
+            ("D", z2.id, 40),
+        ):
+            comp = Competitor(
+                competition_id=competition_id,
+                skill_id=skill.id,
+                zone_id=zone,
+                ref_no=f"NAT-{label}",
+                status="ACTIVE_IN_STAGE",
+            )
+            session.add(comp)
+            await session.flush()
+            comps[label] = comp.id
+            session.add(
+                Submission(
+                    competition_id=competition_id,
+                    stage_id=stage.id,
+                    competitor_id=comp.id,
+                    state="ACCEPTED",
+                    score_total=score,
+                )
+            )
+        chief = User(
+            email=f"chief-nat-{uuid.uuid4().hex[:8]}@example.com",
+            full_name="Chief Nat",
+            role=UserRole.CHIEF_EXPERT,
+            hashed_password=get_password_hash("chief-pass-123"),
+            is_active=True,
+        )
+        session.add(chief)
+        await session.commit()
+        stage_id = stage.id
+        chief_id = chief.id
+        chief_email = chief.email
+
+    login = await client.post(
+        "/auth/login",
+        json={"email": chief_email, "password": "chief-pass-123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    gen = await client.post(
+        f"/competitions/{competition_id}/stages/{stage_id}:shortlist",
+        headers=headers,
+    )
+    assert gen.status_code == 200, gen.text
+    body = gen.json()
+    assert body["selectionMode"] == "NATIONAL_POOL"
+    assert body["national"] is not None
+    advanced = [r for r in body["national"] if r["outcome"] == "ADVANCE"]
+    assert len(advanced) == 2
+    assert {r["competitorId"] for r in advanced} == {
+        str(comps["A"]),
+        str(comps["B"]),
+    }
+    assert all("zoneId" in r for r in body["national"])
+    _ = chief_id

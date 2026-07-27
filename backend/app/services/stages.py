@@ -3,33 +3,53 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
-from app.models import Cycle, CycleStatus, MarkingScheme, Skill, Stage, User, Zone
+from app.models import Competition, Exercise, Skill, Stage, StageSelectionMode, Submission, User, Zone
 from app.schemas.stages import PathwayPut, StagePathwayItem
 from app.services.audit import write_audit_event
 from app.services.pathway_engine import StageNode, compute_finalists_per_skill
 
 
+def _as_naive(value: datetime) -> datetime:
+    return value.replace(tzinfo=None) if value.tzinfo is not None else value
+
+
+def assert_stage_available(stage: Stage, *, now: datetime | None = None) -> None:
+    """Block competitor actions before stage.opens_at (exercise availability)."""
+    if stage.opens_at is None:
+        return
+    current = _as_naive(now or datetime.utcnow())
+    opens = _as_naive(stage.opens_at)
+    if current < opens:
+        raise AppError(
+            "WINDOW_CLOSED",
+            "Exercise is not available yet",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("opensAt", "WINDOW_CLOSED")],
+        )
+
+
 def stage_to_dict(stage: Stage) -> dict[str, Any]:
     return {
         "id": str(stage.id),
-        "cycleId": str(stage.cycle_id),
+        "competitionId": str(stage.competition_id),
         "skillId": str(stage.skill_id) if stage.skill_id else None,
         "name": stage.name,
         "order": stage.order,
         "type": stage.stage_type,
+        "selectionMode": stage.selection_mode,
         "opensAt": stage.opens_at.isoformat() if stage.opens_at else None,
         "closesAt": stage.closes_at.isoformat() if stage.closes_at else None,
         "quota": stage.quota,
         "quotaByZone": stage.quota_by_zone,
         "minScore": stage.min_score,
-        "schemeId": str(stage.scheme_id) if stage.scheme_id else None,
         "branch": stage.branch,
     }
 
@@ -39,16 +59,34 @@ def _rollup_quota(quota_by_zone: dict[str, int]) -> int:
 
 
 def _nodes_from_payload(stages: list[StagePathwayItem]) -> list[StageNode]:
-    return [
-        StageNode(
-            order=s.order,
-            stage_type=s.type,
-            branch=s.branch,
-            quota_by_zone=s.quotaByZone,
-            min_score=s.minScore,
-        )
-        for s in stages
-    ]
+    nodes: list[StageNode] = []
+    for s in stages:
+        mode = s.selectionMode
+        if mode == "NATIONAL_POOL":
+            nodes.append(
+                StageNode(
+                    order=s.order,
+                    stage_type=s.type,
+                    branch=s.branch,
+                    quota_by_zone={},
+                    min_score=s.minScore,
+                    selection_mode=mode,
+                    overall_quota=s.quota,
+                )
+            )
+        else:
+            nodes.append(
+                StageNode(
+                    order=s.order,
+                    stage_type=s.type,
+                    branch=s.branch,
+                    quota_by_zone=s.quotaByZone or {},
+                    min_score=s.minScore,
+                    selection_mode=mode,
+                    overall_quota=None,
+                )
+            )
+    return nodes
 
 
 def _validate_orders(stages: list[StagePathwayItem]) -> None:
@@ -84,61 +122,31 @@ def _validate_branch_targets(stages: list[StagePathwayItem]) -> None:
 
 async def _require_cycle_for_pathway(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     controlled_change_reason: str | None,
-) -> Cycle:
-    result = await session.execute(select(Cycle).where(Cycle.id == cycle_id))
+) -> Competition:
+    _ = controlled_change_reason
+    result = await session.execute(select(Competition).where(Competition.id == competition_id))
     cycle = result.scalar_one_or_none()
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=status.HTTP_404_NOT_FOUND)
-
-    if cycle.status in {CycleStatus.LOCKED, CycleStatus.CLOSED}:
-        raise AppError(
-            "CYCLE_LOCKED",
-            "Cycle is locked and cannot accept pathway changes",
-            status_code=status.HTTP_409_CONFLICT,
-        )
-
-    if cycle.status == CycleStatus.ACTIVE:
-        if not controlled_change_reason or not controlled_change_reason.strip():
-            raise AppError(
-                "CYCLE_LOCKED",
-                "Active cycle pathway changes require controlledChangeReason",
-                status_code=status.HTTP_409_CONFLICT,
-            )
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=status.HTTP_404_NOT_FOUND)
     return cycle
 
 
-async def _resolve_scheme(
-    session: AsyncSession, *, cycle_id: uuid.UUID, scheme_id: uuid.UUID
-) -> uuid.UUID:
-    result = await session.execute(
-        select(MarkingScheme).where(MarkingScheme.id == scheme_id, MarkingScheme.cycle_id == cycle_id)
-    )
-    if result.scalar_one_or_none() is None:
-        raise AppError(
-            "CONFIG_INCOMPLETE",
-            "schemeId is not resolvable in this cycle",
-            status_code=status.HTTP_409_CONFLICT,
-            fields=[FieldError("schemeId", "CONFIG_INCOMPLETE")],
-        )
-    return scheme_id
-
-
 async def _resolve_zones(
-    session: AsyncSession, *, cycle_id: uuid.UUID, quota_by_zone: dict[str, int]
+    session: AsyncSession, *, competition_id: uuid.UUID, quota_by_zone: dict[str, int]
 ) -> None:
     zone_ids = [uuid.UUID(z) for z in quota_by_zone]
     result = await session.execute(
-        select(Zone.id).where(Zone.cycle_id == cycle_id, Zone.id.in_(zone_ids))
+        select(Zone.id).where(Zone.competition_id == competition_id, Zone.id.in_(zone_ids))
     )
     found = {row[0] for row in result.all()}
     missing = [zid for zid in zone_ids if zid not in found]
     if missing:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "quotaByZone references a zone not in this cycle",
+            "quotaByZone references a zone not in this competition",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("quotaByZone", "CONFIG_INCOMPLETE")],
         )
@@ -146,7 +154,7 @@ async def _resolve_zones(
 
 async def put_skill_pathway(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     skill_id: uuid.UUID,
     payload: PathwayPut,
     *,
@@ -155,11 +163,11 @@ async def put_skill_pathway(
     user_agent: str | None = None,
 ) -> tuple[list[Stage], int]:
     await _require_cycle_for_pathway(
-        session, cycle_id, controlled_change_reason=payload.controlledChangeReason
+        session, competition_id, controlled_change_reason=payload.controlledChangeReason
     )
 
     skill_result = await session.execute(
-        select(Skill).where(Skill.id == skill_id, Skill.cycle_id == cycle_id)
+        select(Skill).where(Skill.id == skill_id, Skill.competition_id == competition_id)
     )
     skill = skill_result.scalar_one_or_none()
     if skill is None:
@@ -169,6 +177,14 @@ async def put_skill_pathway(
     _validate_branch_targets(payload.stages)
 
     for item in payload.stages:
+        stage_type = (item.type or "").strip().upper()
+        if stage_type not in {"VIRTUAL", "PHYSICAL"}:
+            raise AppError(
+                "INVALID_TYPE",
+                "Stage type must be VIRTUAL or PHYSICAL",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                fields=[FieldError("type", "INVALID_TYPE")],
+            )
         if item.minScore is not None and (item.minScore < 0 or item.minScore > 100):
             raise AppError(
                 "SCORE_RANGE",
@@ -176,47 +192,116 @@ async def put_skill_pathway(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 fields=[FieldError("minScore", "SCORE_RANGE")],
             )
-        for amount in item.quotaByZone.values():
-            if amount < 0:
+        if item.opensAt is not None and item.closesAt is not None:
+            opens = item.opensAt.replace(tzinfo=None)
+            closes = item.closesAt.replace(tzinfo=None)
+            if closes <= opens:
+                raise AppError(
+                    "BEFORE_OPENS",
+                    "closesAt must be after opensAt",
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    fields=[FieldError("closesAt", "BEFORE_OPENS")],
+                )
+        mode = item.selectionMode
+        if mode == "PER_ZONE":
+            if not item.quotaByZone:
                 raise AppError(
                     "QUOTA_INVALID",
-                    "quota must be an integer >= 0 per zone",
+                    "quotaByZone is required for PER_ZONE stages",
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     fields=[FieldError("quotaByZone", "QUOTA_INVALID")],
                 )
-        await _resolve_scheme(session, cycle_id=cycle_id, scheme_id=item.schemeId)
-        await _resolve_zones(session, cycle_id=cycle_id, quota_by_zone=item.quotaByZone)
+            for amount in item.quotaByZone.values():
+                if amount < 0:
+                    raise AppError(
+                        "QUOTA_INVALID",
+                        "quota must be an integer >= 0 per zone",
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        fields=[FieldError("quotaByZone", "QUOTA_INVALID")],
+                    )
+            await _resolve_zones(session, competition_id=competition_id, quota_by_zone=item.quotaByZone)
+        else:
+            if item.quota is None or item.quota < 0:
+                raise AppError(
+                    "QUOTA_INVALID",
+                    "quota is required for NATIONAL_POOL stages",
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    fields=[FieldError("quota", "QUOTA_INVALID")],
+                )
 
     existing = (
         await session.execute(
-            select(Stage).where(Stage.cycle_id == cycle_id, Stage.skill_id == skill_id).order_by(Stage.order)
+            select(Stage).where(Stage.competition_id == competition_id, Stage.skill_id == skill_id).order_by(Stage.order)
         )
     ).scalars().all()
     before = [stage_to_dict(s) for s in existing]
+    by_order = {s.order: s for s in existing}
+    keep_orders = {item.order for item in payload.stages}
 
-    await session.execute(
-        delete(Stage).where(Stage.cycle_id == cycle_id, Stage.skill_id == skill_id)
-    )
+    # Refuse to drop stages that already have submissions or published exercise work
+    for stage in existing:
+        if stage.order in keep_orders:
+            continue
+        has_submission = (
+            await session.execute(
+                select(Submission.id).where(Submission.stage_id == stage.id).limit(1)
+            )
+        ).first() is not None
+        exercise = (
+            await session.execute(select(Exercise).where(Exercise.stage_id == stage.id))
+        ).scalar_one_or_none()
+        has_exercise_work = bool(
+            exercise
+            and (
+                exercise.status == "PUBLISHED"
+                or exercise.scheme_id
+                or exercise.pack_object_key
+            )
+        )
+        if has_submission or has_exercise_work:
+            raise AppError(
+                "PATHWAY_LOCKED",
+                "Cannot remove a stage that already has submissions or a published exercise. "
+                "Adjust quotas/windows on existing stages instead.",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("stages", "PATHWAY_LOCKED")],
+            )
+        await session.delete(stage)
+
     await session.flush()
 
     created: list[Stage] = []
     for item in sorted(payload.stages, key=lambda s: s.order):
-        rollup = _rollup_quota(item.quotaByZone)
-        stage = Stage(
-            cycle_id=cycle_id,
-            skill_id=skill_id,
-            name=f"{skill.name} — {item.type} #{item.order}",
-            order=item.order,
-            stage_type=item.type,
-            opens_at=item.opensAt.replace(tzinfo=None) if item.opensAt else None,
-            closes_at=item.closesAt.replace(tzinfo=None) if item.closesAt else None,
-            quota=rollup,
-            quota_by_zone=dict(item.quotaByZone),
-            min_score=item.minScore,
-            scheme_id=item.schemeId,
-            branch=dict(item.branch) if item.branch else None,
-        )
-        session.add(stage)
+        if item.selectionMode == "NATIONAL_POOL":
+            rollup = int(item.quota or 0)
+            quota_by_zone = None
+            selection_mode = StageSelectionMode.NATIONAL_POOL.value
+            scalar_quota = rollup
+        else:
+            quota_by_zone = dict(item.quotaByZone or {})
+            rollup = _rollup_quota(quota_by_zone)
+            selection_mode = StageSelectionMode.PER_ZONE.value
+            scalar_quota = rollup
+
+        stage = by_order.get(item.order)
+        if stage is None:
+            stage = Stage(
+                competition_id=competition_id,
+                skill_id=skill_id,
+                name=f"{skill.name} — {item.type} #{item.order}",
+                order=item.order,
+            )
+            session.add(stage)
+
+        stage.name = f"{skill.name} — {item.type} #{item.order}"
+        stage.stage_type = item.type
+        stage.selection_mode = selection_mode
+        stage.opens_at = item.opensAt.replace(tzinfo=None) if item.opensAt else None
+        stage.closes_at = item.closesAt.replace(tzinfo=None) if item.closesAt else None
+        stage.quota = scalar_quota
+        stage.quota_by_zone = quota_by_zone
+        stage.min_score = item.minScore
+        stage.branch = dict(item.branch) if item.branch else None
         created.append(stage)
 
     await session.flush()
@@ -234,7 +319,7 @@ async def put_skill_pathway(
         entity_id=str(skill_id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         before={"stages": before},
         after={"stages": after, "finalistsPerSkill": finalists},
         reason=reason,
@@ -245,3 +330,42 @@ async def put_skill_pathway(
     for stage in created:
         await session.refresh(stage)
     return created, finalists
+
+
+async def get_skill_pathway(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    skill_id: uuid.UUID,
+) -> tuple[list[Stage], int | None]:
+    skill_result = await session.execute(
+        select(Skill).where(Skill.id == skill_id, Skill.competition_id == competition_id)
+    )
+    if skill_result.scalar_one_or_none() is None:
+        raise AppError("SKILL_NOT_FOUND", "Skill not found in cycle", status_code=status.HTTP_404_NOT_FOUND)
+
+    stages = list(
+        (
+            await session.execute(
+                select(Stage)
+                .where(Stage.competition_id == competition_id, Stage.skill_id == skill_id)
+                .order_by(Stage.order)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not stages:
+        return [], None
+    nodes = [
+        StageNode(
+            order=s.order,
+            stage_type=s.stage_type,
+            branch=s.branch,
+            quota_by_zone={str(k): int(v) for k, v in (s.quota_by_zone or {}).items()},
+            min_score=s.min_score,
+            selection_mode=s.selection_mode or StageSelectionMode.PER_ZONE.value,
+            overall_quota=s.quota if (s.selection_mode or "").upper() == "NATIONAL_POOL" else None,
+        )
+        for s in stages
+    ]
+    return stages, compute_finalists_per_skill(nodes)

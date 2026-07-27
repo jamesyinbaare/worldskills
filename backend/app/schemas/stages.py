@@ -9,30 +9,44 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class StagePathwayItem(BaseModel):
     order: int = Field(ge=1)
     type: str = Field(min_length=1, max_length=64)
-    schemeId: UUID
+    selectionMode: str = Field(default="PER_ZONE")
+    # Deprecated: marking scheme now lives on Exercise (US-SUB-01). Ignored if sent.
+    schemeId: UUID | None = None
     opensAt: datetime | None = None
     closesAt: datetime | None = None
     branch: dict | None = None
-    quotaByZone: dict[str, int] = Field(min_length=1)
+    quotaByZone: dict[str, int] | None = None
+    quota: int | None = Field(default=None, ge=0)
     minScore: int | None = None
 
     @field_validator("type")
     @classmethod
-    def type_not_blank(cls, v: str) -> str:
-        stripped = v.strip()
+    def type_virtual_or_physical(cls, v: str) -> str:
+        stripped = v.strip().upper()
         if not stripped:
             raise ValueError("REQUIRED")
+        if stripped not in {"VIRTUAL", "PHYSICAL"}:
+            raise ValueError("INVALID_TYPE")
         return stripped
+
+    @field_validator("selectionMode")
+    @classmethod
+    def selection_mode_valid(cls, v: str) -> str:
+        mode = (v or "PER_ZONE").strip().upper()
+        if mode not in {"PER_ZONE", "NATIONAL_POOL"}:
+            raise ValueError("INVALID_SELECTION_MODE")
+        return mode
 
     @field_validator("quotaByZone")
     @classmethod
-    def quotas_non_negative(cls, v: dict[str, int]) -> dict[str, int]:
+    def quotas_non_negative(cls, v: dict[str, int] | None) -> dict[str, int] | None:
+        if v is None:
+            return None
         if not v:
             raise ValueError("QUOTA_INVALID")
         for key, amount in v.items():
             if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
                 raise ValueError("QUOTA_INVALID")
-            # zone id must be parseable as UUID string
             try:
                 UUID(str(key))
             except (ValueError, TypeError) as exc:
@@ -69,6 +83,17 @@ class StagePathwayItem(BaseModel):
                     raise ValueError("BRANCH_TARGET_MISSING") from exc
         return v
 
+    @model_validator(mode="after")
+    def quota_for_selection_mode(self) -> "StagePathwayItem":
+        mode = self.selectionMode
+        if mode == "PER_ZONE":
+            if not self.quotaByZone:
+                raise ValueError("QUOTA_INVALID")
+        elif mode == "NATIONAL_POOL":
+            if self.quota is None:
+                raise ValueError("QUOTA_INVALID")
+        return self
+
 
 class PathwayPut(BaseModel):
     stages: list[StagePathwayItem] = Field(min_length=1)
@@ -89,7 +114,9 @@ class StageOut(BaseModel):
     stageId: UUID
     order: int
     type: str
-    schemeId: UUID | None = None
+    selectionMode: str
+    schemeId: UUID | None = None  # from published Exercise when present
+    exerciseStatus: str | None = None  # DRAFT | PUBLISHED | None
     opensAt: datetime | None = None
     closesAt: datetime | None = None
     branch: dict | None = None

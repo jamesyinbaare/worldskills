@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, FieldError
 from app.core.rbac import check_conflict_of_interest, check_segregation_of_duties
 from app.models import (
+    Competition,
     Competitor,
     ExpertAssignment,
     Score,
@@ -21,16 +22,75 @@ from app.models import (
     UserRole,
     Zone,
 )
-from app.schemas.assignments import AssignmentCreate, AssessorQueueOut, CoiFlagOut, QueueSubmissionOut
+from app.schemas.assignments import (
+    AssignmentCreate,
+    AssessorQueueOut,
+    CoiFlagOut,
+    MyAssignmentOut,
+    QueueSubmissionOut,
+)
 from app.services.audit import write_audit_event
 
 _ASSIGNABLE_ROLES = {UserRole.EXPERT, UserRole.CHIEF_EXPERT}
 
 
+async def list_assignments(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    cycle_skill_id: uuid.UUID | None = None,
+) -> list[ExpertAssignment]:
+    stmt = select(ExpertAssignment).where(ExpertAssignment.competition_id == competition_id)
+    if cycle_skill_id is not None:
+        stmt = stmt.where(ExpertAssignment.skill_id == cycle_skill_id)
+    result = await session.execute(stmt.order_by(ExpertAssignment.created_at.desc()))
+    return list(result.scalars().all())
+
+
+async def list_my_assignments(session: AsyncSession, *, actor: User) -> list[MyAssignmentOut]:
+    """Named assignments for the signed-in expert (portal discovery)."""
+    if actor.role not in _ASSIGNABLE_ROLES:
+        raise AppError(
+            "FORBIDDEN",
+            "Only experts can list their assignments",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    rows = (
+        await session.execute(
+            select(ExpertAssignment)
+            .where(ExpertAssignment.expert_id == actor.id)
+            .order_by(ExpertAssignment.created_at.desc())
+        )
+    ).scalars().all()
+
+    out: list[MyAssignmentOut] = []
+    for assignment in rows:
+        competition = await session.get(Competition, assignment.competition_id)
+        skill = await session.get(Skill, assignment.skill_id)
+        zone = await session.get(Zone, assignment.zone_id)
+        if competition is None or skill is None or zone is None:
+            continue
+        out.append(
+            MyAssignmentOut(
+                assignmentId=assignment.id,
+                competitionId=competition.id,
+                competitionName=competition.name,
+                skillId=skill.id,
+                skillName=skill.name,
+                zoneId=zone.id,
+                zoneName=zone.name,
+            )
+        )
+
+    out.sort(key=lambda a: (a.competitionName.lower(), a.skillName.lower(), a.zoneName.lower()))
+    return out
+
+
 def _assignment_to_dict(assignment: ExpertAssignment) -> dict[str, Any]:
     return {
         "id": str(assignment.id),
-        "cycleId": str(assignment.cycle_id),
+        "competitionId": str(assignment.competition_id),
         "expertId": str(assignment.expert_id),
         "skillId": str(assignment.skill_id),
         "zoneId": str(assignment.zone_id),
@@ -41,7 +101,7 @@ def _assignment_to_dict(assignment: ExpertAssignment) -> dict[str, Any]:
 async def _compute_coi_flags(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     skill_id: uuid.UUID,
     zone_id: uuid.UUID,
     expert: User,
@@ -51,7 +111,7 @@ async def _compute_coi_flags(
 
     result = await session.execute(
         select(Competitor).where(
-            Competitor.cycle_id == cycle_id,
+            Competitor.competition_id == competition_id,
             Competitor.skill_id == skill_id,
             Competitor.zone_id == zone_id,
             Competitor.institution_id == expert.institution_id,
@@ -106,24 +166,24 @@ async def _load_assignable_expert(session: AsyncSession, expert_id: uuid.UUID) -
     return expert
 
 
-async def _load_active_skill(session: AsyncSession, cycle_id: uuid.UUID, skill_id: uuid.UUID) -> Skill:
+async def _load_active_skill(session: AsyncSession, competition_id: uuid.UUID, skill_id: uuid.UUID) -> Skill:
     skill = await session.get(Skill, skill_id)
-    if skill is None or skill.cycle_id != cycle_id or not skill.active:
+    if skill is None or skill.competition_id != competition_id or not skill.active:
         raise AppError(
             "INVALID_ASSIGNMENT",
-            "Skill is invalid or inactive in this cycle",
+            "Skill is invalid or inactive in this competition",
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("skillId", "INVALID_ASSIGNMENT")],
         )
     return skill
 
 
-async def _load_active_zone(session: AsyncSession, cycle_id: uuid.UUID, zone_id: uuid.UUID) -> Zone:
+async def _load_active_zone(session: AsyncSession, competition_id: uuid.UUID, zone_id: uuid.UUID) -> Zone:
     zone = await session.get(Zone, zone_id)
-    if zone is None or zone.cycle_id != cycle_id or not zone.active:
+    if zone is None or zone.competition_id != competition_id or not zone.active:
         raise AppError(
             "INVALID_ASSIGNMENT",
-            "Zone is invalid or inactive in this cycle",
+            "Zone is invalid or inactive in this competition",
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("zoneId", "INVALID_ASSIGNMENT")],
         )
@@ -132,7 +192,7 @@ async def _load_active_zone(session: AsyncSession, cycle_id: uuid.UUID, zone_id:
 
 async def create_assignment(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     payload: AssignmentCreate,
     *,
     actor: User,
@@ -140,14 +200,14 @@ async def create_assignment(
     user_agent: str | None = None,
 ) -> ExpertAssignment:
     expert = await _load_assignable_expert(session, payload.expertId)
-    await _load_active_skill(session, cycle_id, payload.skillId)
-    await _load_active_zone(session, cycle_id, payload.zoneId)
+    await _load_active_skill(session, competition_id, payload.resolved_skill_id)
+    await _load_active_zone(session, competition_id, payload.zoneId)
 
     existing = await session.execute(
         select(ExpertAssignment).where(
-            ExpertAssignment.cycle_id == cycle_id,
+            ExpertAssignment.competition_id == competition_id,
             ExpertAssignment.expert_id == payload.expertId,
-            ExpertAssignment.skill_id == payload.skillId,
+            ExpertAssignment.skill_id == payload.resolved_skill_id,
             ExpertAssignment.zone_id == payload.zoneId,
         )
     )
@@ -161,15 +221,15 @@ async def create_assignment(
 
     flags = await _compute_coi_flags(
         session,
-        cycle_id=cycle_id,
-        skill_id=payload.skillId,
+        competition_id=competition_id,
+        skill_id=payload.resolved_skill_id,
         zone_id=payload.zoneId,
         expert=expert,
     )
     assignment = ExpertAssignment(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         expert_id=payload.expertId,
-        skill_id=payload.skillId,
+        skill_id=payload.resolved_skill_id,
         zone_id=payload.zoneId,
         coi_flags=flags,
     )
@@ -183,7 +243,7 @@ async def create_assignment(
         entity_id=str(assignment.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after=_assignment_to_dict(assignment),
         ip=ip,
         user_agent=user_agent,
@@ -195,7 +255,7 @@ async def create_assignment(
 
 async def delegate_assignment(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     assignment_id: uuid.UUID,
     new_expert_id: uuid.UUID,
     *,
@@ -204,7 +264,7 @@ async def delegate_assignment(
     user_agent: str | None = None,
 ) -> ExpertAssignment:
     assignment = await session.get(ExpertAssignment, assignment_id)
-    if assignment is None or assignment.cycle_id != cycle_id:
+    if assignment is None or assignment.competition_id != competition_id:
         raise AppError(
             "ASSIGNMENT_NOT_FOUND",
             "Assignment not found",
@@ -216,7 +276,7 @@ async def delegate_assignment(
 
     flags = await _compute_coi_flags(
         session,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=assignment.skill_id,
         zone_id=assignment.zone_id,
         expert=new_expert,
@@ -232,7 +292,7 @@ async def delegate_assignment(
         entity_id=str(assignment.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         before=before,
         after=_assignment_to_dict(assignment),
         reason="Expert unavailable — queue delegated",
@@ -246,7 +306,7 @@ async def delegate_assignment(
 
 async def get_assessor_queue(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     expert_id: uuid.UUID,
 ) -> AssessorQueueOut:
     from app.models import MarkingScheme, Skill, Stage
@@ -254,7 +314,7 @@ async def get_assessor_queue(
     assignments = (
         await session.execute(
             select(ExpertAssignment).where(
-                ExpertAssignment.cycle_id == cycle_id,
+                ExpertAssignment.competition_id == competition_id,
                 ExpertAssignment.expert_id == expert_id,
             )
         )
@@ -279,7 +339,7 @@ async def get_assessor_queue(
         comps = (
             await session.execute(
                 select(Competitor).where(
-                    Competitor.cycle_id == cycle_id,
+                    Competitor.competition_id == competition_id,
                     Competitor.skill_id == skill_id,
                     Competitor.zone_id == zone_id,
                 )
@@ -294,7 +354,7 @@ async def get_assessor_queue(
             subs = (
                 await session.execute(
                     select(Submission).where(
-                        Submission.cycle_id == cycle_id,
+                        Submission.competition_id == competition_id,
                         Submission.competitor_id == comp.id,
                         Submission.state.in_(["ACCEPTED", "LATE"]),
                     )
@@ -305,7 +365,7 @@ async def get_assessor_queue(
                 subs = (
                     await session.execute(
                         select(Submission).where(
-                            Submission.cycle_id == cycle_id,
+                            Submission.competition_id == competition_id,
                             Submission.competitor_id == comp.id,
                         )
                     )
@@ -318,9 +378,15 @@ async def get_assessor_queue(
                 # Prefer stage scheme blind flag if stage linked
                 item_blind = blind
                 if sub.stage_id:
-                    stage = await session.get(Stage, sub.stage_id)
-                    if stage and stage.scheme_id:
-                        stage_scheme = await session.get(MarkingScheme, stage.scheme_id)
+                    from app.models import Exercise
+
+                    ex = (
+                        await session.execute(
+                            select(Exercise).where(Exercise.stage_id == sub.stage_id)
+                        )
+                    ).scalar_one_or_none()
+                    if ex and ex.scheme_id:
+                        stage_scheme = await session.get(MarkingScheme, ex.scheme_id)
                         if stage_scheme and isinstance(stage_scheme.rubric, dict):
                             item_blind = bool(stage_scheme.rubric.get("blindMode", False))
                 submissions_out.append(
@@ -339,7 +405,7 @@ async def get_assessor_queue(
 async def assert_can_score(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     expert: User,
     competitor: Competitor,
     submission_id: uuid.UUID | None = None,
@@ -358,7 +424,7 @@ async def assert_can_score(
             entity_id=str(submission_id or competitor.id),
             actor_id=expert.id,
             actor_role=expert.role.value,
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             after={
                 "expertId": str(expert.id),
                 "competitorId": str(competitor.id),
@@ -380,7 +446,7 @@ async def assert_can_score(
 async def assert_can_moderate(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     score: Score,
     moderator: User,
     ip: str | None = None,
@@ -398,7 +464,7 @@ async def assert_can_moderate(
             entity_id=str(score.id),
             actor_id=moderator.id,
             actor_role=moderator.role.value,
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             after={"scorerId": str(score.assessor_id), "moderatorId": str(moderator.id)},
             reason="SEGREGATION_VIOLATION",
             ip=ip,

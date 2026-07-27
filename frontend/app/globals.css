@@ -2,35 +2,50 @@
 @import "tw-animate-css";
 
 :root {
-  /* Brand aliases — from ctvet.gov.gh + WorldSkills Ghana logos */
-  --brand-green: #006b3f;
-  --brand-red: #ed1e24;
-  --brand-gold: #fff204;
-  --brand-blue: #0057b8;
+  /* Brand aliases — WorldSkills Ghana CTVET Theme Palette */
+  --brand-blue: #003764;
+  --brand-red: #e30613;
+  --brand-gold: #ffcc00;
+  --brand-green: #00853f;
+  --brand-highlight: #fee300;
+  --brand-orange: #ff6c0c;
+  --brand-magenta: #d51067;
 
   /* Semantic / shadcn-compatible tokens (light only) */
   --background: #ffffff;
-  --foreground: #111111;
+  --foreground: #1c2526;
   --card: #ffffff;
-  --card-foreground: #111111;
+  --card-foreground: #1c2526;
   --popover: #ffffff;
-  --popover-foreground: #111111;
-  --primary: #006b3f;
+  --popover-foreground: #1c2526;
+  --primary: #003764;
   --primary-foreground: #ffffff;
-  --secondary: #0057b8;
+  --secondary: #00853f;
   --secondary-foreground: #ffffff;
-  --accent: #ed1e24;
-  --accent-foreground: #ffffff;
-  --highlight: #fff204;
-  --highlight-foreground: #111111;
-  --muted: #f7f7f7;
-  --muted-foreground: #666666;
-  --destructive: #ed1e24;
+  --accent: #ffcc00;
+  --accent-foreground: #1c2526;
+  --highlight: #fee300;
+  --highlight-foreground: #1c2526;
+  --muted: #f2f4f5;
+  --muted-foreground: #4a5557;
+  --destructive: #e30613;
   --destructive-foreground: #ffffff;
-  --border: #e5e5e5;
-  --input: #e5e5e5;
-  --ring: #006b3f;
-  --radius: 0.375rem;
+  --border: #d6dce0;
+  --input: #d6dce0;
+  --ring: #003764;
+  --radius: 0.5rem;
+
+  /* shadcn Sidebar tokens (light) */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1c2526;
+  --sidebar-primary: #003764;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef3f7;
+  --sidebar-accent-foreground: #003764;
+  --sidebar-border: #e2e8ec;
+  --sidebar-ring: #003764;
+  --admin-canvas: #eef1f4;
+  --site-header-height: 4.75rem;
 }
 
 @theme inline {
@@ -55,10 +70,21 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-brand-green: var(--brand-green);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-brand-blue: var(--brand-blue);
   --color-brand-red: var(--brand-red);
   --color-brand-gold: var(--brand-gold);
-  --color-brand-blue: var(--brand-blue);
+  --color-brand-green: var(--brand-green);
+  --color-brand-highlight: var(--brand-highlight);
+  --color-brand-orange: var(--brand-orange);
+  --color-brand-magenta: var(--brand-magenta);
   --font-sans: var(--font-montserrat);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
@@ -82,24 +108,109 @@
   }
 }
 
+/* Admin console app shell — full viewport, soft canvas, large radii (GSL-like) */
+.admin-shell {
+  --radius: 1rem;
+}
+
+.admin-shell [data-slot="sidebar-wrapper"] {
+  min-height: 100svh;
+}
+
+.admin-shell [data-slot="sidebar-inner"] {
+  border-radius: 1.25rem;
+}
+
+.competitor-shell {
+  --radius: 1rem;
+}
+
+.competitor-shell [data-slot="sidebar-wrapper"] {
+  min-height: 100svh;
+}
+
+.competitor-shell [data-slot="sidebar-inner"] {
+  border-radius: 1.25rem;
+}
+
+.expert-shell {
+  --radius: 1rem;
+}
+
+.expert-shell [data-slot="sidebar-wrapper"] {
+  min-height: 100svh;
+}
+
+.expert-shell [data-slot="sidebar-inner"] {
+  border-radius: 1.25rem;
+}
+
+.admin-panel {
+  border-radius: 1.5rem;
+}
+
 @layer utilities {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .not-sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
   .bg-brand-atmosphere {
     background:
       radial-gradient(
-        ellipse 80% 60% at 15% 20%,
-        color-mix(in srgb, var(--brand-gold) 18%, transparent),
+        ellipse 80% 60% at 12% 18%,
+        color-mix(in srgb, var(--brand-gold) 22%, transparent),
         transparent 55%
       ),
       radial-gradient(
-        ellipse 70% 50% at 85% 15%,
-        color-mix(in srgb, var(--brand-red) 12%, transparent),
+        ellipse 70% 50% at 88% 12%,
+        color-mix(in srgb, var(--brand-red) 14%, transparent),
         transparent 50%
+      ),
+      radial-gradient(
+        ellipse 55% 45% at 70% 80%,
+        color-mix(in srgb, var(--brand-green) 10%, transparent),
+        transparent 55%
       ),
       linear-gradient(
         165deg,
-        color-mix(in srgb, var(--brand-green) 8%, #ffffff) 0%,
-        #ffffff 45%,
-        color-mix(in srgb, var(--brand-green) 14%, #f7f7f7) 100%
+        color-mix(in srgb, var(--brand-blue) 8%, var(--background)) 0%,
+        var(--background) 42%,
+        color-mix(in srgb, var(--brand-blue) 6%, var(--muted)) 100%
+      );
+  }
+
+  .hero-ceremonial-wash {
+    background:
+      linear-gradient(
+        105deg,
+        color-mix(in srgb, var(--brand-blue) 92%, transparent) 0%,
+        color-mix(in srgb, var(--brand-blue) 72%, transparent) 38%,
+        color-mix(in srgb, var(--brand-blue) 28%, transparent) 68%,
+        color-mix(in srgb, var(--brand-blue) 12%, transparent) 100%
+      ),
+      linear-gradient(
+        to top,
+        color-mix(in srgb, var(--brand-blue) 55%, transparent) 0%,
+        transparent 42%
       );
   }
 
@@ -111,8 +222,36 @@
     animation: hero-slide 0.9s ease-out 0.15s both;
   }
 
-  .animate-ribbon {
-    animation: ribbon-drift 8s ease-in-out infinite alternate;
+  .animate-hero-image {
+    animation: hero-image-ken 18s ease-in-out infinite alternate;
+  }
+
+  .animate-journey-step {
+    animation: journey-fade 0.7s ease-out both;
+  }
+
+  .animate-comp-fade {
+    animation: journey-fade 0.65s ease-out both;
+  }
+
+  .bg-competitions-atmosphere {
+    background:
+      radial-gradient(
+        ellipse 70% 50% at 8% 0%,
+        color-mix(in srgb, var(--brand-gold) 18%, transparent),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 55% 40% at 100% 20%,
+        color-mix(in srgb, var(--brand-blue) 12%, transparent),
+        transparent 50%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--brand-blue) 6%, var(--background)) 0%,
+        var(--background) 48%,
+        color-mix(in srgb, var(--brand-blue) 4%, var(--muted)) 100%
+      );
   }
 }
 
@@ -130,19 +269,40 @@
 @keyframes hero-slide {
   from {
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateY(16px);
   }
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0);
   }
 }
 
-@keyframes ribbon-drift {
+@keyframes hero-image-ken {
   from {
-    transform: translateY(0) rotate(-2deg);
+    transform: scale(1);
   }
   to {
-    transform: translateY(10px) rotate(2deg);
+    transform: scale(1.06);
+  }
+}
+
+@keyframes journey-fade {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-fade,
+  .animate-hero-slide,
+  .animate-hero-image,
+  .animate-journey-step,
+  .animate-comp-fade {
+    animation: none !important;
   }
 }

@@ -25,7 +25,13 @@ from app.models import (
     Zone,
 )
 from app.services.consent import can_progress_past_pending_review, is_public_profile_visible
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import (
+    create_competitor_account,
+    competition_payload,
+    login_as,
+    map_region_to_zone,
+    region_id_by_name,
+)
 
 _PNG_1X1 = base64.b64encode(
     bytes.fromhex(
@@ -33,6 +39,31 @@ _PNG_1X1 = base64.b64encode(
         "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
     )
 ).decode()
+
+_MINIMAL_PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+
+
+async def _upload_consent(
+    client: AsyncClient,
+    competitor_id: str,
+    headers: dict[str, str],
+    *,
+    scopes: list[str],
+    granted_by: str | None = "Ama Guardian",
+) -> object:
+    # httpx 0.28: keep all multipart parts in `files` to avoid sync stream errors
+    parts: list[tuple[str, tuple]] = [
+        ("file", ("signed-consent.pdf", _MINIMAL_PDF, "application/pdf")),
+    ]
+    for scope in scopes:
+        parts.append(("scopes", (None, scope)))
+    if granted_by:
+        parts.append(("grantedBy", (None, granted_by)))
+    return await client.post(
+        f"/competitors/{competitor_id}/consent-form",
+        headers=headers,
+        files=parts,
+    )
 
 DEFAULT_FIELDS = [
     {"name": "givenNames", "type": "string", "required": True, "maxLength": 100},
@@ -49,42 +80,49 @@ DEFAULT_FIELDS = [
 ]
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
-async def _seed(session_manager: DBManager, cycle_id: uuid.UUID) -> dict[str, uuid.UUID]:
+async def _seed(session_manager: DBManager, competition_id: uuid.UUID) -> dict[str, uuid.UUID]:
+    region_id = await region_id_by_name(session_manager, "Greater Accra")
     async with session_manager.session() as session:
-        age = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
+        age = AgeRule(
+            competition_id=competition_id,
+            name="U25",
+            max_age=25,
+            reference_date=date(2026, 1, 1),
+            open_category_enabled=False,
+        )
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([age, path, scheme])
         await session.flush()
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
             scheme_id=scheme.id,
             active=True,
         )
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
-        inst = Institution(name=f"Consent Inst {uuid.uuid4().hex[:6]}")
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
+        inst = Institution(name=f"Consent Inst {uuid.uuid4().hex[:6]}", region_id=region_id)
         session.add_all([skill, zone, inst])
         await session.flush()
         now = datetime.utcnow()
         session.add(
             RegistrationWindow(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 opens_at=now - timedelta(days=1),
                 closes_at=now + timedelta(days=30),
             )
         )
         session.add(
             RegistrationFormDefinition(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 fields=DEFAULT_FIELDS,
                 max_skills=1,
                 photo_max_mb=2,
@@ -96,26 +134,29 @@ async def _seed(session_manager: DBManager, cycle_id: uuid.UUID) -> dict[str, uu
         )
         session.add(
             PublicPortalConfig(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 public_fields=["displayName", "photo", "institution", "skill", "stageStatus", "zone", "competitorRef"],
                 rate_limit_per_minute=1000,
                 max_page_size=50,
             )
         )
         await session.commit()
-        return {"skill_id": skill.id, "zone_id": zone.id, "institution_id": inst.id}
+        out = {"skill_id": skill.id, "zone_id": zone.id, "institution_id": inst.id}
+    await map_region_to_zone(session_manager, competition_id, region_id, out["zone_id"])
+    return out
 
 
 def _reg_payload(ctx: dict[str, uuid.UUID], *, dob: str, **overrides: object) -> dict:
     base: dict = {
         "givenNames": "Kofi",
         "familyName": "Minor",
+        "gender": "Male",
         "dateOfBirth": dob,
         "email": f"kofi-{uuid.uuid4().hex[:6]}@example.com",
         "mobile": "+233241111111",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        "hasPassport": False,
         "institutionId": str(ctx["institution_id"]),
-        "zoneId": str(ctx["zone_id"]),
         "skillIds": [str(ctx["skill_id"])],
         "declarationAccepted": True,
         "photo": {"contentBase64": _PNG_1X1, "contentType": "image/png"},
@@ -125,19 +166,26 @@ def _reg_payload(ctx: dict[str, uuid.UUID], *, dob: str, **overrides: object) ->
     return base
 
 
+async def _comp(client: AsyncClient, session_manager: DBManager) -> dict[str, str]:
+    user, password = await create_competitor_account(session_manager)
+    return await login_as(client, user.email, password)
+
+
 @pytest.mark.asyncio
 async def test_US_REG_02_AC1_consent_required_for_minor(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed(session_manager, competition_id)
+    comp = await _comp(client, session_manager)
 
     # Age 16 on 2026-01-01
     resp = await client.post(
-        f"/cycles/{cycle_id}/registrations",
+        f"/competitions/{competition_id}/registrations",
         json=_reg_payload(ctx, dob="2010-06-15"),
+        headers=comp,
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -157,50 +205,80 @@ async def test_US_REG_02_AC2_participation_consent_lifts_block(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed(session_manager, competition_id)
+    comp = await _comp(client, session_manager)
 
     created = await client.post(
-        f"/cycles/{cycle_id}/registrations",
+        f"/competitions/{competition_id}/registrations",
         json=_reg_payload(ctx, dob="2010-06-15"),
+        headers=comp,
     )
     assert created.status_code == 201, created.text
     cid = created.json()["competitorId"]
 
-    req = await client.post(
-        f"/competitors/{cid}/consent-request",
-        json={
-            "guardianName": "Ama Guardian",
-            "guardianEmail": "ama.guardian@example.com",
-            "guardianPhone": "+233200000000",
-        },
+    monkeypatch.setattr(
+        "app.services.consent.render_consent_form_pdf",
+        lambda **kwargs: _MINIMAL_PDF,
     )
-    assert req.status_code == 200, req.text
-    token = req.json()["token"]
+    pdf = await client.get(f"/competitors/{cid}/consent-form.pdf", headers=comp)
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"].startswith("application/pdf")
+    assert pdf.content.startswith(b"%PDF")
 
-    missing_scope = await client.post(f"/consent/{token}:grant", json={"scopes": []})
+    missing_scope = await _upload_consent(client, cid, comp, scopes=[])
     assert missing_scope.status_code == 422
     assert missing_scope.json()["error"]["code"] == "CONSENT_SCOPE_MISSING"
 
-    bad_token = await client.post("/consent/not-a-real-token:grant", json={"scopes": ["participation"]})
-    assert bad_token.status_code == 400
-    assert bad_token.json()["error"]["code"] == "CONSENT_TOKEN_INVALID"
+    bad_file = await client.post(
+        f"/competitors/{cid}/consent-form",
+        headers=comp,
+        files=[
+            ("scopes", (None, "participation")),
+            ("file", ("notes.txt", b"not-a-pdf", "text/plain")),
+        ],
+    )
+    assert bad_file.status_code == 422
+    assert bad_file.json()["error"]["code"] == "INVALID_FILE_TYPE"
 
-    granted = await client.post(
-        f"/consent/{token}:grant",
-        json={"scopes": ["participation"], "grantedBy": "Ama Guardian"},
+    granted = await _upload_consent(
+        client,
+        cid,
+        comp,
+        scopes=["participation"],
+        granted_by="Ama Guardian",
     )
     assert granted.status_code == 200, granted.text
     assert granted.json()["status"] == "PENDING_REVIEW"
     assert "participation" in granted.json()["scopesGranted"]
     assert granted.json()["publicProfileVisible"] is False
 
+    signed = await client.get(
+        f"/competitors/{cid}/consent-form/signed.pdf",
+        headers=comp,
+    )
+    assert signed.status_code == 200, signed.text
+    assert signed.headers["content-type"].startswith("application/pdf")
+    assert signed.content.startswith(b"%PDF")
+    assert "inline" in signed.headers.get("content-disposition", "")
+
+    signed_dl = await client.get(
+        f"/competitors/{cid}/consent-form/signed.pdf?download=true",
+        headers=comp,
+    )
+    assert signed_dl.status_code == 200, signed_dl.text
+    assert "attachment" in signed_dl.headers.get("content-disposition", "")
+
     async with session_manager.session() as session:
         competitor = await session.get(Competitor, uuid.UUID(cid))
         assert competitor is not None
         assert competitor.consent_participation_at is not None
         assert competitor.consent_participation_by == "Ama Guardian"
+        assert competitor.consent_form_key is not None
+        assert competitor.consent_form_sha256 is not None
+        assert competitor.consent_verification_status == "PENDING"
         assert can_progress_past_pending_review(competitor)
         assert "CONSENT_PENDING" not in (competitor.flags or [])
 
@@ -214,6 +292,28 @@ async def test_US_REG_02_AC2_participation_consent_lifts_block(
         ).scalar_one_or_none()
         assert audit is not None
 
+    admin_view = await client.get(
+        f"/admin/competitors/{cid}/consent-form/signed.pdf",
+        headers=auth_headers,
+    )
+    assert admin_view.status_code == 200, admin_view.text
+    assert admin_view.content.startswith(b"%PDF")
+
+    verified = await client.post(
+        f"/admin/competitors/{cid}/consent:verify",
+        json={"outcome": "VERIFIED"},
+        headers=auth_headers,
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["consentVerificationStatus"] == "VERIFIED"
+
+    async with session_manager.session() as session:
+        competitor = await session.get(Competitor, uuid.UUID(cid))
+        assert competitor is not None
+        assert competitor.consent_verification_status == "VERIFIED"
+        assert competitor.consent_verified_at is not None
+        assert competitor.status == "REGISTERED"
+
 
 @pytest.mark.asyncio
 async def test_US_REG_02_AC3_public_display_default_off(
@@ -221,34 +321,25 @@ async def test_US_REG_02_AC3_public_display_default_off(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed(session_manager, competition_id)
+    comp = await _comp(client, session_manager)
 
     created = await client.post(
-        f"/cycles/{cycle_id}/registrations",
+        f"/competitions/{competition_id}/registrations",
         json=_reg_payload(ctx, dob="2010-06-15"),
+        headers=comp,
     )
     cid = created.json()["competitorId"]
     ref = created.json()["competitorRef"]
 
-    req = await client.post(
-        f"/competitors/{cid}/consent-request",
-        json={"guardianName": "Guardian", "guardianEmail": "g@example.com"},
-    )
-    token = req.json()["token"]
-    await client.post(f"/consent/{token}:grant", json={"scopes": ["participation"]})
+    await _upload_consent(client, cid, comp, scopes=["participation"])
 
     hidden = await client.get(f"/public/competitors/{ref}")
     assert hidden.status_code == 404
     assert hidden.json()["error"]["code"] == "PROFILE_NOT_PUBLIC"
 
-    # New token after consumption — need fresh request for public scope
-    req2 = await client.post(
-        f"/competitors/{cid}/consent-request",
-        json={"guardianName": "Guardian", "guardianEmail": "g@example.com"},
-    )
-    token2 = req2.json()["token"]
-    pub = await client.post(f"/consent/{token2}:grant", json={"scopes": ["public"]})
+    pub = await _upload_consent(client, cid, comp, scopes=["public"])
     assert pub.status_code == 200, pub.text
     assert pub.json()["publicProfileVisible"] is True
 
@@ -264,24 +355,23 @@ async def test_US_REG_02_AC4_withdrawal(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed(session_manager, competition_id)
+    comp = await _comp(client, session_manager)
 
     created = await client.post(
-        f"/cycles/{cycle_id}/registrations",
+        f"/competitions/{competition_id}/registrations",
         json=_reg_payload(ctx, dob="2010-06-15"),
+        headers=comp,
     )
     cid = created.json()["competitorId"]
     ref = created.json()["competitorRef"]
 
-    req = await client.post(
-        f"/competitors/{cid}/consent-request",
-        json={"guardianName": "Guardian", "guardianEmail": "g@example.com"},
-    )
-    token = req.json()["token"]
-    await client.post(
-        f"/consent/{token}:grant",
-        json={"scopes": ["participation", "public"]},
+    await _upload_consent(
+        client,
+        cid,
+        comp,
+        scopes=["participation", "public"],
     )
     assert (await client.get(f"/public/competitors/{ref}")).status_code == 200
 
@@ -299,6 +389,7 @@ async def test_US_REG_02_AC4_withdrawal(
         assert competitor is not None
         assert competitor.consent_participation_at is None
         assert competitor.consent_public_at is None
+        assert competitor.consent_form_key is None
         assert not can_progress_past_pending_review(competitor)
 
         audit = (

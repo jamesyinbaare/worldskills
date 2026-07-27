@@ -19,6 +19,7 @@ from app.models import (
     MarkingScheme,
     ModerationFlag,
     Pathway,
+    Region,
     Score,
     Skill,
     Submission,
@@ -26,7 +27,7 @@ from app.models import (
     UserRole,
     Zone,
 )
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 # Fixtures: measurement 10; judgement raws 3,8,9 (spread 6 > tol 2);
 # STANDARDISE MEAN → 7; total = 10 + 7 = 17
@@ -44,33 +45,39 @@ RUBRIC = {
 }
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_moderation_world(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     judgement_values: list[int] | None = None,
 ) -> dict:
     values = judgement_values if judgement_values is not None else [3, 8, 9]
     async with session_manager.session() as session:
-        inst = Institution(name=f"Mod-Inst-{uuid.uuid4().hex[:6]}")
+        region = Region(name=f"Mod-Region-{uuid.uuid4().hex[:6]}")
+        session.add(region)
+        await session.flush()
+        inst = Institution(
+            name=f"Mod-Inst-{uuid.uuid4().hex[:6]}",
+            region_id=region.id,
+        )
         session.add(inst)
         await session.flush()
 
-        age = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS Rubric", rubric=dict(RUBRIC))
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
+        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS Rubric", rubric=dict(RUBRIC))
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
         session.add_all([age, path, scheme, zone])
         await session.flush()
 
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -82,7 +89,7 @@ async def _seed_moderation_world(
         await session.flush()
 
         competitor = Competitor(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill.id,
             zone_id=zone.id,
             institution_id=inst.id,
@@ -96,7 +103,7 @@ async def _seed_moderation_world(
         await session.flush()
 
         submission = Submission(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             competitor_id=competitor.id,
             state="ACCEPTED",
             score_total=None,
@@ -118,7 +125,7 @@ async def _seed_moderation_world(
             await session.flush()
             session.add(
                 ExpertAssignment(
-                    cycle_id=cycle_id,
+                    competition_id=competition_id,
                     expert_id=expert.id,
                     skill_id=skill.id,
                     zone_id=zone.id,
@@ -179,8 +186,8 @@ async def test_US_ASM_02_AC1_spread_flagged(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_moderation_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_moderation_world(session_manager, competition_id)
     headers = await _login(client, ctx["moderator"], "mod-pass-123")
 
     resp = await client.post(
@@ -214,8 +221,8 @@ async def test_US_ASM_02_AC2_standardise(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_moderation_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_moderation_world(session_manager, competition_id)
     headers = await _login(client, ctx["moderator"], "mod-pass-123")
     sub_id = ctx["submission_id"]
 
@@ -257,8 +264,8 @@ async def test_US_ASM_02_AC3_manual_adjust_requires_reason(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_moderation_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_moderation_world(session_manager, competition_id)
     headers = await _login(client, ctx["moderator"], "mod-pass-123")
     sub_id = ctx["submission_id"]
 
@@ -313,8 +320,8 @@ async def test_US_ASM_02_AC4_segregation(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_moderation_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_moderation_world(session_manager, competition_id)
     # Promote first expert to also hold moderator capability via CHIEF_EXPERT
     async with session_manager.session() as session:
         scorer = await session.get(User, ctx["experts"][0].id)

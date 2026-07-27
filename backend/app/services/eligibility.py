@@ -13,7 +13,7 @@ from app.core.rbac import is_admin_role
 from app.models import Competitor, Skill, User
 from app.schemas.eligibility import EligibilityOverrideIn, EligibilityOverrideOut, ScreenOut
 from app.services.audit import write_audit_event
-from app.services.config_resolution import ConfigIncompleteError, load_cycle_config
+from app.services.config_resolution import ConfigIncompleteError, load_competition_config
 from app.services.consent import compute_age
 
 _RULE_AGE = "AGE_EXCEEDS_LIMIT"
@@ -43,7 +43,7 @@ async def screen_competitor(
             fields=[FieldError("dateOfBirth", "REQUIRED")],
         )
 
-    cfg = await load_cycle_config(session, competitor.cycle_id)
+    cfg = await load_competition_config(session, competitor.competition_id)
     try:
         age_rule = cfg.age_rule_for_skill(competitor.skill_id)
     except ConfigIncompleteError:
@@ -111,7 +111,7 @@ async def screen_competitor(
         entity_id=str(competitor.id),
         actor_id=actor.id if actor else None,
         actor_role=actor.role.value if actor else "SYSTEM",
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         after={
             "eligible": eligible,
             "status": competitor.eligibility_status,
@@ -194,7 +194,7 @@ async def override_eligibility(
         entity_id=str(competitor.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         before=before,
         after={
             "eligible": eligible,

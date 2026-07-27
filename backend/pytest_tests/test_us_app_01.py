@@ -18,7 +18,7 @@ from app.models import (
     AuditEvent,
     Competitor,
     Institution,
-    InstitutionCycleMembership,
+    InstitutionCompetitionMembership,
     MarkingScheme,
     NotificationOutbox,
     Pathway,
@@ -31,50 +31,59 @@ from app.models import (
     UserRole,
     Zone,
 )
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload, region_id_by_name
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(timeZone="Africa/Accra"), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(timeZone="Africa/Accra"), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_appeals_world(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     window_closes_at: datetime | None = None,
     with_appeals_config: bool = True,
     dq_reasons: list[str] | None = None,
     tie_break_rules: list[str] | None = None,
 ) -> dict:
+    region_id = await region_id_by_name(session_manager, "Greater Accra")
     async with session_manager.session() as session:
         age = AgeRule(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="U25",
             max_age=25,
             reference_date=date(2026, 1, 1),
             open_category_enabled=False,
         )
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
-        institution = Institution(name=f"Inst-{uuid.uuid4().hex[:6]}", active=True)
-        other_inst = Institution(name=f"Other-{uuid.uuid4().hex[:6]}", active=True)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
+        institution = Institution(
+            name=f"Inst-{uuid.uuid4().hex[:6]}",
+            region_id=region_id,
+            active=True,
+        )
+        other_inst = Institution(
+            name=f"Other-{uuid.uuid4().hex[:6]}",
+            region_id=region_id,
+            active=True,
+        )
         session.add_all([age, path, scheme, zone, institution, other_inst])
         await session.flush()
 
         session.add(
-            InstitutionCycleMembership(
-                cycle_id=cycle_id,
+            InstitutionCompetitionMembership(
+                competition_id=competition_id,
                 institution_id=institution.id,
                 zone_id=zone.id,
             )
         )
 
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -86,14 +95,13 @@ async def _seed_appeals_world(
         await session.flush()
 
         stage = Stage(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill.id,
             name="Regional",
             order=1,
             quota=1,
             quota_by_zone={str(zone.id): 1},
             min_score=50,
-            scheme_id=scheme.id,
         )
         session.add(stage)
         await session.flush()
@@ -107,7 +115,7 @@ async def _seed_appeals_world(
         }
         for label, meta in specs.items():
             comp = Competitor(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 skill_id=skill.id,
                 zone_id=zone.id,
                 institution_id=meta["inst"],
@@ -126,7 +134,7 @@ async def _seed_appeals_world(
             competitors[label] = comp
             session.add(
                 Submission(
-                    cycle_id=cycle_id,
+                    competition_id=competition_id,
                     competitor_id=comp.id,
                     stage_id=stage.id,
                     state="ACCEPTED",
@@ -139,7 +147,7 @@ async def _seed_appeals_world(
             closes = window_closes_at if window_closes_at is not None else datetime.utcnow() + timedelta(days=7)
             session.add(
                 AppealsConfig(
-                    cycle_id=cycle_id,
+                    competition_id=competition_id,
                     appeal_window_opens_at=datetime.utcnow() - timedelta(days=1),
                     appeal_window_closes_at=closes,
                     dq_reasons=dq_reasons or ["CHEATING", "MISCONDUCT", "SAFETY"],
@@ -212,12 +220,12 @@ async def test_US_APP_01_AC1_within_window(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_appeals_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_appeals_world(session_manager, competition_id)
     headers = await _login_headers(client, ctx["inst_email"], "inst-pass-123")
 
     resp = await client.post(
-        f"/cycles/{cycle_id}/appeals",
+        f"/competitions/{competition_id}/appeals",
         json={
             "competitorId": str(ctx["competitors"]["A"]),
             "stageId": str(ctx["stage_id"]),
@@ -251,16 +259,16 @@ async def test_US_APP_01_AC2_out_of_window(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
+    competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed_appeals_world(
         session_manager,
-        cycle_id,
+        competition_id,
         window_closes_at=datetime.utcnow() - timedelta(hours=1),
     )
     headers = await _login_headers(client, ctx["inst_email"], "inst-pass-123")
 
     resp = await client.post(
-        f"/cycles/{cycle_id}/appeals",
+        f"/competitions/{competition_id}/appeals",
         json={
             "competitorId": str(ctx["competitors"]["A"]),
             "stageId": str(ctx["stage_id"]),
@@ -278,10 +286,10 @@ async def test_US_APP_01_AC3_independent_routing(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_appeals_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_appeals_world(session_manager, competition_id)
     lodge = await client.post(
-        f"/cycles/{cycle_id}/appeals",
+        f"/competitions/{competition_id}/appeals",
         json={
             "competitorId": str(ctx["competitors"]["A"]),
             "stageId": str(ctx["stage_id"]),
@@ -316,13 +324,13 @@ async def test_US_APP_01_AC4_ruling_and_remedy(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_appeals_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_appeals_world(session_manager, competition_id)
 
     # Seed a confirmed shortlist with A ADVANCED; B waitlisted — uphold reinstate+re-rank
     async with session_manager.session() as session:
         shortlist = Shortlist(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             stage_id=ctx["stage_id"],
             skill_id=ctx["skill_id"],
             state="CONFIRMED",
@@ -361,7 +369,7 @@ async def test_US_APP_01_AC4_ruling_and_remedy(
         await session.commit()
 
     lodge = await client.post(
-        f"/cycles/{cycle_id}/appeals",
+        f"/competitions/{competition_id}/appeals",
         json={
             "competitorId": str(ctx["competitors"]["A"]),
             "stageId": str(ctx["stage_id"]),
@@ -413,7 +421,7 @@ async def test_US_APP_01_AC4_ruling_and_remedy(
             await session.execute(
                 select(NotificationOutbox).where(
                     NotificationOutbox.event_key == "APPEAL_OUTCOME",
-                    NotificationOutbox.cycle_id == cycle_id,
+                    NotificationOutbox.competition_id == competition_id,
                 )
             )
         ).scalars().all()
@@ -432,13 +440,13 @@ async def test_US_APP_01_AC5_disqualification(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_appeals_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_appeals_world(session_manager, competition_id)
     cid = ctx["competitors"]["A"]
 
     async with session_manager.session() as session:
         shortlist = Shortlist(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             stage_id=ctx["stage_id"],
             skill_id=ctx["skill_id"],
             state="CONFIRMED",
@@ -517,16 +525,16 @@ async def test_US_APP_01_AC6_tie_break(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
+    competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed_appeals_world(
         session_manager,
-        cycle_id,
+        competition_id,
         tie_break_rules=["SCORE_DESC", "YOUNGER_FIRST", "REF_NO_ASC"],
     )
 
     # A (younger, 2005) and B (older, 2004) tied at 90; quota=1 → A advances
     resp = await client.post(
-        f"/cycles/{cycle_id}/stages/{ctx['stage_id']}:shortlist",
+        f"/competitions/{competition_id}/stages/{ctx['stage_id']}:shortlist",
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -540,11 +548,61 @@ async def test_US_APP_01_AC6_tie_break(
     assert any(i["competitorId"] == str(ctx["competitors"]["B"]) for i in waitlisted)
 
     # Missing tie-break config with a tie at boundary → CONFIG_INCOMPLETE
-    cycle2 = await _create_cycle(client, auth_headers)
+    cycle2 = await _create_competition(client, auth_headers)
     ctx2 = await _seed_appeals_world(session_manager, cycle2, with_appeals_config=False)
     missing = await client.post(
-        f"/cycles/{cycle2}/stages/{ctx2['stage_id']}:shortlist",
+        f"/competitions/{cycle2}/stages/{ctx2['stage_id']}:shortlist",
         headers=auth_headers,
     )
     assert missing.status_code == 409, missing.text
     assert missing.json()["error"]["code"] == "CONFIG_INCOMPLETE"
+
+
+@pytest.mark.asyncio
+async def test_US_APP_01_list_appeals(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_appeals_world(session_manager, competition_id)
+    headers = await _login_headers(client, ctx["inst_email"], "inst-pass-123")
+
+    lodge = await client.post(
+        f"/competitions/{competition_id}/appeals",
+        json={
+            "competitorId": str(ctx["competitors"]["A"]),
+            "stageId": str(ctx["stage_id"]),
+            "reason": "Listable appeal reason",
+        },
+        headers=headers,
+    )
+    assert lodge.status_code == 201, lodge.text
+    aid = lodge.json()["appealId"]
+
+    listed = await client.get(
+        f"/competitions/{competition_id}/appeals",
+        headers=auth_headers,
+    )
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()
+    assert any(r["appealId"] == aid for r in rows)
+    match = next(r for r in rows if r["appealId"] == aid)
+    assert match["skillId"] == str(ctx["skill_id"])
+    assert match["state"] == "SUBMITTED"
+
+    by_skill = await client.get(
+        f"/competitions/{competition_id}/appeals",
+        params={"skillId": str(ctx["skill_id"])},
+        headers=auth_headers,
+    )
+    assert by_skill.status_code == 200, by_skill.text
+    assert any(r["appealId"] == aid for r in by_skill.json())
+
+    by_q = await client.get(
+        f"/competitions/{competition_id}/appeals",
+        params={"q": "Listable"},
+        headers=auth_headers,
+    )
+    assert by_q.status_code == 200, by_q.text
+    assert any(r["appealId"] == aid for r in by_q.json())

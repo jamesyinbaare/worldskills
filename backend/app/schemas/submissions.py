@@ -14,7 +14,7 @@ class SubmissionOpen(BaseModel):
 
 class SubmissionOut(BaseModel):
     submissionId: UUID
-    cycleId: UUID
+    competitionId: UUID
     stageId: UUID | None = None
     competitorId: UUID
     state: str

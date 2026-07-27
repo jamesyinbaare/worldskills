@@ -93,7 +93,7 @@ async def test_US_NOT_01_AC1_event_notification(session_manager: DBManager) -> N
             event="PROJECT_REMINDER",
             recipient_id=uid,
             context={"name": "Ada", "deadline": "2026-08-01"},
-            cycle_id=None,
+            competition_id=None,
             actor=user,
         )
         assert result.status == "SENT"

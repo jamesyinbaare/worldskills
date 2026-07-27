@@ -20,7 +20,7 @@ from app.models import (
     Zone,
 )
 from app.services import public_portal as portal_service
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 _SENSITIVE_KEYS = {
     "dateOfBirth",
@@ -44,15 +44,15 @@ _SENSITIVE_KEYS = {
 }
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(timeZone="Africa/Accra"), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(timeZone="Africa/Accra"), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_portal_world(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     rate_limit_per_minute: int = 1000,
     max_page_size: int = 50,
@@ -61,22 +61,22 @@ async def _seed_portal_world(
 ) -> dict:
     async with session_manager.session() as session:
         age = AgeRule(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="U25",
             max_age=25,
             reference_date=date(2026, 1, 1),
             open_category_enabled=False,
         )
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
-        zone_a = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
-        zone_b = Zone(cycle_id=cycle_id, name="Ashanti", active=True)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        zone_a = Zone(competition_id=competition_id, name="Greater Accra", active=True)
+        zone_b = Zone(competition_id=competition_id, name="Ashanti", active=True)
         inst = Institution(name=f"Public Inst {uuid.uuid4().hex[:6]}", active=True)
         session.add_all([age, path, scheme, zone_a, zone_b, inst])
         await session.flush()
 
         skill_web = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -85,7 +85,7 @@ async def _seed_portal_world(
             active=True,
         )
         skill_cook = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Cooking",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -99,7 +99,7 @@ async def _seed_portal_world(
         if with_config:
             session.add(
                 PublicPortalConfig(
-                    cycle_id=cycle_id,
+                    competition_id=competition_id,
                     public_fields=public_fields
                     or ["displayName", "photo", "institution", "skill", "stageStatus", "zone"],
                     rate_limit_per_minute=rate_limit_per_minute,
@@ -109,7 +109,7 @@ async def _seed_portal_world(
 
         # Visible (consent) in web / Accra
         visible = Competitor(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill_web.id,
             zone_id=zone_a.id,
             institution_id=inst.id,
@@ -134,7 +134,7 @@ async def _seed_portal_world(
         )
         # Visible in cooking / Ashanti
         visible_b = Competitor(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill_cook.id,
             zone_id=zone_b.id,
             institution_id=inst.id,
@@ -155,7 +155,7 @@ async def _seed_portal_world(
         )
         # Hidden — no public consent (minor default)
         hidden = Competitor(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill_web.id,
             zone_id=zone_a.id,
             institution_id=inst.id,
@@ -211,11 +211,11 @@ async def test_US_PUB_01_AC1_directory_filter(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_portal_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_portal_world(session_manager, competition_id)
 
     resp = await client.get(
-        f"/public/cycles/{cycle_id}/competitors",
+        f"/public/competitions/{competition_id}/competitors",
         params={"skill": str(ctx["skill_web_id"])},
     )
     assert resp.status_code == 200, resp.text
@@ -231,9 +231,9 @@ async def test_US_PUB_01_AC1_directory_filter(
         _assert_no_sensitive(item)
 
     # Missing portal config → CONFIG_INCOMPLETE
-    cycle2 = await _create_cycle(client, auth_headers)
+    cycle2 = await _create_competition(client, auth_headers)
     await _seed_portal_world(session_manager, cycle2, with_config=False)
-    missing = await client.get(f"/public/cycles/{cycle2}/competitors")
+    missing = await client.get(f"/public/competitions/{cycle2}/competitors")
     assert missing.status_code == 409, missing.text
     assert missing.json()["error"]["code"] == "CONFIG_INCOMPLETE"
 
@@ -244,10 +244,10 @@ async def test_US_PUB_01_AC2_consent_gate(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_portal_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_portal_world(session_manager, competition_id)
 
-    listing = await client.get(f"/public/cycles/{cycle_id}/competitors")
+    listing = await client.get(f"/public/competitions/{competition_id}/competitors")
     assert listing.status_code == 200, listing.text
     ids = {item["competitorId"] for item in listing.json()["items"]}
     assert str(ctx["hidden_id"]) not in ids
@@ -265,8 +265,8 @@ async def test_US_PUB_01_AC3_no_sensitive_data(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_portal_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_portal_world(session_manager, competition_id)
 
     profile = await client.get(f"/public/competitors/{ctx['visible_id']}")
     assert profile.status_code == 200, profile.text
@@ -293,10 +293,10 @@ async def test_US_PUB_01_AC4_anti_scraping(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
+    competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed_portal_world(
         session_manager,
-        cycle_id,
+        competition_id,
         rate_limit_per_minute=3,
         max_page_size=2,
     )
@@ -304,14 +304,14 @@ async def test_US_PUB_01_AC4_anti_scraping(
 
     # Bulk export / oversized page refused
     export = await client.get(
-        f"/public/cycles/{cycle_id}/competitors",
+        f"/public/competitions/{competition_id}/competitors",
         params={"limit": 100},
     )
     assert export.status_code == 429, export.text
     assert export.json()["error"]["code"] in {"RATE_LIMITED", "ABUSE_SUSPECTED", "EXPORT_REFUSED"}
 
     export_fmt = await client.get(
-        f"/public/cycles/{cycle_id}/competitors",
+        f"/public/competitions/{competition_id}/competitors",
         params={"format": "csv"},
     )
     assert export_fmt.status_code == 429, export_fmt.text
@@ -322,7 +322,7 @@ async def test_US_PUB_01_AC4_anti_scraping(
     codes = []
     for _ in range(5):
         r = await client.get(
-            f"/public/cycles/{cycle_id}/competitors",
+            f"/public/competitions/{competition_id}/competitors",
             params={"skill": str(ctx["skill_web_id"])},
             headers={"X-Forwarded-For": "203.0.113.50"},
         )
@@ -331,7 +331,7 @@ async def test_US_PUB_01_AC4_anti_scraping(
     throttled = [c for c in codes if c == 429]
     assert len(throttled) >= 1
     last = await client.get(
-        f"/public/cycles/{cycle_id}/competitors",
+        f"/public/competitions/{competition_id}/competitors",
         headers={"X-Forwarded-For": "203.0.113.50"},
     )
     # After limit, continued abuse stays blocked

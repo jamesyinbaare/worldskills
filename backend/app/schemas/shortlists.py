@@ -21,7 +21,9 @@ class ShortlistGenerateOut(BaseModel):
     stageId: UUID
     state: str
     isFinalStage: bool
-    byZone: dict[str, list[ShortlistRankedItem]]
+    selectionMode: str
+    byZone: dict[str, list[ShortlistRankedItem]] | None = None
+    national: list[ShortlistRankedItem] | None = None
     generatedAt: datetime
 
 

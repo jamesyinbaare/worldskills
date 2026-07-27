@@ -7,7 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
@@ -16,16 +16,17 @@ from app.models import (
     AppealCase,
     AppealsConfig,
     Competitor,
-    Cycle,
+    Competition,
     NotificationOutbox,
     Shortlist,
     ShortlistEntry,
+    Skill,
     Stage,
     Submission,
     User,
     UserRole,
 )
-from app.schemas.appeals import AppealOut, DisqualifyOut
+from app.schemas.appeals import AppealListItem, AppealOut, DisqualifyOut
 from app.services.audit import write_audit_event
 from app.services.lifecycle import _find_advanced_entry, _promote_waitlist
 from app.services.pathway_engine import Candidate, has_score_tie_at_quota_boundary, rank_for_shortlist
@@ -34,7 +35,7 @@ _VALID_OUTCOMES = {"UPHELD", "DISMISSED"}
 _VALID_REMEDIES = {"RE_SCORE", "RE_RANK", "REINSTATE"}
 
 
-def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
+def _cycle_local_now(cycle: Competition, *, now: datetime | None = None) -> datetime:
     tz = ZoneInfo(cycle.time_zone)
     base = now or datetime.utcnow()
     if base.tzinfo is not None:
@@ -44,14 +45,14 @@ def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
     return base.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
 
 
-async def load_appeals_config(session: AsyncSession, cycle_id: uuid.UUID) -> AppealsConfig:
+async def load_appeals_config(session: AsyncSession, competition_id: uuid.UUID) -> AppealsConfig:
     cfg = (
-        await session.execute(select(AppealsConfig).where(AppealsConfig.cycle_id == cycle_id))
+        await session.execute(select(AppealsConfig).where(AppealsConfig.competition_id == competition_id))
     ).scalar_one_or_none()
     if cfg is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "Appeals configuration is not set for this cycle",
+            "Appeals configuration is not set for this competition",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("appealsConfig", "CONFIG_INCOMPLETE")],
         )
@@ -74,18 +75,32 @@ async def load_appeals_config(session: AsyncSession, cycle_id: uuid.UUID) -> App
 
 async def require_tie_break_rules_if_needed(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     candidates: list[Candidate],
     quota_by_zone: dict[str, int],
     min_score: int | None,
+    national_pool: bool = False,
+    overall_quota: int | None = None,
 ) -> list[str] | None:
     """Return configured tie-break rules; fail closed when a boundary tie exists without config."""
-    tied = has_score_tie_at_quota_boundary(
-        candidates, quota_by_zone=quota_by_zone, min_score=min_score
-    )
+    if national_pool:
+        from app.services.pathway_engine import sort_candidates_with_tie_break
+
+        ranked = sort_candidates_with_tie_break(candidates)
+        n = int(overall_quota or 0)
+        eligible = [c for c in ranked if min_score is None or c.score >= min_score]
+        tied = False
+        if 0 < n < len(eligible):
+            cut_score = eligible[n - 1].score
+            at_boundary = [c for c in eligible if c.score == cut_score]
+            tied = len(at_boundary) > 1
+    else:
+        tied = has_score_tie_at_quota_boundary(
+            candidates, quota_by_zone=quota_by_zone, min_score=min_score
+        )
     cfg = (
-        await session.execute(select(AppealsConfig).where(AppealsConfig.cycle_id == cycle_id))
+        await session.execute(select(AppealsConfig).where(AppealsConfig.competition_id == competition_id))
     ).scalar_one_or_none()
     if tied:
         if cfg is None or not cfg.tie_break_rules:
@@ -104,7 +119,7 @@ async def require_tie_break_rules_if_needed(
 def _case_out(case: AppealCase) -> AppealOut:
     return AppealOut(
         appealId=case.id,
-        cycleId=case.cycle_id,
+        competitionId=case.competition_id,
         competitorId=case.competitor_id,
         stageId=case.stage_id,
         state=case.state,
@@ -148,7 +163,7 @@ def _require_rule_capability(actor: User) -> None:
 
 async def lodge_appeal(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     competitor_id: uuid.UUID,
     stage_id: uuid.UUID,
@@ -167,21 +182,21 @@ async def lodge_appeal(
         )
     reason = str(reason).strip()
 
-    cycle = await session.get(Cycle, cycle_id)
+    cycle = await session.get(Competition, competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
     competitor = await session.get(Competitor, competitor_id)
-    if competitor is None or competitor.cycle_id != cycle_id:
+    if competitor is None or competitor.competition_id != competition_id:
         raise AppError("COMPETITOR_NOT_FOUND", "Competitor not found in cycle", status_code=404)
 
     stage = await session.get(Stage, stage_id)
-    if stage is None or stage.cycle_id != cycle_id:
+    if stage is None or stage.competition_id != competition_id:
         raise AppError("STAGE_NOT_FOUND", "Stage not found in cycle", status_code=404)
 
     _can_lodge(actor, competitor)
 
-    cfg = await load_appeals_config(session, cycle_id)
+    cfg = await load_appeals_config(session, competition_id)
     local_now = _cycle_local_now(cycle, now=now)
     if local_now < cfg.appeal_window_opens_at or local_now > cfg.appeal_window_closes_at:
         raise AppError(
@@ -192,7 +207,7 @@ async def lodge_appeal(
         )
 
     case = AppealCase(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         competitor_id=competitor_id,
         stage_id=stage_id,
         reason=reason,
@@ -210,7 +225,7 @@ async def lodge_appeal(
         entity_id=str(case.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after={
             "state": "SUBMITTED",
             "competitorId": str(competitor_id),
@@ -284,7 +299,7 @@ async def assign_appeal(
         entity_id=str(case.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=case.cycle_id,
+        competition_id=case.competition_id,
         before=before,
         after={"state": "UNDER_REVIEW", "officerId": str(officer_id)},
         ip=ip,
@@ -314,7 +329,7 @@ async def _apply_remedy(
             await session.execute(
                 select(Shortlist)
                 .where(
-                    Shortlist.cycle_id == case.cycle_id,
+                    Shortlist.competition_id == case.competition_id,
                     Shortlist.stage_id == case.stage_id,
                     Shortlist.state == "CONFIRMED",
                 )
@@ -336,7 +351,7 @@ async def _apply_remedy(
                 entry.reason = "APPEAL_REINSTATE"
 
     elif remedy == "RE_RANK":
-        await _rerank_stage(session, case.cycle_id, case.stage_id)
+        await _rerank_stage(session, case.competition_id, case.stage_id)
 
     elif remedy == "RE_SCORE":
         subs = (
@@ -353,7 +368,7 @@ async def _apply_remedy(
                 sub.state = "ACCEPTED"  # stay accepted but unscored for re-mark
         session.add(
             NotificationOutbox(
-                cycle_id=case.cycle_id,
+                competition_id=case.competition_id,
                 recipient_role="EXPERT",
                 recipient_id=None,
                 template="APPEAL_RE_SCORE",
@@ -368,16 +383,16 @@ async def _apply_remedy(
         )
 
 
-async def _rerank_stage(session: AsyncSession, cycle_id: uuid.UUID, stage_id: uuid.UUID) -> None:
+async def _rerank_stage(session: AsyncSession, competition_id: uuid.UUID, stage_id: uuid.UUID) -> None:
     stage = await session.get(Stage, stage_id)
     if stage is None:
         return
-    cfg = await load_appeals_config(session, cycle_id)
+    cfg = await load_appeals_config(session, competition_id)
     quota_by_zone = {str(k): int(v) for k, v in (stage.quota_by_zone or {}).items()}
     subs = (
         await session.execute(
             select(Submission).where(
-                Submission.cycle_id == cycle_id,
+                Submission.competition_id == competition_id,
                 Submission.stage_id == stage_id,
                 Submission.state.in_(["ACCEPTED", "LATE"]),
                 Submission.score_total.is_not(None),
@@ -414,7 +429,7 @@ async def _rerank_stage(session: AsyncSession, cycle_id: uuid.UUID, stage_id: uu
         await session.execute(
             select(Shortlist)
             .where(
-                Shortlist.cycle_id == cycle_id,
+                Shortlist.competition_id == competition_id,
                 Shortlist.stage_id == stage_id,
                 Shortlist.state == "CONFIRMED",
             )
@@ -539,7 +554,7 @@ async def rule_appeal(
 
     session.add(
         NotificationOutbox(
-            cycle_id=case.cycle_id,
+            competition_id=case.competition_id,
             recipient_role="COMPETITOR",
             recipient_id=case.competitor_id,
             template="APPEAL_OUTCOME",
@@ -561,7 +576,7 @@ async def rule_appeal(
         entity_id=str(case.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=case.cycle_id,
+        competition_id=case.competition_id,
         before=before,
         after={
             "state": case.state,
@@ -600,7 +615,7 @@ async def disqualify_competitor(
     if competitor is None:
         raise AppError("COMPETITOR_NOT_FOUND", "Competitor not found", status_code=404)
 
-    cfg = await load_appeals_config(session, competitor.cycle_id)
+    cfg = await load_appeals_config(session, competitor.competition_id)
     allowed = {str(r).upper() for r in (cfg.dq_reasons or [])}
     if reason.upper() not in allowed:
         raise AppError(
@@ -619,9 +634,9 @@ async def disqualify_competitor(
             fields=[FieldError("status", "ALREADY_DISQUALIFIED")],
         )
 
-    cycle = await session.get(Cycle, competitor.cycle_id)
+    cycle = await session.get(Competition, competitor.competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
     before = {"status": competitor.status}
     competitor.status = "DISQUALIFIED"
@@ -640,7 +655,7 @@ async def disqualify_competitor(
 
         life_cfg = (
             await session.execute(
-                select(LifecycleConfig).where(LifecycleConfig.cycle_id == cycle.id)
+                select(LifecycleConfig).where(LifecycleConfig.competition_id == cycle.id)
             )
         ).scalar_one_or_none()
         if life_cfg and life_cfg.waitlist_order:
@@ -662,7 +677,7 @@ async def disqualify_competitor(
         entity_id=str(competitor.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         before=before,
         after={
             "status": "DISQUALIFIED",
@@ -681,3 +696,84 @@ async def disqualify_competitor(
         reason=reason,
         promotedCompetitorId=promoted_id,
     )
+
+
+def _competitor_display_name(competitor: Competitor | None) -> str | None:
+    if competitor is None:
+        return None
+    parts = [p for p in (competitor.given_names, competitor.family_name) if p]
+    return " ".join(parts) if parts else None
+
+
+def _require_appeal_list(actor: User) -> None:
+    if is_admin_role(actor.role) or has_capability(actor.role, Capability.RULE_ON_APPEAL):
+        return
+    raise AppError(
+        "FORBIDDEN",
+        "Appeals officer or admin required",
+        status_code=403,
+        fields=[FieldError("role", "FORBIDDEN")],
+    )
+
+
+async def list_appeals(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    skill_id: uuid.UUID | None = None,
+    q: str | None = None,
+    state: str | None = None,
+) -> list[AppealListItem]:
+    _require_appeal_list(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    stmt = (
+        select(AppealCase, Competitor, Stage, Skill)
+        .outerjoin(Competitor, Competitor.id == AppealCase.competitor_id)
+        .outerjoin(Stage, Stage.id == AppealCase.stage_id)
+        .outerjoin(Skill, Skill.id == Stage.skill_id)
+        .where(AppealCase.competition_id == competition_id)
+    )
+    if skill_id is not None:
+        stmt = stmt.where(Stage.skill_id == skill_id)
+    if state and state.strip():
+        stmt = stmt.where(AppealCase.state == state.strip().upper())
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                AppealCase.reason.ilike(term),
+                AppealCase.state.ilike(term),
+                Competitor.ref_no.ilike(term),
+                Competitor.given_names.ilike(term),
+                Competitor.family_name.ilike(term),
+                Skill.name.ilike(term),
+                Stage.name.ilike(term),
+            )
+        )
+    stmt = stmt.order_by(AppealCase.submitted_at.desc())
+    rows = (await session.execute(stmt)).all()
+    return [
+        AppealListItem(
+            appealId=case.id,
+            competitionId=case.competition_id,
+            competitorId=case.competitor_id,
+            competitorRef=comp.ref_no if comp else None,
+            competitorName=_competitor_display_name(comp),
+            stageId=case.stage_id,
+            stageName=stage.name if stage else None,
+            skillId=skill.id if skill else None,
+            skillName=skill.name if skill else None,
+            state=case.state,
+            reason=case.reason,
+            officerId=case.officer_id,
+            rulingOutcome=case.ruling_outcome,
+            rulingReason=case.ruling_reason,
+            remedy=case.remedy,
+            submittedAt=case.submitted_at,
+        )
+        for case, comp, stage, skill in rows
+    ]

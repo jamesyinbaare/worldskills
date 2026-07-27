@@ -1,0 +1,3 @@
+{
+  "/admin/competitions/[id]/skills/[skillId]/stages/[stageId]/exercise/page": "app/admin/competitions/[id]/skills/[skillId]/stages/[stageId]/exercise/page.js"
+}

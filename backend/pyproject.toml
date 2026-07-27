@@ -7,12 +7,15 @@ requires-python = ">=3.14"
 dependencies = [
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.139.2",
+    "google-cloud-storage>=3.0.0",
+    "openpyxl>=3.1.5",
     "passlib[bcrypt]>=1.7.4",
     "psycopg2-binary>=2.9.12",
     "pydantic-settings>=2.14.2",
     "python-jose[cryptography]>=3.5.0",
     "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.51",
+    "weasyprint>=66.0",
 ]
 
 [dependency-groups]

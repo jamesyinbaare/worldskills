@@ -94,6 +94,7 @@ _KNOWN_REASONS = {
 
 async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
     fields: list[dict[str, str]] = []
+    messages: list[str] = []
     for err in exc.errors():
         loc = err.get("loc", ())
         name = ".".join(str(p) for p in loc if p != "body")
@@ -106,10 +107,28 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
                 break
         if err_type == "MISSING":
             reason = "REQUIRED"
+        # Normalize opaque pydantic date errors into a stable reason
+        if "DATE" in err_type and "PARSING" in err_type:
+            reason = "INVALID_DATE"
+        elif err_type in {"DATE_TYPE", "DATE_FROM_DATETIME_PARSING", "DATE_PARSING"}:
+            reason = "INVALID_DATE"
         fields.append({"name": name or "body", "reason": reason})
+        label = name or "field"
+        if reason == "REQUIRED":
+            messages.append(f"{label} is required")
+        elif reason == "INVALID_DATE":
+            messages.append(f"{label} must be a valid date")
+        else:
+            messages.append(f"{label}: {reason.replace('_', ' ').lower()}")
+
+    summary = (
+        messages[0]
+        if len(messages) == 1
+        else "Some fields need attention before we can submit."
+    )
     return envelope_response(
         code="VALIDATION_ERROR",
-        message="Request validation failed",
+        message=summary,
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         fields=fields,
     )

@@ -15,11 +15,11 @@ from app.core.rbac import (
     check_segregation_of_duties,
     has_capability,
 )
-from app.models import Cycle, CycleStatus, User, UserRole
+from app.models import Competition, CompetitionStatus, User, UserRole
 from app.services.audit import verify_audit_signature, write_audit_event
-from app.services.config_resolution import ConfigIncompleteError, load_cycle_config
+from app.services.config_resolution import ConfigIncompleteError, load_competition_config
 from app.services.storage import InfectedScanner, LocalObjectStorage, ScanResult
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_audit_write_and_verify(db_session: AsyncSession, admin_user: User
     event = await write_audit_event(
         db_session,
         action="TEST",
-        entity_type="Cycle",
+        entity_type="Competition",
         entity_id=str(uuid.uuid4()),
         actor_id=admin_user.id,
         actor_role=admin_user.role.value,
@@ -74,19 +74,19 @@ async def test_audit_write_and_verify(db_session: AsyncSession, admin_user: User
 
 @pytest.mark.asyncio
 async def test_config_resolution_fail_closed(db_session: AsyncSession) -> None:
-    cycle = Cycle(
+    cycle = Competition(
         name="Cfg Cycle",
         period_start=__import__("datetime").date.today(),
         period_end=__import__("datetime").date.today() + __import__("datetime").timedelta(days=10),
         time_zone="Africa/Accra",
-        status=CycleStatus.DRAFT,
+        status=CompetitionStatus.DRAFT,
         languages=["en"],
     )
     db_session.add(cycle)
     await db_session.commit()
     await db_session.refresh(cycle)
 
-    cfg = await load_cycle_config(db_session, cycle.id)
+    cfg = await load_competition_config(db_session, cycle.id)
     with pytest.raises(ConfigIncompleteError) as exc:
         cfg.require("ageRuleId", None, entity="skill-1")
     assert exc.value.code == "CONFIG_INCOMPLETE"
@@ -129,8 +129,8 @@ async def test_competitor_forbidden_from_cycles(
     )
     token = login.json()["access_token"]
     resp = await client.post(
-        "/cycles",
-        json=cycle_payload(),
+        "/competitions",
+        json=competition_payload(),
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403

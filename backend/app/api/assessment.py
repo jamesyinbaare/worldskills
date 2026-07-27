@@ -10,11 +10,18 @@ from app.dependencies.auth import CurrentUserDep, client_meta, require_capabilit
 from app.dependencies.database import DBSessionDep
 from app.models import User
 from app.schemas.assessment import AssessmentViewOut, ScorePut, ScorePutOut
-from app.schemas.assignments import AssessorQueueOut
+from app.schemas.assignments import AssessorQueueOut, MyAssignmentOut
 from app.schemas.moderation import ModerationAnalyseOut, ModerationApplyIn, ModerationApplyOut
+from app.schemas.scoring_overview import (
+    ResolveTotalIn,
+    ResolveTotalOut,
+    ScoringDetailOut,
+    ScoringListItemOut,
+)
 from app.services import assessment as assessment_service
 from app.services import assignments as assignment_service
 from app.services import moderation as moderation_service
+from app.services import scoring_overview as scoring_overview_service
 
 router = APIRouter(tags=["assessment"])
 
@@ -22,12 +29,21 @@ ScorerDep = Annotated[User, Depends(require_capability(Capability.SCORE_SUBMISSI
 ModeratorDep = Annotated[User, Depends(require_capability(Capability.MODERATE_SCORE))]
 
 
+@router.get("/assessors/me/assignments", response_model=list[MyAssignmentOut])
+async def list_my_assignments(
+    session: DBSessionDep,
+    user: CurrentUserDep,
+) -> list[MyAssignmentOut]:
+    """Expert portal discovery — competitions/skills/zones assigned to the signed-in assessor."""
+    return await assignment_service.list_my_assignments(session, actor=user)
+
+
 @router.get("/assessors/{expert_id}/queue", response_model=AssessorQueueOut)
 async def get_assessor_queue_spec(
     expert_id: uuid.UUID,
     session: DBSessionDep,
     user: CurrentUserDep,
-    cycle_id: uuid.UUID = Query(..., alias="cycleId"),
+    competition_id: uuid.UUID = Query(..., alias="competitionId"),
 ) -> AssessorQueueOut:
     """US-ASM-01 queue — experts may fetch their own; admins may fetch any."""
     from app.core.rbac import is_admin_role
@@ -36,7 +52,60 @@ async def get_assessor_queue_spec(
         from app.core.errors import AppError
 
         raise AppError("FORBIDDEN", "Cannot view another assessor's queue", status_code=403)
-    return await assignment_service.get_assessor_queue(session, cycle_id, expert_id)
+    return await assignment_service.get_assessor_queue(session, competition_id, expert_id)
+
+
+@router.get(
+    "/competitions/{competition_id}/scoring",
+    response_model=list[ScoringListItemOut],
+)
+async def list_scoring_overview(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: ModeratorDep,
+    skillId: Annotated[uuid.UUID | None, Query()] = None,
+    stageId: Annotated[uuid.UUID | None, Query()] = None,
+) -> list[ScoringListItemOut]:
+    return await scoring_overview_service.list_scoring_overview(
+        session,
+        competition_id,
+        actor=actor,
+        skill_id=skillId,
+        stage_id=stageId,
+    )
+
+
+@router.get("/submissions/{submission_id}/scoring", response_model=ScoringDetailOut)
+async def get_scoring_detail(
+    submission_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: ModeratorDep,
+) -> ScoringDetailOut:
+    return await scoring_overview_service.get_scoring_detail(
+        session, submission_id, actor=actor
+    )
+
+
+@router.post(
+    "/submissions/{submission_id}/scoring:resolve-total",
+    response_model=ResolveTotalOut,
+)
+async def resolve_submission_total(
+    submission_id: uuid.UUID,
+    payload: ResolveTotalIn,
+    session: DBSessionDep,
+    actor: ModeratorDep,
+    request: Request,
+) -> ResolveTotalOut:
+    ip, ua = client_meta(request)
+    return await scoring_overview_service.resolve_submission_total(
+        session,
+        submission_id,
+        payload,
+        actor=actor,
+        ip=ip,
+        user_agent=ua,
+    )
 
 
 @router.get("/submissions/{submission_id}/assessment", response_model=AssessmentViewOut)

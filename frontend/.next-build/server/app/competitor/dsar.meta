@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/competitor/layout,_N_T_/competitor/(portal)/layout,_N_T_/competitor/(portal)/dsar/layout,_N_T_/competitor/(portal)/dsar/page,_N_T_/competitor/dsar"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/competitor/!KHBvcnRhbCk/dsar/__PAGE__",
+    "/competitor/!KHBvcnRhbCk/dsar",
+    "/competitor/!KHBvcnRhbCk",
+    "/competitor",
+    "/_index",
+    "/_head"
+  ]
+}

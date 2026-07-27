@@ -31,7 +31,7 @@ def sign_audit_payload(payload: dict[str, Any]) -> str:
 
 def verify_audit_signature(event: AuditEvent) -> bool:
     payload = {
-        "cycleId": str(event.cycle_id) if event.cycle_id else None,
+        "competitionId": str(event.competition_id) if event.competition_id else None,
         "actorId": str(event.actor_id) if event.actor_id else None,
         "actorRole": event.actor_role,
         "action": event.action,
@@ -56,7 +56,7 @@ async def write_audit_event(
     entity_id: str,
     actor_id: uuid.UUID | None = None,
     actor_role: str | None = None,
-    cycle_id: uuid.UUID | None = None,
+    competition_id: uuid.UUID | None = None,
     before: dict[str, Any] | None = None,
     after: dict[str, Any] | None = None,
     reason: str | None = None,
@@ -65,7 +65,7 @@ async def write_audit_event(
 ) -> AuditEvent:
     timestamp = datetime.utcnow()
     payload = {
-        "cycleId": str(cycle_id) if cycle_id else None,
+        "competitionId": str(competition_id) if competition_id else None,
         "actorId": str(actor_id) if actor_id else None,
         "actorRole": actor_role,
         "action": action,
@@ -80,7 +80,7 @@ async def write_audit_event(
     }
     try:
         event = AuditEvent(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             actor_id=actor_id,
             actor_role=actor_role,
             action=action,

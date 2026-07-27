@@ -8,7 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
@@ -17,23 +17,38 @@ from app.models import (
     Certificate,
     CertificateTemplate,
     Competitor,
-    Cycle,
+    Competition,
     ResultEntry,
     ResultPublication,
     ResultsConfig,
     Shortlist,
     ShortlistEntry,
+    Skill,
+    Stage,
     User,
 )
 from app.schemas.results import (
+    AdminResultItem,
+    CertificateTemplateOut,
     CompetitorResultsOut,
     CorrectResultOut,
     PrepareResultsOut,
     PublicResultItem,
     PublicResultsOut,
     ReleaseResultsOut,
+    ResultsConfigOut,
+    ResultsConfigPut,
 )
 from app.services.audit import write_audit_event
+
+_DEFAULT_TEMPLATE_BODIES: dict[str, str] = {
+    "GOLD": "This certifies that {{name}} achieved Gold (rank {{rank}}, score {{score}}).",
+    "SILVER": "This certifies that {{name}} achieved Silver (rank {{rank}}, score {{score}}).",
+    "BRONZE": "This certifies that {{name}} achieved Bronze (rank {{rank}}, score {{score}}).",
+    "FINALIST": "This certifies that {{name}} is a Finalist (rank {{rank}}, score {{score}}).",
+    "ADVANCE": "This certifies that {{name}} advanced (rank {{rank}}, score {{score}}).",
+    "WAITLIST": "This certifies that {{name}} is on the waitlist (rank {{rank}}, score {{score}}).",
+}
 
 
 def _render(template: str, context: dict[str, Any]) -> str:
@@ -43,8 +58,8 @@ def _render(template: str, context: dict[str, Any]) -> str:
     return result
 
 
-def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
-    """Wall-clock 'now' in the cycle's IANA time zone (naive, for comparison with stored release_at)."""
+def _cycle_local_now(cycle: Competition, *, now: datetime | None = None) -> datetime:
+    """Wall-clock 'now' in the competition's IANA time zone (naive, for comparison with stored release_at)."""
     tz = ZoneInfo(cycle.time_zone)
     base = now or datetime.now(timezone.utc)
     if base.tzinfo is None:
@@ -52,7 +67,7 @@ def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
     return base.astimezone(tz).replace(tzinfo=None)
 
 
-def _embargo_due(cycle: Cycle, release_at: datetime, *, now: datetime | None = None) -> bool:
+def _embargo_due(cycle: Competition, release_at: datetime, *, now: datetime | None = None) -> bool:
     return _cycle_local_now(cycle, now=now) >= release_at
 
 
@@ -66,9 +81,9 @@ async def _require_publish(actor: User) -> None:
         )
 
 
-async def _load_results_config(session: AsyncSession, cycle_id: uuid.UUID) -> ResultsConfig:
+async def _load_results_config(session: AsyncSession, competition_id: uuid.UUID) -> ResultsConfig:
     cfg = (
-        await session.execute(select(ResultsConfig).where(ResultsConfig.cycle_id == cycle_id))
+        await session.execute(select(ResultsConfig).where(ResultsConfig.competition_id == competition_id))
     ).scalar_one_or_none()
     if cfg is None:
         raise AppError(
@@ -94,13 +109,186 @@ async def _load_results_config(session: AsyncSession, cycle_id: uuid.UUID) -> Re
     return cfg
 
 
+def _config_to_out(competition_id: uuid.UUID, cfg: ResultsConfig | None) -> ResultsConfigOut:
+    if cfg is None:
+        return ResultsConfigOut(
+            competitionId=competition_id,
+            releaseAt=datetime.utcnow(),
+            audience=["PUBLIC", "COMPETITOR"],
+            neutralStatus="IN_PROGRESS",
+            awardByRank={"1": "GOLD", "2": "SILVER", "3": "BRONZE"},
+            defaultOutcome="FINALIST",
+            configured=False,
+        )
+    return ResultsConfigOut(
+        competitionId=competition_id,
+        releaseAt=cfg.release_at,
+        audience=list(cfg.audience or []),
+        neutralStatus=cfg.neutral_status or "IN_PROGRESS",
+        awardByRank={str(k): str(v) for k, v in (cfg.award_by_rank or {}).items()},
+        defaultOutcome=cfg.default_outcome or "FINALIST",
+        configured=True,
+    )
+
+
+async def get_results_config(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+) -> ResultsConfigOut:
+    await _require_publish(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+    cfg = (
+        await session.execute(select(ResultsConfig).where(ResultsConfig.competition_id == competition_id))
+    ).scalar_one_or_none()
+    return _config_to_out(competition_id, cfg)
+
+
+async def _ensure_certificate_templates(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    outcomes: set[str],
+) -> None:
+    existing = (
+        await session.execute(
+            select(CertificateTemplate).where(CertificateTemplate.competition_id == competition_id)
+        )
+    ).scalars().all()
+    have = {t.outcome.upper() for t in existing}
+    for outcome in outcomes:
+        code = outcome.upper()
+        if code in have:
+            continue
+        body = _DEFAULT_TEMPLATE_BODIES.get(
+            code,
+            f"This certifies that {{{{name}}}} achieved {code} (rank {{{{rank}}}}, score {{{{score}}}}).",
+        )
+        session.add(
+            CertificateTemplate(
+                competition_id=competition_id,
+                outcome=code,
+                language="en",
+                body=body,
+            )
+        )
+        have.add(code)
+
+
+async def put_results_config(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    payload: ResultsConfigPut,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> ResultsConfigOut:
+    await _require_publish(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    release_at = payload.releaseAt
+    if release_at.tzinfo is not None:
+        release_at = release_at.replace(tzinfo=None)
+
+    cfg = (
+        await session.execute(select(ResultsConfig).where(ResultsConfig.competition_id == competition_id))
+    ).scalar_one_or_none()
+    before = None
+    if cfg is None:
+        cfg = ResultsConfig(competition_id=competition_id)
+        session.add(cfg)
+    else:
+        before = {
+            "releaseAt": cfg.release_at.isoformat() if cfg.release_at else None,
+            "audience": list(cfg.audience or []),
+            "neutralStatus": cfg.neutral_status,
+            "awardByRank": dict(cfg.award_by_rank or {}),
+            "defaultOutcome": cfg.default_outcome,
+        }
+
+    cfg.release_at = release_at
+    cfg.audience = list(payload.audience)
+    cfg.neutral_status = payload.neutralStatus
+    cfg.award_by_rank = dict(payload.awardByRank)
+    cfg.default_outcome = payload.defaultOutcome
+
+    if payload.ensureTemplates:
+        outcomes = set(payload.awardByRank.values()) | {
+            payload.defaultOutcome,
+            "ADVANCE",
+            "WAITLIST",
+            "GOLD",
+            "SILVER",
+            "BRONZE",
+            "FINALIST",
+        }
+        await _ensure_certificate_templates(session, competition_id, outcomes)
+
+    await write_audit_event(
+        session,
+        action="RESULTS_CONFIG_UPSERT",
+        entity_type="ResultsConfig",
+        entity_id=str(competition_id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=competition_id,
+        before=before,
+        after={
+            "releaseAt": cfg.release_at.isoformat(),
+            "audience": list(cfg.audience),
+            "neutralStatus": cfg.neutral_status,
+            "awardByRank": dict(cfg.award_by_rank or {}),
+            "defaultOutcome": cfg.default_outcome,
+        },
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(cfg)
+    return _config_to_out(competition_id, cfg)
+
+
+async def list_certificate_templates(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+) -> list[CertificateTemplateOut]:
+    await _require_publish(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+    rows = (
+        await session.execute(
+            select(CertificateTemplate)
+            .where(CertificateTemplate.competition_id == competition_id)
+            .order_by(CertificateTemplate.outcome.asc())
+        )
+    ).scalars().all()
+    return [
+        CertificateTemplateOut(
+            templateId=t.id,
+            competitionId=t.competition_id,
+            outcome=t.outcome,
+            language=t.language,
+            body=t.body,
+        )
+        for t in rows
+    ]
+
+
 async def _template_for(
-    session: AsyncSession, cycle_id: uuid.UUID, outcome: str
+    session: AsyncSession, competition_id: uuid.UUID, outcome: str
 ) -> CertificateTemplate:
     tmpl = (
         await session.execute(
             select(CertificateTemplate).where(
-                CertificateTemplate.cycle_id == cycle_id,
+                CertificateTemplate.competition_id == competition_id,
                 CertificateTemplate.outcome == outcome,
             )
         )
@@ -122,14 +310,14 @@ def _outcome_for_rank(cfg: ResultsConfig, rank: int) -> str:
 
 async def _advancers_from_confirmed_finals(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     skill_id: uuid.UUID | None,
 ) -> list[tuple[ShortlistEntry, Shortlist]]:
     stmt = (
         select(ShortlistEntry, Shortlist)
         .join(Shortlist, ShortlistEntry.shortlist_id == Shortlist.id)
         .where(
-            Shortlist.cycle_id == cycle_id,
+            Shortlist.competition_id == competition_id,
             Shortlist.state == "CONFIRMED",
             Shortlist.is_final_stage.is_(True),
             ShortlistEntry.outcome == "ADVANCE",
@@ -142,54 +330,151 @@ async def _advancers_from_confirmed_finals(
     return [(entry, shortlist) for entry, shortlist in rows]
 
 
-async def prepare_results(
+async def _entries_from_confirmed_stage(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
-    *,
-    actor: User,
-    skill_id: uuid.UUID | None = None,
-    ip: str | None = None,
-    user_agent: str | None = None,
-) -> PrepareResultsOut:
-    await _require_publish(actor)
-    cycle = await session.get(Cycle, cycle_id)
-    if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+    competition_id: uuid.UUID,
+    stage_id: uuid.UUID,
+) -> tuple[Stage, Shortlist, list[ShortlistEntry]]:
+    stage = await session.get(Stage, stage_id)
+    if stage is None or stage.competition_id != competition_id:
+        raise AppError(
+            "STAGE_NOT_FOUND",
+            "Stage not found for this competition",
+            status_code=404,
+            fields=[FieldError("stageId", "NOT_FOUND")],
+        )
 
-    cfg = await _load_results_config(session, cycle_id)
-    rows = await _advancers_from_confirmed_finals(session, cycle_id, skill_id)
-    if not rows:
+    shortlist = (
+        await session.execute(
+            select(Shortlist).where(
+                Shortlist.competition_id == competition_id,
+                Shortlist.stage_id == stage_id,
+                Shortlist.state == "CONFIRMED",
+            )
+        )
+    ).scalars().first()
+    if shortlist is None:
         raise AppError(
             "SCORING_INCOMPLETE",
-            "No confirmed finalist shortlist entries to publish",
+            "No confirmed shortlist for this stage — confirm the shortlist before preparing results",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("shortlist", "SCORING_INCOMPLETE")],
         )
 
-    # Validate templates for every planned outcome before writing
-    planned: list[tuple[ShortlistEntry, Shortlist, str]] = []
-    for entry, shortlist in rows:
-        outcome = _outcome_for_rank(cfg, entry.rank)
-        await _template_for(session, cycle_id, outcome)
-        planned.append((entry, shortlist, outcome))
+    entries = (
+        await session.execute(
+            select(ShortlistEntry)
+            .where(
+                ShortlistEntry.shortlist_id == shortlist.id,
+                ShortlistEntry.outcome.in_(("ADVANCE", "WAITLIST")),
+            )
+            .order_by(ShortlistEntry.rank.asc().nullslast())
+        )
+    ).scalars().all()
+    if not entries:
+        raise AppError(
+            "SCORING_INCOMPLETE",
+            "Confirmed shortlist has no ADVANCE or WAITLIST entries to publish",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("shortlist", "SCORING_INCOMPLETE")],
+        )
+    return stage, shortlist, list(entries)
+
+
+async def prepare_results(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    skill_id: uuid.UUID | None = None,
+    stage_id: uuid.UUID | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> PrepareResultsOut:
+    await _require_publish(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    cfg = await _load_results_config(session, competition_id)
+
+    planned: list[tuple[ShortlistEntry, uuid.UUID, str]] = []
+    publication_skill_id = skill_id
+    publication_stage_id = stage_id
+
+    if stage_id is not None:
+        stage, shortlist, entries = await _entries_from_confirmed_stage(
+            session, competition_id, stage_id
+        )
+        publication_skill_id = stage.skill_id or shortlist.skill_id
+        if skill_id is not None and publication_skill_id != skill_id:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "Selected stage does not belong to the selected skill",
+                status_code=422,
+                fields=[FieldError("stageId", "SKILL_MISMATCH")],
+            )
+        for entry in entries:
+            if shortlist.is_final_stage and entry.outcome == "ADVANCE":
+                outcome = _outcome_for_rank(cfg, entry.rank)
+            elif entry.outcome == "ADVANCE":
+                outcome = "ADVANCE"
+            else:
+                outcome = entry.outcome
+            sid = publication_skill_id
+            if sid is None:
+                raise AppError(
+                    "CONFIG_INCOMPLETE",
+                    "Stage skill is missing",
+                    status_code=409,
+                    fields=[FieldError("skillId", "CONFIG_INCOMPLETE")],
+                )
+            await _template_for(session, competition_id, outcome)
+            planned.append((entry, sid, outcome))
+    else:
+        rows = await _advancers_from_confirmed_finals(session, competition_id, skill_id)
+        if not rows:
+            raise AppError(
+                "SCORING_INCOMPLETE",
+                "No confirmed finalist shortlist entries to publish",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("shortlist", "SCORING_INCOMPLETE")],
+            )
+        for entry, shortlist in rows:
+            outcome = _outcome_for_rank(cfg, entry.rank)
+            await _template_for(session, competition_id, outcome)
+            sid = shortlist.skill_id
+            if sid is None:
+                raise AppError(
+                    "CONFIG_INCOMPLETE",
+                    "Shortlist skill is missing",
+                    status_code=409,
+                    fields=[FieldError("skillId", "CONFIG_INCOMPLETE")],
+                )
+            planned.append((entry, sid, outcome))
 
     # Replace existing embargoed publication for same scope
     existing_q = select(ResultPublication).where(
-        ResultPublication.cycle_id == cycle_id,
+        ResultPublication.competition_id == competition_id,
         ResultPublication.state == "EMBARGOED",
     )
-    if skill_id is None:
-        existing_q = existing_q.where(ResultPublication.skill_id.is_(None))
+    if publication_stage_id is not None:
+        existing_q = existing_q.where(ResultPublication.stage_id == publication_stage_id)
     else:
-        existing_q = existing_q.where(ResultPublication.skill_id == skill_id)
+        existing_q = existing_q.where(ResultPublication.stage_id.is_(None))
+        if publication_skill_id is None:
+            existing_q = existing_q.where(ResultPublication.skill_id.is_(None))
+        else:
+            existing_q = existing_q.where(ResultPublication.skill_id == publication_skill_id)
     existing = (await session.execute(existing_q)).scalars().all()
     for pub in existing:
         await session.delete(pub)
     await session.flush()
 
     publication = ResultPublication(
-        cycle_id=cycle_id,
-        skill_id=skill_id,
+        competition_id=competition_id,
+        skill_id=publication_skill_id,
+        stage_id=publication_stage_id,
         state="EMBARGOED",
         release_at=cfg.release_at,
         audience=list(cfg.audience),
@@ -200,19 +485,11 @@ async def prepare_results(
     session.add(publication)
     await session.flush()
 
-    for entry, shortlist, outcome in planned:
-        sid = shortlist.skill_id
-        if sid is None:
-            raise AppError(
-                "CONFIG_INCOMPLETE",
-                "Shortlist skill is missing",
-                status_code=409,
-                fields=[FieldError("skillId", "CONFIG_INCOMPLETE")],
-            )
+    for entry, sid, outcome in planned:
         session.add(
             ResultEntry(
                 publication_id=publication.id,
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 skill_id=sid,
                 competitor_id=entry.competitor_id,
                 outcome=outcome,
@@ -220,7 +497,10 @@ async def prepare_results(
                 rank=entry.rank,
                 version=1,
                 is_current=True,
-                payload={"zoneId": str(entry.zone_id)},
+                payload={
+                    "zoneId": str(entry.zone_id),
+                    "stageId": str(publication_stage_id) if publication_stage_id else None,
+                },
             )
         )
 
@@ -231,10 +511,11 @@ async def prepare_results(
         entity_id=str(publication.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after={
             "state": "EMBARGOED",
-            "skillId": str(skill_id) if skill_id else None,
+            "skillId": str(publication_skill_id) if publication_skill_id else None,
+            "stageId": str(publication_stage_id) if publication_stage_id else None,
             "entryCount": len(planned),
             "releaseAt": cfg.release_at.isoformat(),
         },
@@ -247,7 +528,8 @@ async def prepare_results(
     return PrepareResultsOut(
         publicationId=publication.id,
         state=publication.state,
-        skillId=skill_id,
+        skillId=publication_skill_id,
+        stageId=publication_stage_id,
         entryCount=len(planned),
         releaseAt=publication.release_at,
     )
@@ -255,22 +537,33 @@ async def prepare_results(
 
 async def _find_publication(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     skill_id: uuid.UUID | None,
     *,
+    stage_id: uuid.UUID | None = None,
     state: str | None = "EMBARGOED",
 ) -> ResultPublication:
-    q = select(ResultPublication).where(ResultPublication.cycle_id == cycle_id)
+    q = select(ResultPublication).where(ResultPublication.competition_id == competition_id)
     if state:
         q = q.where(ResultPublication.state == state)
-    if skill_id is None:
-        q = q.where(ResultPublication.skill_id.is_(None))
+    if stage_id is not None:
+        q = q.where(ResultPublication.stage_id == stage_id)
     else:
-        q = q.where(ResultPublication.skill_id == skill_id)
+        q = q.where(ResultPublication.stage_id.is_(None))
+        if skill_id is None:
+            q = q.where(ResultPublication.skill_id.is_(None))
+        else:
+            q = q.where(ResultPublication.skill_id == skill_id)
     q = q.order_by(ResultPublication.prepared_at.desc())
     pub = (await session.execute(q)).scalars().first()
     if pub is None:
-        # Fallback: any embargoed matching skill when whole-cycle not found
+        if stage_id is not None:
+            raise AppError(
+                "RESULTS_NOT_PREPARED",
+                "No prepared results for this stage",
+                status_code=409,
+                fields=[FieldError("stageId", "RESULTS_NOT_PREPARED")],
+            )
         if skill_id is not None and state == "EMBARGOED":
             raise AppError(
                 "RESULTS_NOT_PREPARED",
@@ -282,7 +575,7 @@ async def _find_publication(
             "RESULTS_NOT_PREPARED",
             "No prepared results to release",
             status_code=409,
-            fields=[FieldError("cycleId", "RESULTS_NOT_PREPARED")],
+            fields=[FieldError("competitionId", "RESULTS_NOT_PREPARED")],
         )
     return pub
 
@@ -296,7 +589,7 @@ async def _issue_certificate(
     version: int = 1,
     supersedes_id: uuid.UUID | None = None,
 ) -> Certificate:
-    tmpl = await _template_for(session, entry.cycle_id, entry.outcome)
+    tmpl = await _template_for(session, entry.competition_id, entry.outcome)
     name = " ".join(
         p for p in [(competitor.given_names if competitor else None), (competitor.family_name if competitor else None)] if p
     ) or (competitor.ref_no if competitor else str(entry.competitor_id))
@@ -311,7 +604,7 @@ async def _issue_certificate(
         },
     )
     cert = Certificate(
-        cycle_id=entry.cycle_id,
+        competition_id=entry.competition_id,
         publication_id=publication.id,
         result_entry_id=entry.id,
         competitor_id=entry.competitor_id,
@@ -329,21 +622,28 @@ async def _issue_certificate(
 
 async def release_results(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     actor: User,
     manual: bool = False,
     skill_id: uuid.UUID | None = None,
+    stage_id: uuid.UUID | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
     now: datetime | None = None,
 ) -> ReleaseResultsOut:
     await _require_publish(actor)
-    cycle = await session.get(Cycle, cycle_id)
+    cycle = await session.get(Competition, competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
-    publication = await _find_publication(session, cycle_id, skill_id, state="EMBARGOED")
+    publication = await _find_publication(
+        session,
+        competition_id,
+        skill_id,
+        stage_id=stage_id,
+        state="EMBARGOED",
+    )
 
     if not manual and not _embargo_due(cycle, publication.release_at, now=now):
         raise AppError(
@@ -364,8 +664,7 @@ async def release_results(
 
     cert_count = 0
     for entry in entries:
-        # Ensure template still present at release
-        await _template_for(session, cycle_id, entry.outcome)
+        await _template_for(session, competition_id, entry.outcome)
         competitor = await session.get(Competitor, entry.competitor_id)
         await _issue_certificate(session, publication=publication, entry=entry, competitor=competitor)
         cert_count += 1
@@ -383,7 +682,7 @@ async def release_results(
         entity_id=str(publication.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         before=before,
         after={
             "state": "RELEASED",
@@ -391,6 +690,7 @@ async def release_results(
             "manual": manual,
             "certificateCount": cert_count,
             "audience": publication.audience,
+            "stageId": str(publication.stage_id) if publication.stage_id else None,
         },
         ip=ip,
         user_agent=user_agent,
@@ -448,12 +748,12 @@ async def correct_result(
     if new_rank is not None:
         new_rank = int(new_rank)
 
-    await _template_for(session, old.cycle_id, new_outcome)
+    await _template_for(session, old.competition_id, new_outcome)
 
     old.is_current = False
     new_entry = ResultEntry(
         publication_id=old.publication_id,
-        cycle_id=old.cycle_id,
+        competition_id=old.competition_id,
         skill_id=old.skill_id,
         competitor_id=old.competitor_id,
         outcome=new_outcome,
@@ -467,7 +767,6 @@ async def correct_result(
     session.add(new_entry)
     await session.flush()
 
-    # Supersede certificate
     old_certs = (
         await session.execute(
             select(Certificate).where(
@@ -498,7 +797,7 @@ async def correct_result(
         entity_id=str(new_entry.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=old.cycle_id,
+        competition_id=old.competition_id,
         before={
             "resultId": str(old.id),
             "outcome": old.outcome,
@@ -539,22 +838,21 @@ def _audience_allows_competitor(audience: list | None) -> bool:
 
 async def get_public_results(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
 ) -> PublicResultsOut:
-    cycle = await session.get(Cycle, cycle_id)
+    cycle = await session.get(Competition, competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
     publications = (
         await session.execute(
-            select(ResultPublication).where(ResultPublication.cycle_id == cycle_id)
+            select(ResultPublication).where(ResultPublication.competition_id == competition_id)
         )
     ).scalars().all()
 
     if not publications:
-        # No prepared results — neutral, no leak
         cfg = (
-            await session.execute(select(ResultsConfig).where(ResultsConfig.cycle_id == cycle_id))
+            await session.execute(select(ResultsConfig).where(ResultsConfig.competition_id == competition_id))
         ).scalar_one_or_none()
         return PublicResultsOut(
             state="EMBARGOED",
@@ -567,7 +865,6 @@ async def get_public_results(
         neutral = publications[0].neutral_status or "IN_PROGRESS"
         return PublicResultsOut(state="EMBARGOED", status=neutral, results=[])
 
-    # Only include publications whose audience allows PUBLIC
     visible_pubs = [p for p in released if _audience_allows_public(p.audience)]
     if not visible_pubs:
         neutral = released[0].neutral_status or "IN_PROGRESS"
@@ -617,14 +914,14 @@ async def get_public_results(
 
 async def get_competitor_results(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     actor: User,
 ) -> CompetitorResultsOut:
     competitor = (
         await session.execute(
             select(Competitor).where(
-                Competitor.cycle_id == cycle_id,
+                Competitor.competition_id == competition_id,
                 Competitor.user_id == actor.id,
             )
         )
@@ -632,14 +929,13 @@ async def get_competitor_results(
     if competitor is None:
         raise AppError(
             "COMPETITOR_NOT_FOUND",
-            "No competitor profile linked to this account for the cycle",
+            "No competitor profile linked to this account for the competition",
             status_code=404,
         )
 
-    # Any publication covering this competitor's skill
     publications = (
         await session.execute(
-            select(ResultPublication).where(ResultPublication.cycle_id == cycle_id)
+            select(ResultPublication).where(ResultPublication.competition_id == competition_id)
         )
     ).scalars().all()
     relevant = [
@@ -650,11 +946,10 @@ async def get_competitor_results(
 
     if not relevant or all(p.state != "RELEASED" for p in relevant):
         neutral = relevant[0].neutral_status if relevant else "IN_PROGRESS"
-        cfg = None
         if not relevant:
             cfg = (
                 await session.execute(
-                    select(ResultsConfig).where(ResultsConfig.cycle_id == cycle_id)
+                    select(ResultsConfig).where(ResultsConfig.competition_id == competition_id)
                 )
             ).scalar_one_or_none()
             neutral = cfg.neutral_status if cfg else "IN_PROGRESS"
@@ -706,3 +1001,77 @@ async def get_competitor_results(
         ),
         certificate=cert.rendered_body if cert else None,
     )
+
+
+def _competitor_display_name(competitor: Competitor | None) -> str | None:
+    if competitor is None:
+        return None
+    parts = [p for p in (competitor.given_names, competitor.family_name) if p]
+    return " ".join(parts) if parts else None
+
+
+async def list_admin_results(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    skill_id: uuid.UUID | None = None,
+    q: str | None = None,
+    state: str | None = None,
+) -> list[AdminResultItem]:
+    await _require_publish(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    stmt = (
+        select(ResultEntry, ResultPublication, Skill, Competitor, Stage)
+        .join(ResultPublication, ResultPublication.id == ResultEntry.publication_id)
+        .join(Skill, Skill.id == ResultEntry.skill_id)
+        .outerjoin(Competitor, Competitor.id == ResultEntry.competitor_id)
+        .outerjoin(Stage, Stage.id == ResultPublication.stage_id)
+        .where(
+            ResultEntry.competition_id == competition_id,
+            ResultEntry.is_current.is_(True),
+        )
+    )
+    if skill_id is not None:
+        stmt = stmt.where(ResultEntry.skill_id == skill_id)
+    if state and state.strip():
+        stmt = stmt.where(ResultPublication.state == state.strip().upper())
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Skill.name.ilike(term),
+                Competitor.ref_no.ilike(term),
+                Competitor.given_names.ilike(term),
+                Competitor.family_name.ilike(term),
+                ResultEntry.outcome.ilike(term),
+                Stage.name.ilike(term),
+            )
+        )
+    stmt = stmt.order_by(Skill.name.asc(), ResultEntry.rank.asc().nullslast(), Competitor.ref_no.asc())
+    rows = (await session.execute(stmt)).all()
+    return [
+        AdminResultItem(
+            resultId=entry.id,
+            publicationId=pub.id,
+            competitionId=entry.competition_id,
+            skillId=entry.skill_id,
+            skillName=skill.name,
+            stageId=pub.stage_id,
+            stageName=stage.name if stage else None,
+            competitorId=entry.competitor_id,
+            competitorRef=comp.ref_no if comp else None,
+            competitorName=_competitor_display_name(comp),
+            outcome=entry.outcome,
+            score=entry.score,
+            rank=entry.rank,
+            version=entry.version,
+            publicationState=pub.state,
+            releaseAt=pub.release_at,
+            releasedAt=pub.released_at,
+        )
+        for entry, pub, skill, comp, stage in rows
+    ]

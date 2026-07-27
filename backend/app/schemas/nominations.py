@@ -7,6 +7,7 @@ class NominationCreate(BaseModel):
     institutionId: UUID
     skillId: UUID
     competitorRef: str = Field(min_length=1, max_length=64)
+    regionId: UUID | None = None
 
 
 class NominationOut(BaseModel):

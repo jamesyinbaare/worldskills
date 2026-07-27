@@ -14,6 +14,8 @@ class StageNode:
     branch: Mapping[str, Any] | None
     quota_by_zone: Mapping[str, int]
     min_score: int | None
+    selection_mode: str = "PER_ZONE"
+    overall_quota: int | None = None
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,10 @@ class Candidate:
     jury_rank: int | None = None  # lower wins when JURY_DECISION is used
 
 
-def _zone_quota_total(stage: StageNode) -> int:
+def _leaf_advance_quota(stage: StageNode) -> int:
+    mode = (stage.selection_mode or "PER_ZONE").upper()
+    if mode == "NATIONAL_POOL":
+        return int(stage.overall_quota or 0)
     return sum(int(v) for v in stage.quota_by_zone.values())
 
 
@@ -255,6 +260,57 @@ def rank_for_shortlist(
     return results
 
 
+def rank_for_national_pool(
+    candidates: Sequence[Candidate],
+    *,
+    quota: int,
+    min_score: int | None,
+    tie_break_rules: Sequence[str] | None = None,
+) -> list[RankedEntry]:
+    """Rank all eligible candidates in one pool; mark ADVANCE / WAITLIST / EXCLUDED."""
+    ranked = sort_candidates_with_tie_break(candidates, tie_break_rules=tie_break_rules)
+    n = int(quota)
+    advanced_count = 0
+    results: list[RankedEntry] = []
+    for idx, c in enumerate(ranked, start=1):
+        if min_score is not None and c.score < min_score:
+            results.append(
+                RankedEntry(
+                    competitor_id=c.competitor_id,
+                    zone_id=c.zone_id,
+                    score=c.score,
+                    rank=idx,
+                    outcome="EXCLUDED",
+                    reason="BELOW_MIN_SCORE",
+                )
+            )
+            continue
+        if advanced_count < n:
+            results.append(
+                RankedEntry(
+                    competitor_id=c.competitor_id,
+                    zone_id=c.zone_id,
+                    score=c.score,
+                    rank=idx,
+                    outcome="ADVANCE",
+                    reason=None,
+                )
+            )
+            advanced_count += 1
+        else:
+            results.append(
+                RankedEntry(
+                    competitor_id=c.competitor_id,
+                    zone_id=c.zone_id,
+                    score=c.score,
+                    rank=idx,
+                    outcome="WAITLIST",
+                    reason=None,
+                )
+            )
+    return results
+
+
 def compute_finalists_per_skill(stages: Sequence[StageNode]) -> int:
     """Sum zone quotas on leaf stages of the pathway graph."""
     if not stages:
@@ -277,4 +333,4 @@ def compute_finalists_per_skill(stages: Sequence[StageNode]) -> int:
     leaves = [s for s in stages if not outgoing(s)]
     if not leaves:
         leaves = [max(stages, key=lambda s: s.order)]
-    return sum(_zone_quota_total(leaf) for leaf in leaves)
+    return sum(_leaf_advance_quota(leaf) for leaf in leaves)

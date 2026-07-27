@@ -11,24 +11,24 @@ from sqlalchemy import select
 from app.core.errors import AppError
 from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import AgeRule, AuditEvent, MarkingScheme, Pathway, Skill, User
-from app.services.config_resolution import load_cycle_config
+from app.services.config_resolution import load_competition_config
 from app.services.skills import enforce_skill_capacity
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 
 async def _create_draft_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_links(
-    session_manager: DBManager, cycle_id: uuid.UUID
+    session_manager: DBManager, competition_id: uuid.UUID
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     async with session_manager.session() as session:
-        age = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
+        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([age, path, scheme])
         await session.commit()
         return age.id, path.id, scheme.id
@@ -41,8 +41,8 @@ async def test_US_SKL_01_AC1_create_skill(
     session_manager: DBManager,
     competitor_user: User,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    age_id, path_id, scheme_id = await _seed_links(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    age_id, path_id, scheme_id = await _seed_links(session_manager, competition_id)
 
     payload = {
         "name": "Web Development",
@@ -53,7 +53,7 @@ async def test_US_SKL_01_AC1_create_skill(
         "schemeId": str(scheme_id),
         "capacity": 20,
     }
-    resp = await client.post(f"/cycles/{cycle_id}/skills", json=payload, headers=auth_headers)
+    resp = await client.post(f"/competitions/{competition_id}/skills", json=payload, headers=auth_headers)
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["name"] == "Web Development"
@@ -63,7 +63,7 @@ async def test_US_SKL_01_AC1_create_skill(
     async with session_manager.session() as session:
         skill = await session.get(Skill, uuid.UUID(body["skillId"]))
         assert skill is not None
-        assert skill.cycle_id == cycle_id
+        assert skill.competition_id == competition_id
         assert skill.age_rule_id == age_id
         assert skill.pathway_id == path_id
         assert skill.scheme_id == scheme_id
@@ -87,11 +87,46 @@ async def test_US_SKL_01_AC1_create_skill(
     assert login.status_code == 200
     comp_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     denied = await client.post(
-        f"/cycles/{cycle_id}/skills",
+        f"/competitions/{competition_id}/skills",
         json={**payload, "name": "Another Skill"},
         headers=comp_headers,
     )
     assert denied.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_US_SKL_01_create_skill_while_active(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    age_id, path_id, scheme_id = await _seed_links(session_manager, competition_id)
+
+    async with session_manager.session() as session:
+        from app.models import Competition, CompetitionStatus
+
+        cycle = await session.get(Competition, competition_id)
+        assert cycle is not None
+        cycle.status = CompetitionStatus.ACTIVE
+        await session.commit()
+
+    payload = {
+        "name": "Active Competition Skill",
+        "number": "42",
+        "familyId": "it",
+        "ageRuleId": str(age_id),
+        "pathwayId": str(path_id),
+        "schemeId": str(scheme_id),
+        "capacity": 10,
+    }
+    resp = await client.post(
+        f"/competitions/{competition_id}/skills",
+        json=payload,
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["name"] == "Active Competition Skill"
 
 
 @pytest.mark.asyncio
@@ -100,24 +135,24 @@ async def test_US_SKL_01_AC1_validation_failures(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    age_id, path_id, scheme_id = await _seed_links(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    age_id, path_id, scheme_id = await _seed_links(session_manager, competition_id)
     base = {
         "name": "Cloud Computing",
         "ageRuleId": str(age_id),
         "pathwayId": str(path_id),
         "schemeId": str(scheme_id),
     }
-    ok = await client.post(f"/cycles/{cycle_id}/skills", json=base, headers=auth_headers)
+    ok = await client.post(f"/competitions/{competition_id}/skills", json=base, headers=auth_headers)
     assert ok.status_code == 201, ok.text
 
-    dup = await client.post(f"/cycles/{cycle_id}/skills", json=base, headers=auth_headers)
+    dup = await client.post(f"/competitions/{competition_id}/skills", json=base, headers=auth_headers)
     assert dup.status_code == 409
     err = dup.json()["error"]
     assert any(f["name"] == "name" and f["reason"] == "DUPLICATE" for f in err["fields"])
 
     bad_cap = await client.post(
-        f"/cycles/{cycle_id}/skills",
+        f"/competitions/{competition_id}/skills",
         json={**base, "name": "Robotics", "capacity": 0},
         headers=auth_headers,
     )
@@ -128,7 +163,7 @@ async def test_US_SKL_01_AC1_validation_failures(
     )
 
     missing_fk = await client.post(
-        f"/cycles/{cycle_id}/skills",
+        f"/competitions/{competition_id}/skills",
         json={
             "name": "Mechatronics",
             "ageRuleId": str(uuid.uuid4()),
@@ -147,23 +182,23 @@ async def test_US_SKL_01_AC2_per_skill_age_rule(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
+    competition_id = await _create_draft_cycle(client, auth_headers)
     async with session_manager.session() as session:
-        age_young = AgeRule(cycle_id=cycle_id, name="U18", max_age=18)
-        age_older = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
+        age_young = AgeRule(competition_id=competition_id, name="U18", max_age=18)
+        age_older = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([age_young, age_older, path, scheme])
         await session.flush()
         skill_a = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Skill A",
             age_rule_id=age_young.id,
             pathway_id=path.id,
             scheme_id=scheme.id,
         )
         skill_b = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Skill B",
             age_rule_id=age_older.id,
             pathway_id=path.id,
@@ -174,7 +209,7 @@ async def test_US_SKL_01_AC2_per_skill_age_rule(
         skill_a_id, skill_b_id = skill_a.id, skill_b.id
 
     async with session_manager.session() as session:
-        cfg = await load_cycle_config(session, cycle_id)
+        cfg = await load_competition_config(session, competition_id)
         rule_a = cfg.age_rule_for_skill(skill_a_id)
         rule_b = cfg.age_rule_for_skill(skill_b_id)
         assert rule_a.max_age == 18
@@ -201,12 +236,12 @@ async def test_US_SKL_01_AC4_incomplete_skill_on_validate(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    _age_id, path_id, scheme_id = await _seed_links(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    _age_id, path_id, scheme_id = await _seed_links(session_manager, competition_id)
 
     # Create via API without age rule (draft-incomplete allowed)
     resp = await client.post(
-        f"/cycles/{cycle_id}/skills",
+        f"/competitions/{competition_id}/skills",
         json={
             "name": "Incomplete Skill",
             "pathwayId": str(path_id),
@@ -217,7 +252,7 @@ async def test_US_SKL_01_AC4_incomplete_skill_on_validate(
     assert resp.status_code == 201, resp.text
     skill_id = resp.json()["skillId"]
 
-    validate = await client.post(f"/cycles/{cycle_id}:validate", headers=auth_headers)
+    validate = await client.post(f"/competitions/{competition_id}:validate", headers=auth_headers)
     assert validate.status_code == 200
     body = validate.json()
     assert body["ok"] is False

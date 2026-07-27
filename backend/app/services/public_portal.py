@@ -15,18 +15,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, FieldError
 from app.models import (
     Competitor,
-    Cycle,
+    Competition,
     Institution,
     PublicPortalConfig,
+    ResultsConfig,
+    Shortlist,
+    ShortlistEntry,
     Skill,
+    Stage,
     Zone,
 )
 from app.schemas.public_portal import (
+    ProgressionCounts,
+    ProgressionStageOut,
+    ProgressionZoneOut,
     PublicCompetitorDirectoryOut,
     PublicCompetitorListItem,
     PublicCompetitorProfileOut,
+    SkillProgressionOut,
 )
 from app.services.consent import is_public_profile_visible
+from app.services.results import get_public_results
 
 # Hard deny-list — never serialised regardless of cycle config (US-PUB-01-AC3)
 _SENSITIVE_FIELD_KEYS = frozenset(
@@ -99,14 +108,14 @@ def _check_rate_limit(client_key: str, limit: int) -> None:
             )
 
 
-async def load_portal_config(session: AsyncSession, cycle_id: uuid.UUID) -> PublicPortalConfig:
+async def load_portal_config(session: AsyncSession, competition_id: uuid.UUID) -> PublicPortalConfig:
     cfg = (
-        await session.execute(select(PublicPortalConfig).where(PublicPortalConfig.cycle_id == cycle_id))
+        await session.execute(select(PublicPortalConfig).where(PublicPortalConfig.competition_id == competition_id))
     ).scalar_one_or_none()
     if cfg is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "Public portal configuration is not set for this cycle",
+            "Public portal configuration is not set for this competition",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("publicPortalConfig", "CONFIG_INCOMPLETE")],
         )
@@ -225,7 +234,7 @@ def _project_public_fields(
 
 async def list_public_competitors(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     skill_id: uuid.UUID | None = None,
     zone_id: uuid.UUID | None = None,
@@ -234,13 +243,13 @@ async def list_public_competitors(
     fmt: str | None = None,
     client_key: str = "anonymous",
 ) -> PublicCompetitorDirectoryOut:
-    cycle = await session.get(Cycle, cycle_id)
+    cycle = await session.get(Competition, competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
-    cfg = await load_portal_config(session, cycle_id)
+    cfg = await load_portal_config(session, competition_id)
     _refuse_bulk_export(limit=limit, max_page_size=cfg.max_page_size, fmt=fmt)
-    _check_rate_limit(f"dir:{cycle_id}:{client_key}", cfg.rate_limit_per_minute)
+    _check_rate_limit(f"dir:{competition_id}:{client_key}", cfg.rate_limit_per_minute)
 
     page_size = limit if limit is not None else min(20, cfg.max_page_size)
     page_size = min(page_size, cfg.max_page_size)
@@ -250,7 +259,7 @@ async def list_public_competitors(
     stmt = (
         select(Competitor)
         .where(
-            Competitor.cycle_id == cycle_id,
+            Competitor.competition_id == competition_id,
             Competitor.public_profile_visible.is_(True),
             Competitor.consent_public_at.is_not(None),
         )
@@ -317,8 +326,8 @@ async def get_public_competitor_profile(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    cfg = await load_portal_config(session, competitor.cycle_id)
-    _check_rate_limit(f"prof:{competitor.cycle_id}:{client_key}", cfg.rate_limit_per_minute)
+    cfg = await load_portal_config(session, competitor.competition_id)
+    _check_rate_limit(f"prof:{competitor.competition_id}:{client_key}", cfg.rate_limit_per_minute)
 
     names = await _resolve_names(session, [competitor])
     projected = _project_public_fields(competitor, allowed=list(cfg.public_fields), names=names)
@@ -334,3 +343,154 @@ async def get_public_competitor_profile(
         stageStatus=projected.get("stageStatus"),
         zone=projected.get("zone"),
     )
+
+
+async def _neutral_status(session: AsyncSession, competition_id: uuid.UUID) -> str:
+    """Same neutral label the results service uses under embargo."""
+    public = await get_public_results(session, competition_id)
+    if public.state == "EMBARGOED" and public.status:
+        return public.status
+    cfg = (
+        await session.execute(select(ResultsConfig).where(ResultsConfig.competition_id == competition_id))
+    ).scalar_one_or_none()
+    if cfg and cfg.neutral_status:
+        return cfg.neutral_status
+    return "IN_PROGRESS"
+
+
+async def _skill_final_results_released(
+    session: AsyncSession, competition_id: uuid.UUID, skill_id: uuid.UUID
+) -> bool:
+    """True when US-RES-01 public results for this skill are visible (RELEASED + PUBLIC)."""
+    public = await get_public_results(session, competition_id)
+    if public.state != "RELEASED":
+        return False
+    return any(item.skillId == skill_id for item in public.results)
+
+
+async def _confirmed_shortlist(
+    session: AsyncSession, *, competition_id: uuid.UUID, stage_id: uuid.UUID
+) -> Shortlist | None:
+    return (
+        await session.execute(
+            select(Shortlist)
+            .where(
+                Shortlist.competition_id == competition_id,
+                Shortlist.stage_id == stage_id,
+                Shortlist.state == "CONFIRMED",
+            )
+            .order_by(Shortlist.confirmed_at.desc())
+        )
+    ).scalars().first()
+
+
+async def _counts_for_zone(
+    session: AsyncSession, shortlist: Shortlist, zone_id: uuid.UUID
+) -> ProgressionCounts:
+    entries = (
+        await session.execute(
+            select(ShortlistEntry).where(
+                ShortlistEntry.shortlist_id == shortlist.id,
+                ShortlistEntry.zone_id == zone_id,
+            )
+        )
+    ).scalars().all()
+    advanced = sum(1 for e in entries if e.outcome == "ADVANCE" and e.advanced)
+    waitlisted = sum(1 for e in entries if e.outcome == "WAITLIST")
+    excluded = sum(1 for e in entries if e.outcome in {"EXCLUDED", "DISQUALIFIED"})
+    return ProgressionCounts(advanced=advanced, waitlisted=waitlisted, excluded=excluded)
+
+
+async def get_skill_progression(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    skill_id: uuid.UUID,
+    *,
+    client_key: str = "anonymous",
+) -> SkillProgressionOut:
+    """Per-zone stage pipeline; embargoed stages expose only neutral status (US-PUB-02)."""
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    skill = await session.get(Skill, skill_id)
+    if skill is None or skill.competition_id != competition_id:
+        raise AppError("SKILL_NOT_FOUND", "Skill not found in cycle", status_code=404)
+
+    cfg = await load_portal_config(session, competition_id)
+    _check_rate_limit(f"prog:{competition_id}:{client_key}", cfg.rate_limit_per_minute)
+
+    stages = list(
+        (
+            await session.execute(
+                select(Stage)
+                .where(Stage.competition_id == competition_id, Stage.skill_id == skill_id)
+                .order_by(Stage.order.asc())
+            )
+        ).scalars().all()
+    )
+    if not stages:
+        raise AppError(
+            "CONFIG_INCOMPLETE",
+            "No stages configured for this skill",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("stages", "CONFIG_INCOMPLETE")],
+        )
+
+    zones = list(
+        (
+            await session.execute(
+                select(Zone).where(Zone.competition_id == competition_id, Zone.active.is_(True)).order_by(Zone.name.asc())
+            )
+        ).scalars().all()
+    )
+
+    neutral = await _neutral_status(session, competition_id)
+    final_released = await _skill_final_results_released(session, competition_id, skill_id)
+
+    # Preload confirmed shortlists per stage
+    shortlists: dict[uuid.UUID, Shortlist | None] = {}
+    for st in stages:
+        shortlists[st.id] = await _confirmed_shortlist(session, competition_id=competition_id, stage_id=st.id)
+
+    by_zone: list[ProgressionZoneOut] = []
+    for zone in zones:
+        stage_outs: list[ProgressionStageOut] = []
+        for st in stages:
+            sl = shortlists.get(st.id)
+            is_final = bool(sl and sl.is_final_stage) or st.id == stages[-1].id
+
+            if is_final:
+                released = final_released and sl is not None
+            else:
+                # Intermediate: confirmed shortlist makes advancement counts public (no scores)
+                released = sl is not None
+
+            if not released:
+                stage_outs.append(
+                    ProgressionStageOut(
+                        stageId=st.id,
+                        stage=st.name,
+                        order=st.order,
+                        status=neutral,
+                        counts=None,
+                    )
+                )
+                continue
+
+            counts = await _counts_for_zone(session, sl, zone.id) if sl else ProgressionCounts()
+            stage_outs.append(
+                ProgressionStageOut(
+                    stageId=st.id,
+                    stage=st.name,
+                    order=st.order,
+                    status="RELEASED",
+                    counts=counts,
+                )
+            )
+
+        by_zone.append(
+            ProgressionZoneOut(zoneId=zone.id, zoneName=zone.name, stages=stage_outs)
+        )
+
+    return SkillProgressionOut(skillId=skill.id, skillName=skill.name, byZone=by_zone)

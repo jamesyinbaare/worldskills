@@ -80,7 +80,7 @@ async def emit(
     event: str,
     recipient_id: uuid.UUID,
     context: dict[str, Any] | None = None,
-    cycle_id: uuid.UUID | None = None,
+    competition_id: uuid.UUID | None = None,
     recipient_role: str = "USER",
     dedupe_key: str | None = None,
     sender: ChannelSender | None = None,
@@ -145,7 +145,7 @@ async def emit(
     # Opt-out for non-essential
     if prefs.opt_out_non_essential and not tmpl.essential:
         row = NotificationOutbox(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             recipient_role=recipient_role,
             recipient_id=recipient_id,
             template=event,
@@ -166,7 +166,7 @@ async def emit(
                 entity_id=str(row.id),
                 actor_id=actor.id,
                 actor_role=actor.role.value,
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 after={"event": event, "reason": "OPT_OUT_NON_ESSENTIAL"},
                 ip=ip,
                 user_agent=user_agent,
@@ -195,7 +195,7 @@ async def emit(
         )
 
     row = NotificationOutbox(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         recipient_role=recipient_role,
         recipient_id=recipient_id,
         template=event,
@@ -230,7 +230,7 @@ async def emit(
                     entity_id=str(row.id),
                     actor_id=actor.id,
                     actor_role=actor.role.value,
-                    cycle_id=cycle_id,
+                    competition_id=competition_id,
                     after={
                         "event": event,
                         "channel": channel,
@@ -265,7 +265,7 @@ async def emit(
             entity_id=str(row.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             after={"event": event, "error": row.error},
             ip=ip,
             user_agent=user_agent,

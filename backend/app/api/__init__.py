@@ -1,3 +1,3 @@
-from app.api import auth, cycles
+from app.api import auth, competitions
 
-__all__ = ["auth", "cycles"]
+__all__ = ["auth", "competitions"]

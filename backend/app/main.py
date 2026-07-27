@@ -15,9 +15,20 @@ from starlette.types import ASGIApp
 from app.api import appeals as appeals_api
 from app.api import assignments as assignments_api
 from app.api import auth as auth_api
+from app.api import catalog as catalog_api
 from app.api import consent as consent_api
-from app.api import cycles as cycles_api
+from app.api import competition_config as competition_config_api
+from app.api import competitor_portal as competitor_portal_api
+from app.api import competitions as competitions_api
+from app.api import competitors_admin as competitors_admin_api
+from app.api import institution_portal as institution_portal_api
+
 from app.api import eligibility as eligibility_api
+from app.api import exercises as exercises_api
+from app.api import geography as geography_api
+from app.api import governance as governance_api
+from app.api import users as users_api
+from app.api import institutions as institutions_api
 from app.api import lifecycle as lifecycle_api
 from app.api import nominations as nominations_api
 from app.api import public_portal as public_portal_api
@@ -180,9 +191,13 @@ app.add_middleware(
 )
 
 app.include_router(auth_api.router)
-app.include_router(cycles_api.router)
+app.include_router(catalog_api.router)
+app.include_router(geography_api.router)
+app.include_router(competitions_api.router)
+app.include_router(competition_config_api.router)
 app.include_router(skills_api.router)
 app.include_router(stages_api.router)
+app.include_router(exercises_api.router)
 app.include_router(submissions_api.router)
 app.include_router(assessment_api.router)
 app.include_router(shortlists_api.router)
@@ -190,12 +205,18 @@ app.include_router(results_api.router)
 app.include_router(assignments_api.router)
 app.include_router(nominations_api.router)
 app.include_router(registrations_api.router)
+app.include_router(competitors_admin_api.router)
+app.include_router(competitor_portal_api.router)
+app.include_router(institution_portal_api.router)
 app.include_router(consent_api.router)
 app.include_router(eligibility_api.router)
 app.include_router(lifecycle_api.router)
 app.include_router(appeals_api.router)
 app.include_router(scheduling_api.router)
 app.include_router(public_portal_api.router)
+app.include_router(users_api.router)
+app.include_router(institutions_api.router)
+app.include_router(governance_api.router)
 
 
 @app.get("/", status_code=status.HTTP_200_OK)

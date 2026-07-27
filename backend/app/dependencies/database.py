@@ -163,15 +163,17 @@ class TestingDatabaseSessionManager(DatabaseSessionManager):
     async def configure(self) -> None:
         from pytest_postgresql.janitor import DatabaseJanitor
 
-        result = urlparse(db_settings.database_url)
+        # Use this manager's URL (already host-rewritten by conftest), not cached settings.
+        result = urlparse(self._host.replace("postgresql+asyncpg://", "postgresql://", 1))
+        dbname = (result.path or "").lstrip("/") or "world_skills_test"
         self.__janitor = DatabaseJanitor(
-            user=result.username,
-            host=result.hostname,
-            port=result.port,  # type: ignore
-            dbname=result.path.strip("/"),
-            version=16,
-            password=result.password,
-        )  # type: ignore
+            user=result.username or "postgres",
+            host=result.hostname or "127.0.0.1",
+            port=result.port or 5432,
+            dbname=dbname,
+            version=18,
+            password=result.password or "postgres",
+        )
 
         try:
             self.__janitor.drop()

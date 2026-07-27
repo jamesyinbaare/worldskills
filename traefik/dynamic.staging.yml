@@ -1,0 +1,70 @@
+# File-provider routes for world-skills (avoids duplicate routers vs compose labels).
+# Dual hostnames: jamesyin.com + ctvet.gov.gh (same services; ACME SAN on each router).
+http:
+  routers:
+    worldskills-frontend-staging:
+      rule: "Host(`worldskills.jamesyin.com`) || Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-frontend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-frontend-staging-http:
+      rule: "Host(`worldskills.jamesyin.com`) || Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-frontend-staging
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-staging:
+      rule: "Host(`worldskills-api.jamesyin.com`) || Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-backend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-staging-http:
+      rule: "Host(`worldskills-api.jamesyin.com`) || Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-backend-staging
+      middlewares:
+        - worldskills-security-headers
+
+  services:
+    worldskills-frontend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://world-skills-frontend-staging:3001"
+
+    worldskills-backend-staging:
+      loadBalancer:
+        servers:
+          - url: "http://world-skills-backend-staging:80"
+
+  middlewares:
+    worldskills-security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        contentSecurityPolicy: "upgrade-insecure-requests; block-all-mixed-content"
+        customResponseHeaders:
+          Content-Security-Policy: "upgrade-insecure-requests; block-all-mixed-content"
+
+tls:
+  options:
+    default:
+      minVersion: "VersionTLS12"

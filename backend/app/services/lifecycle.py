@@ -14,7 +14,7 @@ from app.core.errors import AppError, FieldError
 from app.core.rbac import Capability, has_capability, is_admin_role
 from app.models import (
     Competitor,
-    Cycle,
+    Competition,
     LifecycleConfig,
     NotificationOutbox,
     Shortlist,
@@ -36,7 +36,7 @@ _ACTIVE_STATUSES = {
 }
 
 
-def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
+def _cycle_local_now(cycle: Competition, *, now: datetime | None = None) -> datetime:
     tz = ZoneInfo(cycle.time_zone)
     base = now or datetime.utcnow()
     if base.tzinfo is not None:
@@ -47,9 +47,9 @@ def _cycle_local_now(cycle: Cycle, *, now: datetime | None = None) -> datetime:
     return base.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
 
 
-async def _load_lifecycle_config(session: AsyncSession, cycle_id: uuid.UUID) -> LifecycleConfig:
+async def _load_lifecycle_config(session: AsyncSession, competition_id: uuid.UUID) -> LifecycleConfig:
     cfg = (
-        await session.execute(select(LifecycleConfig).where(LifecycleConfig.cycle_id == cycle_id))
+        await session.execute(select(LifecycleConfig).where(LifecycleConfig.competition_id == competition_id))
     ).scalar_one_or_none()
     if cfg is None or cfg.substitution_cutoff_at is None:
         raise AppError(
@@ -124,7 +124,7 @@ async def _promote_waitlist(
     *,
     vacated: ShortlistEntry,
     shortlist: Shortlist,
-    cycle: Cycle,
+    cycle: Competition,
     cfg: LifecycleConfig | None,
     actor: User,
 ) -> Competitor | None:
@@ -183,7 +183,7 @@ async def _promote_waitlist(
 
         session.add(
             NotificationOutbox(
-                cycle_id=cycle.id,
+                competition_id=cycle.id,
                 recipient_role="COMPETITOR",
                 recipient_id=competitor.id,
                 template="WAITLIST_PROMOTED",
@@ -204,7 +204,7 @@ async def _promote_waitlist(
             entity_id=str(competitor.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=cycle.id,
+            competition_id=cycle.id,
             after={
                 "shortlistId": str(shortlist.id),
                 "from": "WAITLIST",
@@ -259,9 +259,9 @@ async def withdraw_competitor(
                 fields=[FieldError("status", "INVALID_STATE")],
             )
 
-    cycle = await session.get(Cycle, competitor.cycle_id)
+    cycle = await session.get(Competition, competitor.competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
     before = {"status": competitor.status}
     competitor.status = "WITHDRAWN"
@@ -278,7 +278,7 @@ async def withdraw_competitor(
         entry.reason = "WITHDRAWN"
         cfg = (
             await session.execute(
-                select(LifecycleConfig).where(LifecycleConfig.cycle_id == cycle.id)
+                select(LifecycleConfig).where(LifecycleConfig.competition_id == cycle.id)
             )
         ).scalar_one_or_none()
         if cfg is None or not cfg.waitlist_order:
@@ -307,7 +307,7 @@ async def withdraw_competitor(
         entity_id=str(competitor.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         before=before,
         after={
             "status": "WITHDRAWN",
@@ -350,9 +350,9 @@ async def substitute_competitor(
             fields=[FieldError("status", "ALREADY_WITHDRAWN")],
         )
 
-    cycle = await session.get(Cycle, competitor.cycle_id)
+    cycle = await session.get(Competition, competitor.competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
     cfg = await _load_lifecycle_config(session, cycle.id)
     local_now = _cycle_local_now(cycle, now=now)
@@ -366,7 +366,7 @@ async def substitute_competitor(
 
     # Create replacement in same skill / zone / institution
     new_comp = Competitor(
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         skill_id=competitor.skill_id,
         zone_id=competitor.zone_id,
         institution_id=competitor.institution_id,
@@ -404,7 +404,7 @@ async def substitute_competitor(
             entity_id=str(competitor.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=competitor.cycle_id,
+            competition_id=competitor.competition_id,
             after={"failedRules": failed_rules, "reason": "ELIGIBILITY_FAILED"},
             ip=ip,
             user_agent=user_agent,
@@ -455,7 +455,7 @@ async def substitute_competitor(
         entity_id=str(new_comp.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=competitor.cycle_id,
+        competition_id=competitor.competition_id,
         before={"withdrawnCompetitorId": str(competitor.id), "status": prior_status},
         after={
             "replacementCompetitorId": str(new_comp.id),

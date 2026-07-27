@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import status
-from sqlalchemy import func, select
+from sqlalchemy import String, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,18 +14,34 @@ from app.core.errors import AppError, FieldError
 from app.core.rbac import Capability, has_capability, is_admin_role
 from app.models import (
     Competitor,
-    Cycle,
+    Competition,
     HealthSafetyIncident,
     NotificationOutbox,
     ScheduleSession,
     Shortlist,
     ShortlistEntry,
+    Skill,
     SlotAssignment,
     User,
     Venue,
 )
-from app.schemas.scheduling import AssignmentOut, IncidentOut, SessionOut
+from app.schemas.scheduling import (
+    AssignmentDetailOut,
+    AssignmentOut,
+    IncidentOut,
+    SessionDetailOut,
+    SessionListItem,
+    SessionOut,
+    VenueOut,
+)
 from app.services.audit import write_audit_event
+
+
+def _competitor_display_name(competitor: Competitor | None) -> str | None:
+    if competitor is None:
+        return None
+    parts = [p for p in (competitor.given_names, competitor.family_name) if p]
+    return " ".join(parts) if parts else None
 
 
 def _require_schedule_capability(actor: User) -> None:
@@ -42,7 +58,7 @@ def _require_schedule_capability(actor: User) -> None:
 def _session_out(row: ScheduleSession) -> SessionOut:
     return SessionOut(
         sessionId=row.id,
-        cycleId=row.cycle_id,
+        competitionId=row.competition_id,
         venueId=row.venue_id,
         startsAt=row.starts_at,
         endsAt=row.ends_at,
@@ -65,7 +81,7 @@ def _incident_out(row: HealthSafetyIncident) -> IncidentOut:
     return IncidentOut(
         incidentId=row.id,
         sessionId=row.session_id,
-        cycleId=row.cycle_id,
+        competitionId=row.competition_id,
         summary=row.summary,
         severity=row.severity,
         recordedAt=row.recorded_at,
@@ -78,9 +94,9 @@ def _parse_dt(value: datetime) -> datetime:
     return value
 
 
-async def _load_venue(session: AsyncSession, cycle_id: uuid.UUID, venue_id: uuid.UUID) -> Venue:
+async def _load_venue(session: AsyncSession, competition_id: uuid.UUID, venue_id: uuid.UUID) -> Venue:
     venue = await session.get(Venue, venue_id)
-    if venue is None or venue.cycle_id != cycle_id:
+    if venue is None or venue.competition_id != competition_id:
         raise AppError("VENUE_NOT_FOUND", "Venue not found in cycle", status_code=404)
     if not venue.active:
         raise AppError(
@@ -100,14 +116,14 @@ async def _load_venue(session: AsyncSession, cycle_id: uuid.UUID, venue_id: uuid
 
 
 async def _is_confirmed_advanced(
-    session: AsyncSession, *, cycle_id: uuid.UUID, competitor_id: uuid.UUID
+    session: AsyncSession, *, competition_id: uuid.UUID, competitor_id: uuid.UUID
 ) -> bool:
     row = (
         await session.execute(
             select(ShortlistEntry.id)
             .join(Shortlist, ShortlistEntry.shortlist_id == Shortlist.id)
             .where(
-                Shortlist.cycle_id == cycle_id,
+                Shortlist.competition_id == competition_id,
                 Shortlist.state == "CONFIRMED",
                 ShortlistEntry.competitor_id == competitor_id,
                 ShortlistEntry.outcome == "ADVANCE",
@@ -121,7 +137,7 @@ async def _is_confirmed_advanced(
 
 async def create_session(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     venue_id: uuid.UUID,
     starts_at: datetime,
@@ -133,11 +149,11 @@ async def create_session(
 ) -> SessionOut:
     _require_schedule_capability(actor)
 
-    cycle = await session.get(Cycle, cycle_id)
+    cycle = await session.get(Competition, competition_id)
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
 
-    venue = await _load_venue(session, cycle_id, venue_id)
+    venue = await _load_venue(session, competition_id, venue_id)
 
     starts = _parse_dt(starts_at)
     ends = _parse_dt(ends_at)
@@ -164,7 +180,7 @@ async def create_session(
         )
 
     row = ScheduleSession(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         venue_id=venue_id,
         starts_at=starts,
         ends_at=ends,
@@ -182,7 +198,7 @@ async def create_session(
         entity_id=str(row.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after={
             "venueId": str(venue_id),
             "workstations": workstations,
@@ -228,10 +244,10 @@ async def assign_slot(
         raise AppError("SESSION_NOT_FOUND", "Schedule session not found", status_code=404)
 
     competitor = await session.get(Competitor, competitor_id)
-    if competitor is None or competitor.cycle_id != schedule.cycle_id:
+    if competitor is None or competitor.competition_id != schedule.competition_id:
         raise AppError("COMPETITOR_NOT_FOUND", "Competitor not found in cycle", status_code=404)
 
-    if not await _is_confirmed_advanced(session, cycle_id=schedule.cycle_id, competitor_id=competitor_id):
+    if not await _is_confirmed_advanced(session, competition_id=schedule.competition_id, competitor_id=competitor_id):
         raise AppError(
             "NOT_SHORTLISTED",
             "Only confirmed shortlisted (ADVANCE) competitors may be assigned",
@@ -287,7 +303,7 @@ async def assign_slot(
         assignment = existing_comp
         await _enqueue_slot_notification(
             session,
-            cycle_id=schedule.cycle_id,
+            competition_id=schedule.competition_id,
             competitor_id=competitor_id,
             session_id=session_id,
             workstation=workstation,
@@ -300,7 +316,7 @@ async def assign_slot(
             entity_id=str(assignment.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=schedule.cycle_id,
+            competition_id=schedule.competition_id,
             before=before,
             after={"workstation": workstation, "competitorId": str(competitor_id)},
             reason="RESCHEDULE",
@@ -347,7 +363,7 @@ async def assign_slot(
 
     await _enqueue_slot_notification(
         session,
-        cycle_id=schedule.cycle_id,
+        competition_id=schedule.competition_id,
         competitor_id=competitor_id,
         session_id=session_id,
         workstation=workstation,
@@ -360,7 +376,7 @@ async def assign_slot(
         entity_id=str(assignment.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=schedule.cycle_id,
+        competition_id=schedule.competition_id,
         after={"workstation": workstation, "competitorId": str(competitor_id)},
         ip=ip,
         user_agent=user_agent,
@@ -373,7 +389,7 @@ async def assign_slot(
 async def _enqueue_slot_notification(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     competitor_id: uuid.UUID,
     session_id: uuid.UUID,
     workstation: str,
@@ -392,7 +408,7 @@ async def _enqueue_slot_notification(
         return
     session.add(
         NotificationOutbox(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             recipient_role="COMPETITOR",
             recipient_id=competitor_id,
             template="SCHEDULE_SLOT_ASSIGNED",
@@ -436,7 +452,7 @@ async def record_incident(
 
     incident = HealthSafetyIncident(
         session_id=session_id,
-        cycle_id=schedule.cycle_id,
+        competition_id=schedule.competition_id,
         summary=summary,
         severity=(severity.strip().upper() if severity else None),
         recorded_by=actor.id,
@@ -451,7 +467,7 @@ async def record_incident(
         entity_id=str(incident.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=schedule.cycle_id,
+        competition_id=schedule.competition_id,
         after={
             "sessionId": str(session_id),
             "summary": summary,
@@ -464,3 +480,165 @@ async def record_incident(
     await session.commit()
     await session.refresh(incident)
     return _incident_out(incident)
+
+
+async def list_venues(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    active_only: bool = True,
+) -> list[VenueOut]:
+    _require_schedule_capability(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    stmt = select(Venue).where(Venue.competition_id == competition_id).order_by(Venue.name)
+    if active_only:
+        stmt = stmt.where(Venue.active.is_(True))
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        VenueOut(
+            venueId=v.id,
+            competitionId=v.competition_id,
+            name=v.name,
+            capacity=v.capacity,
+            workstations=v.workstations,
+            active=v.active,
+            zoneId=v.zone_id,
+        )
+        for v in rows
+    ]
+
+
+async def list_sessions(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    skill_id: uuid.UUID | None = None,
+    q: str | None = None,
+) -> list[SessionListItem]:
+    _require_schedule_capability(actor)
+    cycle = await session.get(Competition, competition_id)
+    if cycle is None:
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
+
+    assignment_count = (
+        select(func.count())
+        .select_from(SlotAssignment)
+        .where(SlotAssignment.session_id == ScheduleSession.id)
+        .correlate(ScheduleSession)
+        .scalar_subquery()
+    )
+    incident_count = (
+        select(func.count())
+        .select_from(HealthSafetyIncident)
+        .where(HealthSafetyIncident.session_id == ScheduleSession.id)
+        .correlate(ScheduleSession)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        select(ScheduleSession, Venue.name, assignment_count, incident_count)
+        .join(Venue, Venue.id == ScheduleSession.venue_id)
+        .where(ScheduleSession.competition_id == competition_id)
+    )
+
+    if skill_id is not None:
+        skill_session_ids = (
+            select(SlotAssignment.session_id)
+            .join(Competitor, Competitor.id == SlotAssignment.competitor_id)
+            .where(Competitor.skill_id == skill_id)
+            .distinct()
+        )
+        stmt = stmt.where(ScheduleSession.id.in_(skill_session_ids))
+
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Venue.name.ilike(term),
+                ScheduleSession.state.ilike(term),
+                func.cast(ScheduleSession.id, String).ilike(term),
+            )
+        )
+
+    stmt = stmt.order_by(ScheduleSession.starts_at.asc())
+    rows = (await session.execute(stmt)).all()
+    return [
+        SessionListItem(
+            sessionId=row.id,
+            competitionId=row.competition_id,
+            venueId=row.venue_id,
+            venueName=venue_name,
+            startsAt=row.starts_at,
+            endsAt=row.ends_at,
+            workstations=row.workstations,
+            state=row.state,
+            assignmentCount=int(assign_n or 0),
+            incidentCount=int(inc_n or 0),
+        )
+        for row, venue_name, assign_n, inc_n in rows
+    ]
+
+
+async def get_session_detail(
+    session: AsyncSession,
+    session_id: uuid.UUID,
+    *,
+    actor: User,
+) -> SessionDetailOut:
+    _require_schedule_capability(actor)
+
+    schedule = await session.get(ScheduleSession, session_id)
+    if schedule is None:
+        raise AppError("SESSION_NOT_FOUND", "Schedule session not found", status_code=404)
+
+    venue = await session.get(Venue, schedule.venue_id)
+    venue_name = venue.name if venue else ""
+
+    assignment_rows = (
+        await session.execute(
+            select(SlotAssignment, Competitor, Skill)
+            .outerjoin(Competitor, Competitor.id == SlotAssignment.competitor_id)
+            .outerjoin(Skill, Skill.id == Competitor.skill_id)
+            .where(SlotAssignment.session_id == session_id)
+            .order_by(SlotAssignment.workstation)
+        )
+    ).all()
+
+    incidents = (
+        await session.execute(
+            select(HealthSafetyIncident)
+            .where(HealthSafetyIncident.session_id == session_id)
+            .order_by(HealthSafetyIncident.recorded_at.desc())
+        )
+    ).scalars().all()
+
+    return SessionDetailOut(
+        sessionId=schedule.id,
+        competitionId=schedule.competition_id,
+        venueId=schedule.venue_id,
+        venueName=venue_name,
+        startsAt=schedule.starts_at,
+        endsAt=schedule.ends_at,
+        workstations=schedule.workstations,
+        state=schedule.state,
+        assignments=[
+            AssignmentDetailOut(
+                assignmentId=a.id,
+                sessionId=a.session_id,
+                competitorId=a.competitor_id,
+                competitorRef=c.ref_no if c else None,
+                competitorName=_competitor_display_name(c),
+                skillId=s.id if s else None,
+                skillName=s.name if s else None,
+                workstation=a.workstation,
+                readiness=a.readiness,
+            )
+            for a, c, s in assignment_rows
+        ],
+        incidents=[_incident_out(i) for i in incidents],
+    )

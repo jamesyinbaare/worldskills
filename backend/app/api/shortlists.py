@@ -12,14 +12,14 @@ from app.models import User
 from app.schemas.shortlists import ShortlistConfirmOut, ShortlistGenerateOut
 from app.services import shortlists as shortlist_service
 
-router = APIRouter(prefix="/cycles", tags=["shortlists"])
+router = APIRouter(prefix="/competitions", tags=["shortlists"])
 
 ShortlistUserDep = Annotated[User, Depends(require_capability(Capability.APPROVE_SHORTLIST))]
 
 
-@router.post("/{cycle_id}/stages/{stage_id}:shortlist", response_model=ShortlistGenerateOut)
+@router.post("/{competition_id}/stages/{stage_id}:shortlist", response_model=ShortlistGenerateOut)
 async def generate_shortlist(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     session: DBSessionDep,
     actor: ShortlistUserDep,
@@ -27,16 +27,16 @@ async def generate_shortlist(
 ) -> ShortlistGenerateOut:
     ip, ua = client_meta(request)
     return await shortlist_service.generate_shortlist(
-        session, cycle_id, stage_id, actor=actor, ip=ip, user_agent=ua
+        session, competition_id, stage_id, actor=actor, ip=ip, user_agent=ua
     )
 
 
 @router.post(
-    "/{cycle_id}/stages/{stage_id}:confirm-shortlist",
+    "/{competition_id}/stages/{stage_id}:confirm-shortlist",
     response_model=ShortlistConfirmOut,
 )
 async def confirm_shortlist(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     session: DBSessionDep,
     actor: ShortlistUserDep,
@@ -44,5 +44,5 @@ async def confirm_shortlist(
 ) -> ShortlistConfirmOut:
     ip, ua = client_meta(request)
     return await shortlist_service.confirm_shortlist(
-        session, cycle_id, stage_id, actor=actor, ip=ip, user_agent=ua
+        session, competition_id, stage_id, actor=actor, ip=ip, user_agent=ua
     )

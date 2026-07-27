@@ -1,0 +1,16 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/competitor/layout,_N_T_/competitor/(portal)/layout,_N_T_/competitor/(portal)/page,_N_T_/competitor"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/competitor/!KHBvcnRhbCk/__PAGE__",
+    "/competitor/!KHBvcnRhbCk",
+    "/competitor",
+    "/_index",
+    "/_head"
+  ]
+}

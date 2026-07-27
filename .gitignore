@@ -34,9 +34,14 @@ node_modules/
 
 # testing
 /coverage
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
 
 # next.js
 /.next/
+/.next-build/
 /out/
 
 # production

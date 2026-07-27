@@ -32,30 +32,48 @@ class UserRole(str, enum.Enum):
     APPEALS_OFFICER = "APPEALS_OFFICER"
 
 
-class CycleStatus(str, enum.Enum):
+class CompetitionStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"
     LOCKED = "LOCKED"
     CLOSED = "CLOSED"
 
 
-class Region(enum.Enum):
-    ASHANTI = "Ashanti"
-    BONO = "Bono"
-    BONO_EAST = "Bono East"
-    AHAFO = "Ahafo"
-    CENTRAL = "Central"
-    EASTERN = "Eastern"
-    GREATER_ACCRA = "Greater Accra"
-    NORTHERN = "Northern"
-    NORTH_EAST = "North East"
-    SAVANNAH = "Savannah"
-    UPPER_EAST = "Upper East"
-    UPPER_WEST = "Upper West"
-    VOLTA = "Volta"
-    OTI = "Oti"
-    WESTERN = "Western"
-    WESTERN_NORTH = "Western North"
+# Ghana administrative region names (seeded in migration; formerly a Python enum).
+GHANA_REGION_NAMES: tuple[str, ...] = (
+    "Ashanti",
+    "Bono",
+    "Bono East",
+    "Ahafo",
+    "Central",
+    "Eastern",
+    "Greater Accra",
+    "Northern",
+    "North East",
+    "Savannah",
+    "Upper East",
+    "Upper West",
+    "Volta",
+    "Oti",
+    "Western",
+    "Western North",
+)
+
+
+class StageSelectionMode(str, enum.Enum):
+    PER_ZONE = "PER_ZONE"
+    NATIONAL_POOL = "NATIONAL_POOL"
+
+
+class Region(Base):
+    """Global region catalog (US-ZON-01)."""
+
+    __tablename__ = "regions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(120), nullable=False, unique=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class User(Base):
@@ -70,23 +88,32 @@ class User(Base):
     role = Column(Enum(UserRole, name="userrole", create_constraint=False), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    invite_token_hash = Column(String(255), nullable=True)
+    invite_expires_at = Column(DateTime, nullable=True)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
 
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    created_by = relationship("User", remote_side=[id], foreign_keys=[created_by_id])
     institution = relationship("Institution", foreign_keys=[institution_id])
 
 
 class Institution(Base):
-    """Minimal institution record for COI / nominations (FR-5)."""
+    """School / institution catalog (US-INS-02). Excel upsert key = code."""
 
     __tablename__ = "institutions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(200), nullable=False, unique=True)
+    code = Column(String(64), nullable=False, unique=True, default=lambda: f"T-{uuid.uuid4().hex[:10]}")
+    name = Column(String(200), nullable=False)
+    region_id = Column(UUID(as_uuid=True), ForeignKey("regions.id", ondelete="RESTRICT"), nullable=False, index=True)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    region = relationship("Region", foreign_keys=[region_id])
 
 
 class NominationStatus(str, enum.Enum):
@@ -109,8 +136,8 @@ class RefreshToken(Base):
     user = relationship("User", back_populates="refresh_tokens")
 
 
-class Cycle(Base):
-    __tablename__ = "cycles"
+class Competition(Base):
+    __tablename__ = "competitions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(120), nullable=False, index=True)
@@ -118,51 +145,84 @@ class Cycle(Base):
     period_end = Column(Date, nullable=False)
     time_zone = Column(String(64), nullable=False)
     status = Column(
-        Enum(CycleStatus, name="cyclestatus", create_constraint=False),
+        Enum(CompetitionStatus, name="competitionstatus", create_constraint=False),
         nullable=False,
-        default=CycleStatus.DRAFT,
+        default=CompetitionStatus.DRAFT,
     )
     languages = Column(JSON, nullable=False, default=list)
+    description = Column(Text, nullable=True)
     organising_body = Column(JSON, nullable=True)
     branding = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    skills = relationship("Skill", back_populates="cycle", cascade="all, delete-orphan")
-    stages = relationship("Stage", back_populates="cycle", cascade="all, delete-orphan")
-    age_rules = relationship("AgeRule", back_populates="cycle", cascade="all, delete-orphan")
-    pathways = relationship("Pathway", back_populates="cycle", cascade="all, delete-orphan")
-    marking_schemes = relationship("MarkingScheme", back_populates="cycle", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="competition", cascade="all, delete-orphan")
+    stages = relationship("Stage", back_populates="competition", cascade="all, delete-orphan")
+    exercises = relationship("Exercise", back_populates="competition", cascade="all, delete-orphan")
+    age_rules = relationship("AgeRule", back_populates="competition", cascade="all, delete-orphan")
+    pathways = relationship("Pathway", back_populates="competition", cascade="all, delete-orphan")
+    marking_schemes = relationship("MarkingScheme", back_populates="competition", cascade="all, delete-orphan")
+
+
+class Family(Base):
+    """Global skill family catalog (US-SKL-02)."""
+
+    __tablename__ = "families"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(120), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    catalog_skills = relationship("CatalogSkill", back_populates="family")
+
+
+class CatalogSkill(Base):
+    """Global skill catalog entry (US-SKL-02). Associated to cycles via Skill (CycleSkill)."""
+
+    __tablename__ = "catalog_skills"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(120), nullable=False, unique=True)
+    number = Column(String(32), nullable=True)
+    family_id = Column(UUID(as_uuid=True), ForeignKey("families.id", ondelete="RESTRICT"), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    family = relationship("Family", back_populates="catalog_skills")
+    cycle_skills = relationship("Skill", back_populates="catalog_skill")
 
 
 class AgeRule(Base):
     __tablename__ = "age_rules"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(120), nullable=False)
     max_age = Column(Integer, nullable=False)
     reference_date = Column(Date, nullable=True)
     open_category_enabled = Column(Boolean, default=False, nullable=False)
 
-    cycle = relationship("Cycle", back_populates="age_rules")
+    competition = relationship("Competition", back_populates="age_rules")
 
 
 class Pathway(Base):
     __tablename__ = "pathways"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(120), nullable=False)
 
-    cycle = relationship("Cycle", back_populates="pathways")
+    competition = relationship("Competition", back_populates="pathways")
 
 
 class MarkingScheme(Base):
     __tablename__ = "marking_schemes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(120), nullable=False)
     # US-ASM-01 rubric config — fail closed when scoring if missing criteria
     # {
@@ -171,52 +231,92 @@ class MarkingScheme(Base):
     #   "penalties":[{"code":"MINOR_NON_COMPLIANCE","deduction":2,"cap":5}]
     # }
     rubric = Column(JSON, nullable=True)
+    # Optional Word/PDF marking document for experts (US-SUB-03)
+    document_object_key = Column(String(512), nullable=True)
+    document_file_name = Column(String(255), nullable=True)
+    document_content_type = Column(String(120), nullable=True)
+    document_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
 
-    cycle = relationship("Cycle", back_populates="marking_schemes")
+    competition = relationship("Competition", back_populates="marking_schemes")
 
 
 class Skill(Base):
+    """CycleSkill — association of a catalog skill to a competition with per-cycle age rule (US-SKL-01)."""
+
     __tablename__ = "skills"
-    __table_args__ = (UniqueConstraint("cycle_id", "name", name="uq_skills_cycle_id_name"),)
+    __table_args__ = (
+        UniqueConstraint("competition_id", "name", name="uq_skills_competition_id_name"),
+        UniqueConstraint("competition_id", "catalog_skill_id", name="uq_skills_competition_id_catalog_skill_id"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    catalog_skill_id = Column(
+        UUID(as_uuid=True), ForeignKey("catalog_skills.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     name = Column(String(120), nullable=False)
     number = Column(String(32), nullable=True)
+    # Catalog family UUID as string for branching (byFamily); denormalized from catalog
     family_id = Column(String(64), nullable=True)
     age_rule_id = Column(UUID(as_uuid=True), ForeignKey("age_rules.id", ondelete="SET NULL"), nullable=True)
+    # Embedded age rule (preferred — per skill per competition)
+    max_age = Column(Integer, nullable=True)
+    age_reference_date = Column(Date, nullable=True)
+    open_category_enabled = Column(Boolean, nullable=True)
     pathway_id = Column(UUID(as_uuid=True), ForeignKey("pathways.id", ondelete="SET NULL"), nullable=True)
     scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
     capacity = Column(Integer, nullable=True)
+    # Max competitors each school may register for this skill (applies to all institutions)
+    school_quota = Column(Integer, nullable=True)
     active = Column(Boolean, default=True, nullable=False)
     # Extra eligibility checks beyond age, e.g. {"requireNationality":["GH"],"requireEnrolmentAttestation":true}
     eligibility_rules = Column(JSON, nullable=True)
+    # Skill-area criteria document for competitors / institutions
+    criteria_object_key = Column(String(512), nullable=True)
+    criteria_file_name = Column(String(255), nullable=True)
+    criteria_content_type = Column(String(120), nullable=True)
+    criteria_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
 
-    cycle = relationship("Cycle", back_populates="skills")
+    competition = relationship("Competition", back_populates="skills")
+    catalog_skill = relationship("CatalogSkill", back_populates="cycle_skills")
 
 
 class Zone(Base):
     """Cycle-scoped zone stub (full US-ZON-01 later). Required for expert assignment."""
 
     __tablename__ = "zones"
-    __table_args__ = (UniqueConstraint("cycle_id", "name", name="uq_zones_cycle_id_name"),)
+    __table_args__ = (UniqueConstraint("competition_id", "name", name="uq_zones_competition_id_name"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(120), nullable=False)
     active = Column(Boolean, default=True, nullable=False)
+
+
+class CompetitionRegionZone(Base):
+    """Maps a catalog region to a competition zone (US-ZON-01)."""
+
+    __tablename__ = "competition_region_zones"
+    __table_args__ = (
+        UniqueConstraint("competition_id", "region_id", name="uq_competition_region_zones_competition_region"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    region_id = Column(UUID(as_uuid=True), ForeignKey("regions.id", ondelete="RESTRICT"), nullable=False, index=True)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
 
 
 class ExpertAssignment(Base):
     __tablename__ = "expert_assignments"
     __table_args__ = (
         UniqueConstraint(
-            "cycle_id", "expert_id", "skill_id", "zone_id", name="uq_expert_assignments_cycle_expert_skill_zone"
+            "competition_id", "expert_id", "skill_id", "zone_id", name="uq_expert_assignments_competition_expert_skill_zone"
         ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     expert_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
     zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -229,12 +329,16 @@ class Competitor(Base):
     """Competitor record — nomination shell or full registration (US-REG-01)."""
 
     __tablename__ = "competitors"
-    __table_args__ = (UniqueConstraint("cycle_id", "ref_no", name="uq_competitors_cycle_id_ref_no"),)
+    __table_args__ = (
+        UniqueConstraint("competition_id", "ref_no", name="uq_competitors_competition_id_ref_no"),
+        UniqueConstraint("competition_id", "user_id", name="uq_competitors_competition_id_user_id"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
     zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
+    region_id = Column(UUID(as_uuid=True), ForeignKey("regions.id", ondelete="RESTRICT"), nullable=True, index=True)
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -245,11 +349,15 @@ class Competitor(Base):
     # Registration profile (nullable when created via nomination shell)
     given_names = Column(String(100), nullable=True)
     family_name = Column(String(100), nullable=True)
+    gender = Column(String(16), nullable=True)  # Male | Female
     date_of_birth = Column(Date, nullable=True)
     email = Column(String(255), nullable=True)
     mobile = Column(String(32), nullable=True)
     whatsapp = Column(String(32), nullable=True)
     national_id = Column(String(64), nullable=True, index=True)
+    has_passport = Column(Boolean, default=False, nullable=False)
+    passport_number = Column(String(64), nullable=True)
+    passport_expires_on = Column(Date, nullable=True)
     photo_key = Column(String(512), nullable=True)
     coach = Column(JSON, nullable=True)
     flags = Column(JSON, nullable=False, default=list)
@@ -263,6 +371,15 @@ class Competitor(Base):
     consent_public_at = Column(DateTime, nullable=True)
     consent_public_by = Column(String(255), nullable=True)
     public_profile_visible = Column(Boolean, default=False, nullable=False)
+    # Signed guardian consent form (PDF upload)
+    consent_form_key = Column(String(512), nullable=True)
+    consent_form_uploaded_at = Column(DateTime, nullable=True)
+    consent_form_sha256 = Column(String(64), nullable=True)
+    # Admin verification of signed consent form
+    consent_verification_status = Column(String(32), nullable=True)  # PENDING | VERIFIED | REJECTED
+    consent_verified_at = Column(DateTime, nullable=True)
+    consent_verified_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    consent_verification_reason = Column(Text, nullable=True)
     # Eligibility (US-ELG-01)
     nationality = Column(String(8), nullable=True)
     enrolment_attested = Column(Boolean, default=False, nullable=False)
@@ -304,13 +421,13 @@ class ConsentRequest(Base):
 
 
 class RegistrationWindow(Base):
-    """Cycle registration open/close window — fail closed if missing."""
+    """Competition registration open/close window — fail closed if missing."""
 
     __tablename__ = "registration_windows"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     opens_at = Column(DateTime, nullable=False)
     closes_at = Column(DateTime, nullable=False)
@@ -322,8 +439,8 @@ class RegistrationFormDefinition(Base):
     __tablename__ = "registration_form_definitions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     fields = Column(JSON, nullable=False, default=list)
     max_skills = Column(Integer, nullable=False, default=1)
@@ -337,26 +454,26 @@ class RegistrationFormDefinition(Base):
 
 class IdempotencyRecord(Base):
     __tablename__ = "idempotency_records"
-    __table_args__ = (UniqueConstraint("cycle_id", "key", name="uq_idempotency_records_cycle_key"),)
+    __table_args__ = (UniqueConstraint("competition_id", "key", name="uq_idempotency_records_competition_key"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     key = Column(String(128), nullable=False)
     status_code = Column(Integer, nullable=False)
     response_body = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-class InstitutionCycleMembership(Base):
-    """Links an institution to a cycle zone (precondition for nominations)."""
+class InstitutionCompetitionMembership(Base):
+    """Links an institution to a competition zone (precondition for nominations)."""
 
-    __tablename__ = "institution_cycle_memberships"
+    __tablename__ = "institution_competition_memberships"
     __table_args__ = (
-        UniqueConstraint("cycle_id", "institution_id", name="uq_institution_cycle_memberships_cycle_institution"),
+        UniqueConstraint("competition_id", "institution_id", name="uq_institution_competition_memberships_competition_institution"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -369,12 +486,12 @@ class NominationLimit(Base):
     __tablename__ = "nomination_limits"
     __table_args__ = (
         UniqueConstraint(
-            "cycle_id", "institution_id", "skill_id", name="uq_nomination_limits_cycle_institution_skill"
+            "competition_id", "institution_id", "skill_id", name="uq_nomination_limits_competition_institution_skill"
         ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +503,7 @@ class Nomination(Base):
     __tablename__ = "nominations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -411,7 +528,7 @@ class NotificationOutbox(Base):
     __tablename__ = "notification_outbox"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    competition_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     recipient_role = Column(String(64), nullable=False)
     recipient_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     template = Column(String(128), nullable=False)
@@ -474,7 +591,7 @@ class Submission(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     competitor_id = Column(
         UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -587,22 +704,26 @@ class Stage(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
     name = Column(String(120), nullable=False)
     order = Column(Integer, nullable=False, default=1)
     stage_type = Column(String(64), nullable=False, default="GENERIC")
     opens_at = Column(DateTime, nullable=True)
     closes_at = Column(DateTime, nullable=True)
+    selection_mode = Column(
+        String(32),
+        nullable=False,
+        default=StageSelectionMode.PER_ZONE.value,
+    )
     # Rollup of quota_by_zone totals (activation / legacy clone compat).
     quota = Column(Integer, nullable=True)
     # Per-zone advancement quotas: { "<zoneUuid>": int >= 0 }
     quota_by_zone = Column(JSON, nullable=True)
     min_score = Column(Integer, nullable=True)
-    scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
     # Branch map: {"default": <order>, "byFamily": {"practical_trades": <order>}}
     branch = Column(JSON, nullable=True)
-    # US-SUB-02 (US-SUB-01 stub): required deliverables, formats, late policy, timed duration
+    # Legacy US-SUB-02 fallback; prefer published Exercise.deliverables (US-SUB-01).
     # Example:
     # {
     #   "requiredDeliverables":[{"code":"main","formats":["pdf","zip"],"maxMb":20}],
@@ -611,7 +732,49 @@ class Stage(Base):
     # }
     submission_rules = Column(JSON, nullable=True)
 
-    cycle = relationship("Cycle", back_populates="stages")
+    competition = relationship("Competition", back_populates="stages")
+    exercise = relationship(
+        "Exercise",
+        back_populates="stage",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class Exercise(Base):
+    """Challenge / test project for a stage (US-SUB-01). 1:1 with Stage; holds marking scheme."""
+
+    __tablename__ = "exercises"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    stage_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("stages.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    brief = Column(Text, nullable=True)
+    # [{code, label?, required, allowedTypes[], maxSizeBytes?}]
+    deliverables = Column(JSON, nullable=False, default=list)
+    # DRAFT | PUBLISHED
+    status = Column(String(32), nullable=False, default="DRAFT")
+    scheme_id = Column(UUID(as_uuid=True), ForeignKey("marking_schemes.id", ondelete="SET NULL"), nullable=True)
+    # Optional late/timed policy mirrored into submission_rules shape
+    late_policy = Column(String(32), nullable=True)  # block | flag-late
+    timed_duration_seconds = Column(Integer, nullable=True)
+    # Optional Word/PDF challenge pack (US-SUB-01 Phase 1.9)
+    pack_object_key = Column(String(512), nullable=True)
+    pack_file_name = Column(String(255), nullable=True)
+    pack_content_type = Column(String(120), nullable=True)
+    pack_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    stage = relationship("Stage", back_populates="exercise")
+    competition = relationship("Competition", back_populates="exercises")
 
 
 class Shortlist(Base):
@@ -620,7 +783,7 @@ class Shortlist(Base):
     __tablename__ = "shortlists"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
     # PROVISIONAL | CONFIRMED
@@ -652,13 +815,13 @@ class ShortlistEntry(Base):
 
 
 class LifecycleConfig(Base):
-    """Cycle lifecycle config — substitution cut-off & waitlist order (US-LCY-01)."""
+    """Competition lifecycle config — substitution cut-off & waitlist order (US-LCY-01)."""
 
     __tablename__ = "lifecycle_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     substitution_cutoff_at = Column(DateTime, nullable=False)
     # RANK = promote lowest rank number among WAITLIST in the same zone
@@ -666,13 +829,13 @@ class LifecycleConfig(Base):
 
 
 class AppealsConfig(Base):
-    """Cycle appeals / DQ / tie-break config (US-APP-01). Fail closed if missing."""
+    """Competition appeals / DQ / tie-break config (US-APP-01). Fail closed if missing."""
 
     __tablename__ = "appeals_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     appeal_window_opens_at = Column(DateTime, nullable=False)
     appeal_window_closes_at = Column(DateTime, nullable=False)
@@ -688,7 +851,7 @@ class AppealCase(Base):
     __tablename__ = "appeal_cases"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     competitor_id = Column(
         UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -712,10 +875,10 @@ class Venue(Base):
     """Physical venue with capacity (US-SCH-01; full US-ZON-01 later)."""
 
     __tablename__ = "venues"
-    __table_args__ = (UniqueConstraint("cycle_id", "name", name="uq_venues_cycle_id_name"),)
+    __table_args__ = (UniqueConstraint("competition_id", "name", name="uq_venues_competition_id_name"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(200), nullable=False)
     capacity = Column(Integer, nullable=False)
@@ -730,7 +893,7 @@ class ScheduleSession(Base):
     __tablename__ = "schedule_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     venue_id = Column(UUID(as_uuid=True), ForeignKey("venues.id", ondelete="CASCADE"), nullable=False, index=True)
     starts_at = Column(DateTime, nullable=False)
     ends_at = Column(DateTime, nullable=False)
@@ -775,7 +938,7 @@ class HealthSafetyIncident(Base):
     session_id = Column(
         UUID(as_uuid=True), ForeignKey("schedule_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     summary = Column(Text, nullable=False)
     severity = Column(String(32), nullable=True)
     recorded_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -783,13 +946,13 @@ class HealthSafetyIncident(Base):
 
 
 class PublicPortalConfig(Base):
-    """Cycle public-portal field set + anti-scraping limits (US-PUB-01). Fail closed if missing."""
+    """Competition public-portal field set + anti-scraping limits (US-PUB-01). Fail closed if missing."""
 
     __tablename__ = "public_portal_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     # Allowed public field keys, e.g. ["displayName","photo","institution","skill","stageStatus","zone"]
     public_fields = Column(JSON, nullable=False, default=list)
@@ -798,13 +961,13 @@ class PublicPortalConfig(Base):
 
 
 class ResultsConfig(Base):
-    """Cycle results publication config — embargo/audience (US-RES-01). Fail closed if missing."""
+    """Competition results publication config — embargo/audience (US-RES-01). Fail closed if missing."""
 
     __tablename__ = "results_configs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(
-        UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     release_at = Column(DateTime, nullable=False)
     # e.g. ["PUBLIC", "COMPETITOR", "INSTITUTION"]
@@ -816,15 +979,15 @@ class ResultsConfig(Base):
 
 
 class CertificateTemplate(Base):
-    """Certificate body template per outcome for a cycle (US-RES-01)."""
+    """Certificate body template per outcome for a competition (US-RES-01)."""
 
     __tablename__ = "certificate_templates"
     __table_args__ = (
-        UniqueConstraint("cycle_id", "outcome", "language", name="uq_certificate_templates_cycle_outcome_lang"),
+        UniqueConstraint("competition_id", "outcome", "language", name="uq_certificate_templates_competition_outcome_lang"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     outcome = Column(String(64), nullable=False)
     language = Column(String(16), nullable=False, default="en")
     body = Column(Text, nullable=False)
@@ -837,9 +1000,11 @@ class ResultPublication(Base):
     __tablename__ = "result_publications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     # Partial release: one skill; null = whole-cycle publication covering all prepared skills
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
+    # Stage-scoped release (exercise results for that stage); null = finals / skill rollup
+    stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="CASCADE"), nullable=True, index=True)
     # EMBARGOED | RELEASED
     state = Column(String(32), nullable=False, default="EMBARGOED")
     release_at = Column(DateTime, nullable=False)
@@ -860,7 +1025,7 @@ class ResultEntry(Base):
     publication_id = Column(
         UUID(as_uuid=True), ForeignKey("result_publications.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
     competitor_id = Column(
         UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False, index=True
@@ -881,7 +1046,7 @@ class Certificate(Base):
     __tablename__ = "certificates"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), ForeignKey("cycles.id", ondelete="CASCADE"), nullable=False, index=True)
+    competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     publication_id = Column(
         UUID(as_uuid=True), ForeignKey("result_publications.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -903,7 +1068,7 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cycle_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    competition_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     actor_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     actor_role = Column(String(64), nullable=True)
     action = Column(String(128), nullable=False)
@@ -916,3 +1081,19 @@ class AuditEvent(Base):
     user_agent = Column(String(512), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
     signature = Column(String(128), nullable=False)
+
+
+class DsarJob(Base):
+    """Data-subject access / erasure / consent-withdrawal job (US-AUD-01)."""
+
+    __tablename__ = "dsar_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subject_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    request_type = Column(String(32), nullable=False)  # ACCESS | ERASURE | WITHDRAW
+    status = Column(String(32), nullable=False, default="QUEUED")
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    export_payload = Column(JSON, nullable=True)
+    result_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)

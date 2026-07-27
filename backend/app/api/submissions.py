@@ -27,7 +27,7 @@ CompetitorUserDep = Annotated[User, Depends(require_capability(Capability.REGIST
 def _submission_out(sub) -> SubmissionOut:
     return SubmissionOut(
         submissionId=sub.id,
-        cycleId=sub.cycle_id,
+        competitionId=sub.competition_id,
         stageId=sub.stage_id,
         competitorId=sub.competitor_id,
         state=sub.state,
@@ -42,12 +42,12 @@ def _submission_out(sub) -> SubmissionOut:
 
 
 @router.post(
-    "/cycles/{cycle_id}/stages/{stage_id}/submissions",
+    "/competitions/{competition_id}/stages/{stage_id}/submissions",
     response_model=SubmissionOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def open_submission(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     session: DBSessionDep,
     actor: CompetitorUserDep,
@@ -55,7 +55,7 @@ async def open_submission(
 ) -> SubmissionOut:
     ip, ua = client_meta(request)
     sub = await submission_service.open_submission(
-        session, cycle_id=cycle_id, stage_id=stage_id, actor=actor, ip=ip, user_agent=ua
+        session, competition_id=competition_id, stage_id=stage_id, actor=actor, ip=ip, user_agent=ua
     )
     # Idempotent reopen returns 200 semantics via same body; keep 201 for create-or-get
     return _submission_out(sub)

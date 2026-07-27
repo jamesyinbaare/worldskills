@@ -1,0 +1,113 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: world-skills-traefik-staging
+    command:
+      - "--configfile=/etc/traefik/traefik.staging.yml"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.staging.yml:/etc/traefik/traefik.staging.yml:ro
+      - ./traefik/dynamic.staging.yml:/etc/traefik/dynamic.staging.yml:ro
+      - traefik_certs:/certificates
+      - traefik_logs:/var/log/traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard-worldskills-staging.rule=Host(`traefik-worldskills-staging.jamesyin.com`)"
+      - "traefik.http.routers.dashboard-worldskills-staging.entrypoints=websecure"
+      - "traefik.http.routers.dashboard-worldskills-staging.tls=true"
+      - "traefik.http.routers.dashboard-worldskills-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard-worldskills-staging.service=api@internal"
+    restart: unless-stopped
+    networks:
+      - world-skills-network
+    depends_on:
+      - world-skills-backend
+      - world-skills-frontend
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  world-skills-backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+    container_name: world-skills-backend-staging
+    env_file:
+      - .env.staging.gcp
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    command: >
+      sh -c "
+        if [ -f app/scripts/prestart.sh ]; then
+          bash app/scripts/prestart.sh
+        fi &&
+        fastapi run app/main.py --port 80
+      "
+    restart: unless-stopped
+    depends_on:
+      cloud-sql-proxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - world-skills-network
+
+  world-skills-frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.prod
+    container_name: world-skills-frontend-staging
+    environment:
+      - NODE_ENV=production
+      # Server-side fetches inside the frontend container (no NEXT_PUBLIC_API_BASE_URL).
+      - INTERNAL_API_BASE_URL=http://world-skills-backend:80
+    restart: unless-stopped
+    depends_on:
+      world-skills-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --no-verbose --tries=1 http://127.0.0.1:3001/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - world-skills-network
+
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
+    container_name: world-skills-cloud-sql-proxy-staging
+    env_file:
+      - .env.staging.gcp
+    command:
+      - --address=0.0.0.0
+      - --port=5432
+      - ${CLOUD_SQL_CONNECTION_NAME}
+    networks:
+      - world-skills-network
+    restart: unless-stopped
+
+volumes:
+  traefik_certs:
+    driver: local
+  traefik_logs:
+    driver: local
+
+networks:
+  world-skills-network:
+    driver: bridge
+    name: world-skills-network-staging

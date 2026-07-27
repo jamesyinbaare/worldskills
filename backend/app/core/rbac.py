@@ -28,6 +28,7 @@ _ROLE_CAPABILITIES: dict[UserRole, set[Capability]] = {
         Capability.APPROVE_SHORTLIST,
         Capability.RULE_ON_APPEAL,
         Capability.PUBLISH_RESULTS,
+        Capability.MODERATE_SCORE,
     },
     UserRole.CHIEF_EXPERT: {
         Capability.PUBLISH_TEST_PROJECT,

@@ -19,18 +19,18 @@ from app.models import (
     Skill,
     Zone,
 )
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_skills(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     max_a: int = 25,
     max_b: int = 18,
@@ -39,25 +39,25 @@ async def _seed_skills(
 ) -> dict[str, uuid.UUID]:
     async with session_manager.session() as session:
         rule_a = AgeRule(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name=f"U{max_a}",
             max_age=max_a,
             reference_date=ref,
             open_category_enabled=open_category,
         )
         rule_b = AgeRule(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name=f"U{max_b}",
             max_age=max_b,
             reference_date=ref,
             open_category_enabled=False,
         )
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([rule_a, rule_b, path, scheme])
         await session.flush()
         skill_a = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Skill A",
             age_rule_id=rule_a.id,
             pathway_id=path.id,
@@ -66,14 +66,14 @@ async def _seed_skills(
             eligibility_rules={"requireNationality": ["GH"], "requireEnrolmentAttestation": True},
         )
         skill_b = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Skill B",
             age_rule_id=rule_b.id,
             pathway_id=path.id,
             scheme_id=scheme.id,
             active=True,
         )
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
         session.add_all([skill_a, skill_b, zone])
         await session.commit()
         return {
@@ -87,7 +87,7 @@ async def _seed_skills(
 async def _add_competitor(
     session_manager: DBManager,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     skill_id: uuid.UUID,
     zone_id: uuid.UUID,
     dob: date,
@@ -96,7 +96,7 @@ async def _add_competitor(
 ) -> uuid.UUID:
     async with session_manager.session() as session:
         c = Competitor(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill_id,
             zone_id=zone_id,
             ref_no=f"ELG-{uuid.uuid4().hex[:8].upper()}",
@@ -118,12 +118,12 @@ async def test_US_ELG_01_AC1_eligible(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, max_a=25)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, max_a=25)
     # Age exactly 25 on 2026-01-01 → boundary eligible
     cid = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_a"],
         zone_id=ctx["zone_id"],
         dob=date(2001, 1, 1),
@@ -145,11 +145,11 @@ async def test_US_ELG_01_AC2_over_age(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, max_a=25)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, max_a=25)
     cid = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_a"],
         zone_id=ctx["zone_id"],
         dob=date(1999, 1, 1),  # age 27
@@ -169,16 +169,16 @@ async def test_US_ELG_01_AC3_per_skill_limits(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, max_a=25, max_b=18)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, max_a=25, max_b=18)
     # Age 20 — under A (25), over B (18)
     dob = date(2006, 1, 1)
     cid_a = await _add_competitor(
-        session_manager, cycle_id=cycle_id, skill_id=ctx["skill_a"], zone_id=ctx["zone_id"], dob=dob
+        session_manager, competition_id=competition_id, skill_id=ctx["skill_a"], zone_id=ctx["zone_id"], dob=dob
     )
     cid_b = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_b"],
         zone_id=ctx["zone_id"],
         dob=dob,
@@ -201,11 +201,11 @@ async def test_US_ELG_01_AC4_override(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, max_a=18)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, max_a=18)
     cid = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_a"],
         zone_id=ctx["zone_id"],
         dob=date(2000, 1, 1),
@@ -253,11 +253,11 @@ async def test_US_ELG_01_AC5_open_category(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, max_a=18, open_category=True)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, max_a=18, open_category=True)
     cid = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_a"],
         zone_id=ctx["zone_id"],
         dob=date(2000, 1, 1),  # age 26 > 18
@@ -278,11 +278,11 @@ async def test_US_ELG_01_missing_reference_date_fail_closed(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_skills(session_manager, cycle_id, ref=None)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_skills(session_manager, competition_id, ref=None)
     cid = await _add_competitor(
         session_manager,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=ctx["skill_a"],
         zone_id=ctx["zone_id"],
         dob=date(2005, 1, 1),

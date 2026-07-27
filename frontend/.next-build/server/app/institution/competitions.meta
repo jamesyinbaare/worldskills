@@ -1,0 +1,17 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/institution/layout,_N_T_/institution/(portal)/layout,_N_T_/institution/(portal)/competitions/layout,_N_T_/institution/(portal)/competitions/page,_N_T_/institution/competitions"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/institution/!KHBvcnRhbCk/competitions/__PAGE__",
+    "/institution/!KHBvcnRhbCk/competitions",
+    "/institution/!KHBvcnRhbCk",
+    "/institution",
+    "/_index",
+    "/_head"
+  ]
+}

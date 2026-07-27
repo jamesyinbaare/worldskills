@@ -13,11 +13,13 @@ from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import (
     AgeRule,
     AuditEvent,
-    CycleStatus,
+    CompetitionStatus,
+    Competitor,
     MarkingScheme,
     Pathway,
     Skill,
     Stage,
+    Submission,
     User,
     Zone,
 )
@@ -28,29 +30,29 @@ from app.services.pathway_engine import (
     compute_finalists_per_skill,
     resolve_next_stage,
 )
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 
 async def _create_draft_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(), headers=headers)
+    resp = await client.post("/competitions", json=competition_payload(), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_skill_scheme_zones(
-    session_manager: DBManager, cycle_id: uuid.UUID
+    session_manager: DBManager, competition_id: uuid.UUID
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     """Returns skill_id, scheme_id, zone_a_id, zone_b_id."""
     async with session_manager.session() as session:
-        age = AgeRule(cycle_id=cycle_id, name="U25", max_age=25)
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
-        zone_a = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
-        zone_b = Zone(cycle_id=cycle_id, name="Ashanti", active=True)
+        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        zone_a = Zone(competition_id=competition_id, name="Greater Accra", active=True)
+        zone_b = Zone(competition_id=competition_id, name="Ashanti", active=True)
         session.add_all([age, path, scheme, zone_a, zone_b])
         await session.flush()
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -85,7 +87,7 @@ def _pathway_payload(
     stages: list[dict] = [
         {
             "order": 1,
-            "type": "PROJECT",
+            "type": "VIRTUAL",
             "schemeId": str(scheme_id),
             "opensAt": opens,
             "closesAt": closes,
@@ -94,7 +96,7 @@ def _pathway_payload(
         },
         {
             "order": 2,
-            "type": "PROJECT",
+            "type": "VIRTUAL",
             "schemeId": str(scheme_id),
             "opensAt": opens,
             "closesAt": closes,
@@ -110,7 +112,7 @@ def _pathway_payload(
         stages.append(
             {
                 "order": 3,
-                "type": "PROJECT",
+                "type": "VIRTUAL",
                 "schemeId": str(scheme_id),
                 "opensAt": opens,
                 "closesAt": closes,
@@ -133,7 +135,7 @@ def _pathway_payload(
         stages.append(
             {
                 "order": 3,
-                "type": "NATIONAL",
+                "type": "VIRTUAL",
                 "schemeId": str(scheme_id),
                 "opensAt": opens,
                 "closesAt": closes,
@@ -154,12 +156,12 @@ async def test_US_STG_01_AC1_ordered_pathway(
     session_manager: DBManager,
     competitor_user: User,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, competition_id)
     payload = _pathway_payload(scheme_id, zone_a, zone_b)
 
     resp = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json=payload,
         headers=auth_headers,
     )
@@ -194,7 +196,7 @@ async def test_US_STG_01_AC1_ordered_pathway(
     )
     assert login.status_code == 200
     denied = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json=payload,
         headers={"Authorization": f"Bearer {login.json()['access_token']}"},
     )
@@ -252,12 +254,12 @@ async def test_US_STG_01_AC4_finalist_computation(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, competition_id)
     payload = _pathway_payload(scheme_id, zone_a, zone_b)
 
     resp = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json=payload,
         headers=auth_headers,
     )
@@ -281,49 +283,51 @@ async def test_US_STG_01_AC4_finalist_computation(
 
 
 @pytest.mark.asyncio
-async def test_US_STG_01_AC5_reorder_via_controlled_change(
+async def test_US_STG_01_AC5_reorder_while_active(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, competition_id)
     payload = _pathway_payload(scheme_id, zone_a, zone_b)
     first = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json=payload,
         headers=auth_headers,
     )
     assert first.status_code == 200, first.text
 
     async with session_manager.session() as session:
-        from app.models import Cycle
+        from app.models import Competition
 
-        cycle = await session.get(Cycle, cycle_id)
+        cycle = await session.get(Competition, competition_id)
         assert cycle is not None
-        cycle.status = CycleStatus.ACTIVE
+        cycle.status = CompetitionStatus.ACTIVE
         await session.commit()
 
-    # Without reason → refused
-    refused = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
-        json=payload,
-        headers=auth_headers,
-    )
-    assert refused.status_code == 409
-    assert refused.json()["error"]["code"] == "CYCLE_LOCKED"
-
-    # With controlled-change reason → succeeds (reorder / replace)
-    reordered = _pathway_payload(scheme_id, zone_a, zone_b, controlled_change_reason="Add national fine-tune")
-    # Swap type on stage 3 to show a controlled change took effect
-    reordered["stages"][2]["type"] = "FINALS"
+    # ACTIVE edits no longer require controlledChangeReason
+    without_reason = _pathway_payload(scheme_id, zone_a, zone_b)
+    without_reason["stages"][2]["type"] = "PHYSICAL"
     ok = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
-        json=reordered,
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=without_reason,
         headers=auth_headers,
     )
     assert ok.status_code == 200, ok.text
-    assert any(s["type"] == "FINALS" for s in ok.json()["stages"])
+    assert any(s["type"] == "PHYSICAL" for s in ok.json()["stages"])
+
+    # Optional reason still recorded when provided
+    with_reason = _pathway_payload(
+        scheme_id, zone_a, zone_b, controlled_change_reason="Add national fine-tune"
+    )
+    with_reason["stages"][2]["type"] = "VIRTUAL"
+    ok2 = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=with_reason,
+        headers=auth_headers,
+    )
+    assert ok2.status_code == 200, ok2.text
 
     async with session_manager.session() as session:
         audit = (
@@ -337,20 +341,18 @@ async def test_US_STG_01_AC5_reorder_via_controlled_change(
         ).scalar_one_or_none()
         assert audit is not None
 
-        cycle = await session.get(Cycle, cycle_id)
+        cycle = await session.get(Competition, competition_id)
         assert cycle is not None
-        cycle.status = CycleStatus.LOCKED
+        cycle.status = CompetitionStatus.LOCKED
         await session.commit()
 
-    locked = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
-        json=_pathway_payload(
-            scheme_id, zone_a, zone_b, controlled_change_reason="late change"
-        ),
+    # LOCKED status also allows pathway edits
+    locked_ok = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=_pathway_payload(scheme_id, zone_a, zone_b),
         headers=auth_headers,
     )
-    assert locked.status_code == 409
-    assert locked.json()["error"]["code"] == "CYCLE_LOCKED"
+    assert locked_ok.status_code == 200, locked_ok.text
 
 
 @pytest.mark.asyncio
@@ -359,12 +361,12 @@ async def test_US_STG_01_validation_failures(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_draft_cycle(client, auth_headers)
-    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, cycle_id)
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(session_manager, competition_id)
     opens, closes = _opens_closes()
     za, zb = str(zone_a), str(zone_b)
     base_stage = {
-        "type": "PROJECT",
+        "type": "VIRTUAL",
         "schemeId": str(scheme_id),
         "opensAt": opens,
         "closesAt": closes,
@@ -373,7 +375,7 @@ async def test_US_STG_01_validation_failures(
 
     # Non-contiguous order
     bad_order = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json={
             "stages": [
                 {**base_stage, "order": 1},
@@ -390,7 +392,7 @@ async def test_US_STG_01_validation_failures(
 
     # Negative quota
     bad_quota = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json={
             "stages": [
                 {**base_stage, "order": 1, "quotaByZone": {za: -1, zb: 5}},
@@ -405,7 +407,7 @@ async def test_US_STG_01_validation_failures(
 
     # minScore out of range
     bad_score = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json={
             "stages": [
                 {**base_stage, "order": 1, "minScore": 101},
@@ -420,7 +422,7 @@ async def test_US_STG_01_validation_failures(
 
     # Branch target missing
     bad_branch = await client.put(
-        f"/cycles/{cycle_id}/skills/{skill_id}/pathway",
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
         json={
             "stages": [
                 {
@@ -436,6 +438,26 @@ async def test_US_STG_01_validation_failures(
     assert bad_branch.status_code == 422
     assert bad_branch.json()["error"]["code"] == "BRANCH_TARGET_MISSING" or any(
         f["reason"] == "BRANCH_TARGET_MISSING" for f in bad_branch.json()["error"]["fields"]
+    )
+
+    # closesAt before opensAt
+    bad_window = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json={
+            "stages": [
+                {
+                    **base_stage,
+                    "order": 1,
+                    "opensAt": closes,
+                    "closesAt": opens,
+                },
+            ]
+        },
+        headers=auth_headers,
+    )
+    assert bad_window.status_code == 422
+    assert bad_window.json()["error"]["code"] == "BEFORE_OPENS" or any(
+        f["reason"] == "BEFORE_OPENS" for f in bad_window.json()["error"]["fields"]
     )
 
 
@@ -479,3 +501,93 @@ async def test_US_STG_01_pathway_engine_boundary_and_branch_finalists() -> None:
     ]
     # Both leaf stages contribute: (2+2) + (3+3) = 10
     assert compute_finalists_per_skill(branched) == 10
+
+
+@pytest.mark.asyncio
+async def test_pathway_update_preserves_stage_ids(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Re-saving a pathway must upsert by order — not delete/recreate stages."""
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(
+        session_manager, competition_id
+    )
+    payload = _pathway_payload(scheme_id, zone_a, zone_b)
+
+    first = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=payload,
+        headers=auth_headers,
+    )
+    assert first.status_code == 200, first.text
+    ids_before = {s["order"]: s["stageId"] for s in first.json()["stages"]}
+
+    payload["stages"][0]["minScore"] = 55
+    second = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=payload,
+        headers=auth_headers,
+    )
+    assert second.status_code == 200, second.text
+    ids_after = {s["order"]: s["stageId"] for s in second.json()["stages"]}
+    assert ids_before == ids_after
+    assert second.json()["stages"][0]["minScore"] == 55
+
+
+@pytest.mark.asyncio
+async def test_pathway_cannot_remove_stage_with_submissions(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    skill_id, scheme_id, zone_a, zone_b = await _seed_skill_scheme_zones(
+        session_manager, competition_id
+    )
+    payload = _pathway_payload(scheme_id, zone_a, zone_b)
+    created = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=payload,
+        headers=auth_headers,
+    )
+    assert created.status_code == 200, created.text
+    stage_3_id = uuid.UUID(
+        next(s["stageId"] for s in created.json()["stages"] if s["order"] == 3)
+    )
+
+    async with session_manager.session() as session:
+        competitor = Competitor(
+            competition_id=competition_id,
+            skill_id=skill_id,
+            zone_id=zone_a,
+            ref_no=f"REF-{uuid.uuid4().hex[:8]}",
+            status="ACTIVE_IN_STAGE",
+            eligibility_status="ELIGIBLE",
+            given_names="Path",
+            family_name="Lock",
+        )
+        session.add(competitor)
+        await session.flush()
+        session.add(
+            Submission(
+                competition_id=competition_id,
+                competitor_id=competitor.id,
+                stage_id=stage_3_id,
+                state="ACCEPTED",
+            )
+        )
+        await session.commit()
+
+    # Drop stage 3 from pathway
+    reduced = _pathway_payload(scheme_id, zone_a, zone_b)
+    reduced["stages"] = [s for s in reduced["stages"] if s["order"] != 3]
+    # Fix contiguous orders for remaining (orders 1,2 stay)
+    blocked = await client.put(
+        f"/competitions/{competition_id}/skills/{skill_id}/pathway",
+        json=reduced,
+        headers=auth_headers,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["error"]["code"] == "PATHWAY_LOCKED"

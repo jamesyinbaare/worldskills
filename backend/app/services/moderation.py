@@ -48,7 +48,7 @@ def _standardise_value(raws: list[int], method: str) -> int:
 async def assert_moderator_segregation(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     submission_id: uuid.UUID,
     moderator: User,
     ip: str | None = None,
@@ -75,7 +75,7 @@ async def assert_moderator_segregation(
             entity_id=str(submission_id),
             actor_id=moderator.id,
             actor_role=moderator.role.value,
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             after={"scorerId": str(scored.assessor_id), "moderatorId": str(moderator.id)},
             reason="SEGREGATION_VIOLATION",
             ip=ip,
@@ -107,7 +107,7 @@ async def analyse_moderation(
 
     await assert_moderator_segregation(
         session,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         submission_id=submission_id,
         moderator=actor,
         ip=ip,
@@ -181,7 +181,7 @@ async def analyse_moderation(
         entity_id=str(submission_id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         after={"flags": [f.criterionId for f in flags_out], "tolerance": tolerance},
         ip=ip,
         user_agent=user_agent,
@@ -259,7 +259,7 @@ async def apply_moderation(
 
     await assert_moderator_segregation(
         session,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         submission_id=submission_id,
         moderator=actor,
         ip=ip,
@@ -267,10 +267,10 @@ async def apply_moderation(
     )
 
     method = payload.method.upper()
-    if method not in {"STANDARDISE", "MANUAL"}:
+    if method not in {"STANDARDISE", "MANUAL", "SELECT_ASSESSOR"}:
         raise AppError(
             "VALIDATION_ERROR",
-            "method must be STANDARDISE or MANUAL",
+            "method must be STANDARDISE, MANUAL, or SELECT_ASSESSOR",
             status_code=422,
             fields=[FieldError("method", "INVALID")],
         )
@@ -291,6 +291,22 @@ async def apply_moderation(
                 fields=[FieldError("value", "REQUIRED")],
             )
 
+    if method == "SELECT_ASSESSOR":
+        if payload.assessorId is None:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "assessorId is required for SELECT_ASSESSOR",
+                status_code=422,
+                fields=[FieldError("assessorId", "REQUIRED")],
+            )
+        if not payload.reason or not payload.reason.strip():
+            raise AppError(
+                "REASON_REQUIRED",
+                "A reason is required when selecting one assessor",
+                status_code=422,
+                fields=[FieldError("reason", "REASON_REQUIRED")],
+            )
+
     scheme = await _resolve_scheme_for_submission(session, submission)
     rubric = _rubric_from_scheme(scheme)
     cfg = _moderation_config(rubric)
@@ -300,14 +316,14 @@ async def apply_moderation(
             select(Score).where(
                 Score.submission_id == submission_id,
                 Score.criterion_id == payload.criterionId,
-                Score.score_type == "JUDGEMENT",
+                Score.score_type.in_(["JUDGEMENT", "MEASUREMENT"]),
             )
         )
     ).scalars().all()
     if not rows:
         raise AppError(
             "CRITERION_UNKNOWN",
-            "No judgement marks for criterion",
+            "No marks for criterion",
             status_code=404,
             fields=[FieldError("criterionId", "CRITERION_UNKNOWN")],
         )
@@ -347,6 +363,17 @@ async def apply_moderation(
     if method == "STANDARDISE":
         value = _standardise_value(raws, cfg["method"])
         reason = payload.reason
+    elif method == "SELECT_ASSESSOR":
+        selected = next((r for r in rows if r.assessor_id == payload.assessorId), None)
+        if selected is None or selected.raw is None:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "Selected assessor has no mark for this criterion",
+                status_code=422,
+                fields=[FieldError("assessorId", "NOT_FOUND")],
+            )
+        value = int(selected.raw)
+        reason = payload.reason.strip() if payload.reason else None
     else:
         value = int(payload.value)  # type: ignore[arg-type]
         reason = payload.reason.strip()
@@ -380,11 +407,12 @@ async def apply_moderation(
         entity_id=str(submission_id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         before={"rawMarks": before_raws, "criterionId": payload.criterionId},
         after={
             "method": method,
             "standardisedValue": value,
+            "assessorId": str(payload.assessorId) if payload.assessorId else None,
             "total": submission.score_total,
             "reason": reason,
         },

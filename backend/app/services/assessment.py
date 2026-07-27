@@ -16,6 +16,7 @@ from app.models import (
     Competitor,
     ExpertAssignment,
     MarkingScheme,
+    ResultPublication,
     Score,
     Skill,
     Stage,
@@ -37,24 +38,36 @@ from app.services.audit import write_audit_event
 
 _SCOREABLE_STATES = {"ACCEPTED", "LATE"}
 
+# Used when an exercise has a scheme/document but no structured criteria were entered.
+# Experts need at least one criterion row to enter marks.
+_DEFAULT_RUBRIC: dict[str, Any] = {
+    "blindMode": True,
+    "criteria": [
+        {
+            "id": "c_overall",
+            "name": "Overall",
+            "type": "JUDGEMENT",
+            "max": 100,
+        }
+    ],
+    "penalties": [],
+}
+
 
 def _rubric_from_scheme(scheme: MarkingScheme | None) -> dict[str, Any]:
-    if scheme is None or not scheme.rubric or not isinstance(scheme.rubric, dict):
+    if scheme is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "Marking scheme rubric is not configured",
+            "No marking scheme resolved for submission",
             status_code=status.HTTP_409_CONFLICT,
-            fields=[FieldError("rubric", "CONFIG_INCOMPLETE")],
+            fields=[FieldError("schemeId", "CONFIG_INCOMPLETE")],
         )
-    criteria = scheme.rubric.get("criteria")
-    if not criteria:
-        raise AppError(
-            "CONFIG_INCOMPLETE",
-            "Rubric has no criteria",
-            status_code=status.HTTP_409_CONFLICT,
-            fields=[FieldError("criteria", "CONFIG_INCOMPLETE")],
-        )
-    return scheme.rubric
+    if scheme.rubric and isinstance(scheme.rubric, dict):
+        criteria = scheme.rubric.get("criteria")
+        if criteria:
+            return scheme.rubric
+    # Document-only / legacy schemes: provide a default scoring rubric
+    return dict(_DEFAULT_RUBRIC)
 
 
 def _criterion_map(rubric: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -68,11 +81,15 @@ def _penalty_map(rubric: dict[str, Any]) -> dict[str, dict[str, Any]]:
 async def _resolve_scheme_for_submission(
     session: AsyncSession, submission: Submission
 ) -> MarkingScheme:
+    from app.models import Exercise
+
     scheme_id = None
     if submission.stage_id:
-        stage = await session.get(Stage, submission.stage_id)
-        if stage and stage.scheme_id:
-            scheme_id = stage.scheme_id
+        ex = (
+            await session.execute(select(Exercise).where(Exercise.stage_id == submission.stage_id))
+        ).scalar_one_or_none()
+        if ex and ex.scheme_id and ex.status == "PUBLISHED":
+            scheme_id = ex.scheme_id
     if scheme_id is None:
         competitor = await session.get(Competitor, submission.competitor_id)
         if competitor:
@@ -93,11 +110,11 @@ async def _resolve_scheme_for_submission(
 
 
 async def _ensure_assigned(
-    session: AsyncSession, *, cycle_id: uuid.UUID, expert: User, competitor: Competitor
+    session: AsyncSession, *, competition_id: uuid.UUID, expert: User, competitor: Competitor
 ) -> ExpertAssignment:
     result = await session.execute(
         select(ExpertAssignment).where(
-            ExpertAssignment.cycle_id == cycle_id,
+            ExpertAssignment.competition_id == competition_id,
             ExpertAssignment.expert_id == expert.id,
             ExpertAssignment.skill_id == competitor.skill_id,
             ExpertAssignment.zone_id == competitor.zone_id,
@@ -160,6 +177,31 @@ def compute_submission_total(all_scores: list[Score]) -> int:
     return total - penalty_total
 
 
+async def assert_scoring_not_released(
+    session: AsyncSession,
+    submission: Submission,
+) -> None:
+    """Block expert score edits when results for this stage/exercise are released."""
+    if submission.stage_id is None:
+        return
+    released = (
+        await session.execute(
+            select(ResultPublication).where(
+                ResultPublication.competition_id == submission.competition_id,
+                ResultPublication.stage_id == submission.stage_id,
+                ResultPublication.state == "RELEASED",
+            )
+        )
+    ).scalars().first()
+    if released is not None:
+        raise AppError(
+            "RESULTS_RELEASED",
+            "Results for this exercise have been released; scores can no longer be updated",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("stageId", "RESULTS_RELEASED")],
+        )
+
+
 async def get_assessment_view(
     session: AsyncSession,
     submission_id: uuid.UUID,
@@ -184,10 +226,10 @@ async def get_assessment_view(
 
     competitor = await session.get(Competitor, submission.competitor_id)
     assert competitor is not None
-    await _ensure_assigned(session, cycle_id=submission.cycle_id, expert=actor, competitor=competitor)
+    await _ensure_assigned(session, competition_id=submission.competition_id, expert=actor, competitor=competitor)
     await assert_can_score(
         session,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         expert=actor,
         competitor=competitor,
         submission_id=submission.id,
@@ -261,12 +303,14 @@ async def put_scores(
             status_code=409,
         )
 
+    await assert_scoring_not_released(session, submission)
+
     competitor = await session.get(Competitor, submission.competitor_id)
     assert competitor is not None
-    await _ensure_assigned(session, cycle_id=submission.cycle_id, expert=actor, competitor=competitor)
+    await _ensure_assigned(session, competition_id=submission.competition_id, expert=actor, competitor=competitor)
     await assert_can_score(
         session,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         expert=actor,
         competitor=competitor,
         submission_id=submission.id,
@@ -448,7 +492,7 @@ async def put_scores(
         entity_id=str(submission.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         after={
             "finalize": payload.finalize,
             "assessorTotal": assessor_total,

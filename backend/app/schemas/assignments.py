@@ -1,12 +1,23 @@
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AssignmentCreate(BaseModel):
     expertId: UUID
-    skillId: UUID
+    skillId: UUID | None = None
+    cycleSkillId: UUID | None = None
     zoneId: UUID
+
+    @model_validator(mode="after")
+    def require_skill(self) -> "AssignmentCreate":
+        if self.cycleSkillId is None and self.skillId is None:
+            raise ValueError("skillId or cycleSkillId required")
+        return self
+
+    @property
+    def resolved_skill_id(self) -> UUID:
+        return self.cycleSkillId or self.skillId  # type: ignore[return-value]
 
 
 class CoiFlagOut(BaseModel):
@@ -17,11 +28,28 @@ class CoiFlagOut(BaseModel):
 
 class AssignmentOut(BaseModel):
     assignmentId: UUID
-    cycleId: UUID
+    competitionId: UUID
     expertId: UUID
     skillId: UUID
+    cycleSkillId: UUID | None = None
     zoneId: UUID
     coiFlags: list[CoiFlagOut]
+
+
+class AssignmentListOut(BaseModel):
+    items: list[AssignmentOut]
+
+
+class MyAssignmentOut(BaseModel):
+    """Expert portal discovery — named assignment for dropdowns/cards."""
+
+    assignmentId: UUID
+    competitionId: UUID
+    competitionName: str
+    skillId: UUID
+    skillName: str
+    zoneId: UUID
+    zoneName: str
 
 
 class DelegateIn(BaseModel):

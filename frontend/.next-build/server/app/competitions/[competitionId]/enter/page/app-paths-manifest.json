@@ -1,0 +1,3 @@
+{
+  "/competitions/[competitionId]/enter/page": "app/competitions/[competitionId]/enter/page.js"
+}

@@ -13,9 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
-from app.models import Artefact, Competitor, Stage, Submission, User
+from app.models import Artefact, Competitor, Exercise, Stage, Submission, User
 from app.services.audit import write_audit_event
-from app.services.storage import LocalObjectStorage, ScanResult
+from app.services.exercises import deliverables_to_submission_rules
+from app.services.stages import assert_stage_available
+from app.services.storage import ObjectStorage, ScanResult, get_object_storage
 
 
 IMMUTABLE_STATES = {"ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"}
@@ -25,7 +27,27 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def _rules(stage: Stage) -> dict[str, Any]:
+async def _rules(session: AsyncSession, stage: Stage) -> dict[str, Any]:
+    ex = (
+        await session.execute(select(Exercise).where(Exercise.stage_id == stage.id))
+    ).scalar_one_or_none()
+    if ex is not None:
+        if ex.status != "PUBLISHED":
+            raise AppError(
+                "EXERCISE_NOT_PUBLISHED",
+                "Exercise for this stage is not published",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("exercise", "EXERCISE_NOT_PUBLISHED")],
+            )
+        rules = deliverables_to_submission_rules(ex)
+        if not rules.get("requiredDeliverables"):
+            raise AppError(
+                "CONFIG_INCOMPLETE",
+                "Published Exercise has no required deliverables",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("deliverables", "CONFIG_INCOMPLETE")],
+            )
+        return rules
     if not stage.submission_rules or not isinstance(stage.submission_rules, dict):
         raise AppError(
             "CONFIG_INCOMPLETE",
@@ -115,9 +137,10 @@ def _assert_uploadable(submission: Submission) -> None:
         )
 
 
-def _deadline_status(stage: Stage, submission: Submission, *, now: datetime) -> str:
+def _deadline_status(
+    stage: Stage, submission: Submission, *, now: datetime, rules: dict[str, Any]
+) -> str:
     """Return 'ok', 'block', or 'flag' based on closesAt / timed expiry and late policy."""
-    rules = _rules(stage)
     policy = str(rules.get("latePolicy") or "block").lower()
     deadline = submission.deadline_at or stage.closes_at
     if submission.timed_expires_at and (
@@ -148,23 +171,29 @@ def _compute_content_hash(artefacts: list[Artefact]) -> str:
 async def open_submission(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     actor: User,
     ip: str | None = None,
     user_agent: str | None = None,
 ) -> Submission:
     stage = await session.get(Stage, stage_id)
-    if stage is None or stage.cycle_id != cycle_id:
+    if stage is None or stage.competition_id != competition_id:
         raise AppError("STAGE_NOT_FOUND", "Stage not found in cycle", status_code=404)
-    rules = _rules(stage)
+    rules = await _rules(session, stage)
 
     comp_result = await session.execute(
-        select(Competitor).where(Competitor.user_id == actor.id, Competitor.cycle_id == cycle_id)
+        select(Competitor).where(Competitor.user_id == actor.id, Competitor.competition_id == competition_id)
     )
     competitor = comp_result.scalar_one_or_none()
     if competitor is None:
         raise AppError("COMPETITOR_NOT_FOUND", "No competitor bound to this account", status_code=404)
+    if stage.skill_id is not None and competitor.skill_id != stage.skill_id:
+        raise AppError(
+            "FORBIDDEN",
+            "Stage is not part of your skill pathway",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
     if competitor.eligibility_status not in {None, "ELIGIBLE", "OPEN_CATEGORY"}:
         if competitor.eligibility_status == "INELIGIBLE":
             raise AppError("INELIGIBLE", "Competitor is not eligible", status_code=409)
@@ -183,12 +212,13 @@ async def open_submission(
         return prior
 
     now = _utcnow()
+    assert_stage_available(stage, now=now)
     timed_seconds = rules.get("timedDurationSeconds")
     timed_started = now if timed_seconds else None
     timed_expires = (now + timedelta(seconds=int(timed_seconds))) if timed_seconds else None
 
     submission = Submission(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         competitor_id=competitor.id,
         stage_id=stage_id,
         state="OPEN",
@@ -211,7 +241,7 @@ async def open_submission(
         entity_id=str(submission.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after={
             "state": submission.state,
             "stageId": str(stage_id),
@@ -237,7 +267,7 @@ async def upload_artefact(
     filename: str,
     content_type: str | None,
     data: bytes,
-    storage: LocalObjectStorage | None = None,
+    storage: ObjectStorage | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
 ) -> Artefact:
@@ -253,11 +283,11 @@ async def upload_artefact(
             status_code=409,
         )
 
-    rules = _rules(stage)
+    rules = await _rules(session, stage)
     rule = _deliverable_rule(rules, deliverable_code)
     _validate_file_against_rule(rule, filename=filename, size=len(data))
 
-    store = storage or LocalObjectStorage()
+    store = storage or get_object_storage()
     stored, scan = store.put_raw(
         data,
         prefix=f"submissions/{submission_id}/{deliverable_code}",
@@ -304,7 +334,7 @@ async def upload_artefact(
             entity_id=str(artefact.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=submission.cycle_id,
+            competition_id=submission.competition_id,
             after={"deliverableCode": deliverable_code, "scan": "INFECTED"},
             ip=ip,
             user_agent=user_agent,
@@ -327,7 +357,7 @@ async def upload_artefact(
         entity_id=str(artefact.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         after={"deliverableCode": deliverable_code, "scan": artefact.scan_status, "sha256": artefact.sha256},
         ip=ip,
         user_agent=user_agent,
@@ -346,15 +376,15 @@ async def init_resumable_upload(
     filename: str,
     content_type: str | None,
     total_size: int,
-    storage: LocalObjectStorage | None = None,
+    storage: ObjectStorage | None = None,
 ) -> Artefact:
     submission, _competitor, stage = await _load_owned_submission(session, submission_id, actor)
     _assert_uploadable(submission)
-    rules = _rules(stage)
+    rules = await _rules(session, stage)
     rule = _deliverable_rule(rules, deliverable_code)
     _validate_file_against_rule(rule, filename=filename, size=total_size)
 
-    store = storage or LocalObjectStorage()
+    store = storage or get_object_storage()
     upload_id = secrets.token_hex(16)
     key = f"submissions/{submission_id}/{deliverable_code}/partial-{upload_id}"
     # Touch empty partial file
@@ -390,7 +420,7 @@ async def append_resumable_chunk(
     actor: User,
     data: bytes,
     content_range: str | None,
-    storage: LocalObjectStorage | None = None,
+    storage: ObjectStorage | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
 ) -> Artefact:
@@ -443,7 +473,7 @@ async def append_resumable_chunk(
                 fields=[FieldError("Content-Range", "INVALID")],
             ) from exc
 
-    store = storage or LocalObjectStorage()
+    store = storage or get_object_storage()
     assert artefact.storage_key is not None
     new_offset = store.append_chunk(artefact.storage_key, data, expected_offset=offset)
     artefact.received_bytes = new_offset
@@ -475,7 +505,7 @@ async def append_resumable_chunk(
                 entity_id=str(artefact.id),
                 actor_id=actor.id,
                 actor_role=actor.role.value,
-                cycle_id=submission.cycle_id,
+                competition_id=submission.competition_id,
                 after={"scan": "INFECTED", "uploadId": upload_id},
                 ip=ip,
                 user_agent=user_agent,
@@ -509,7 +539,7 @@ async def append_resumable_chunk(
             entity_id=str(artefact.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=submission.cycle_id,
+            competition_id=submission.competition_id,
             after={"scan": "CLEAN", "uploadId": upload_id, "sha256": artefact.sha256},
             ip=ip,
             user_agent=user_agent,
@@ -534,7 +564,7 @@ async def finalise_submission(
         return submission  # idempotent
 
     now = _utcnow()
-    rules = _rules(stage)
+    rules = await _rules(session, stage)
 
     # Timed auto-capture path
     timer_expired = bool(
@@ -543,7 +573,7 @@ async def finalise_submission(
     if force_timer or timer_expired:
         submission.upload_locked = True
 
-    deadline_mode = _deadline_status(stage, submission, now=now)
+    deadline_mode = _deadline_status(stage, submission, now=now, rules=rules)
     if deadline_mode == "block" and not (force_timer or timer_expired):
         # Timer-expiry finalise is allowed even when block policy (capture what's there)
         raise AppError(
@@ -604,7 +634,7 @@ async def finalise_submission(
             entity_id=str(submission.id),
             actor_id=actor.id,
             actor_role=actor.role.value,
-            cycle_id=submission.cycle_id,
+            competition_id=submission.competition_id,
             after={"state": submission.state, "hash": submission.content_hash, "receipt": submission.receipt},
             ip=ip,
             user_agent=user_agent,
@@ -651,7 +681,7 @@ async def finalise_submission(
         entity_id=str(submission.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=submission.cycle_id,
+        competition_id=submission.competition_id,
         before={"state": "UPLOADED"},
         after={
             "state": submission.state,

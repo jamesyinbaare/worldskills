@@ -13,17 +13,18 @@ from app.core.errors import AppError, FieldError
 from app.core.rbac import Capability, has_capability, is_admin_role
 from app.models import (
     Competitor,
-    InstitutionCycleMembership,
+    InstitutionCompetitionMembership,
     Nomination,
-    NominationLimit,
     NominationStatus,
     NotificationOutbox,
     Skill,
     User,
     UserRole,
+    Zone,
 )
 from app.schemas.nominations import NominationCreate
 from app.services.audit import write_audit_event
+from app.services.geography import resolve_zone_for_registration
 
 _COUNTING_STATUSES = (NominationStatus.PENDING_REVIEW, NominationStatus.APPROVED)
 
@@ -31,7 +32,7 @@ _COUNTING_STATUSES = (NominationStatus.PENDING_REVIEW, NominationStatus.APPROVED
 def _nomination_to_dict(n: Nomination) -> dict[str, Any]:
     return {
         "id": str(n.id),
-        "cycleId": str(n.cycle_id),
+        "competitionId": str(n.competition_id),
         "institutionId": str(n.institution_id),
         "skillId": str(n.skill_id),
         "competitorRef": n.competitor_ref,
@@ -44,7 +45,7 @@ def _nomination_to_dict(n: Nomination) -> dict[str, Any]:
 async def enqueue_notification(
     session: AsyncSession,
     *,
-    cycle_id: uuid.UUID | None,
+    competition_id: uuid.UUID | None,
     recipient_role: str,
     template: str,
     payload: dict[str, Any],
@@ -56,7 +57,7 @@ async def enqueue_notification(
     """
     session.add(
         NotificationOutbox(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             recipient_role=recipient_role,
             recipient_id=recipient_id,
             template=template,
@@ -83,7 +84,7 @@ def assert_can_nominate(user: User, institution_id: uuid.UUID) -> None:
 
 async def create_nomination(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     payload: NominationCreate,
     *,
     actor: User,
@@ -93,10 +94,10 @@ async def create_nomination(
     assert_can_nominate(actor, payload.institutionId)
 
     skill = await session.get(Skill, payload.skillId)
-    if skill is None or skill.cycle_id != cycle_id:
+    if skill is None or skill.competition_id != competition_id:
         raise AppError(
             "SKILL_INACTIVE",
-            "Skill not found in this cycle",
+            "Skill not found in this competition",
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("skillId", "SKILL_INACTIVE")],
         )
@@ -110,36 +111,39 @@ async def create_nomination(
 
     membership = (
         await session.execute(
-            select(InstitutionCycleMembership).where(
-                InstitutionCycleMembership.cycle_id == cycle_id,
-                InstitutionCycleMembership.institution_id == payload.institutionId,
+            select(InstitutionCompetitionMembership).where(
+                InstitutionCompetitionMembership.competition_id == competition_id,
+                InstitutionCompetitionMembership.institution_id == payload.institutionId,
             )
         )
     ).scalar_one_or_none()
     if membership is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "Institution is not linked to a zone for this cycle",
+            "Institution is not linked to a zone for this competition",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("institutionId", "CONFIG_INCOMPLETE")],
         )
 
-    # Lock limit row for atomic slot check (US-INS-01 race edge case)
-    limit_row = (
+    # Lock skill row for atomic slot check (US-INS-01 race edge case)
+    skill_locked = (
         await session.execute(
-            select(NominationLimit)
-            .where(
-                NominationLimit.cycle_id == cycle_id,
-                NominationLimit.institution_id == payload.institutionId,
-                NominationLimit.skill_id == payload.skillId,
-            )
+            select(Skill)
+            .where(Skill.id == payload.skillId, Skill.competition_id == competition_id)
             .with_for_update()
         )
     ).scalar_one_or_none()
-    if limit_row is None:
+    if skill_locked is None or not skill_locked.active:
+        raise AppError(
+            "SKILL_INACTIVE",
+            "Skill not found in this competition",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("skillId", "SKILL_INACTIVE")],
+        )
+    if skill_locked.school_quota is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
-            "Nomination limit not configured for institution/skill",
+            "School quota not configured for this skill",
             status_code=status.HTTP_409_CONFLICT,
             fields=[FieldError("skillId", "CONFIG_INCOMPLETE")],
         )
@@ -149,14 +153,14 @@ async def create_nomination(
             select(func.count())
             .select_from(Nomination)
             .where(
-                Nomination.cycle_id == cycle_id,
+                Nomination.competition_id == competition_id,
                 Nomination.institution_id == payload.institutionId,
                 Nomination.skill_id == payload.skillId,
                 Nomination.status.in_(_COUNTING_STATUSES),
             )
         )
     ).scalar_one()
-    if int(used) >= limit_row.max_nominations:
+    if int(used) >= int(skill_locked.school_quota):
         raise AppError(
             "NOMINATION_LIMIT_REACHED",
             "Institution nomination limit reached for this skill",
@@ -164,10 +168,18 @@ async def create_nomination(
             fields=[FieldError("skillId", "NOMINATION_LIMIT_REACHED")],
         )
 
+    region_id, zone_id = await resolve_zone_for_registration(
+        session,
+        competition_id,
+        region_id=payload.regionId,
+        institution_id=payload.institutionId,
+    )
+
     competitor = Competitor(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         skill_id=payload.skillId,
-        zone_id=membership.zone_id,
+        zone_id=zone_id,
+        region_id=region_id,
         institution_id=payload.institutionId,
         ref_no=payload.competitorRef.strip(),
         status="PENDING_REVIEW",
@@ -176,7 +188,7 @@ async def create_nomination(
     await session.flush()
 
     nomination = Nomination(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         institution_id=payload.institutionId,
         skill_id=payload.skillId,
         competitor_ref=payload.competitorRef.strip(),
@@ -188,7 +200,7 @@ async def create_nomination(
 
     await enqueue_notification(
         session,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         recipient_role="ADMIN",
         template="NOMINATION_PENDING_REVIEW",
         payload={"nominationId": str(nomination.id), "institutionId": str(payload.institutionId)},
@@ -200,7 +212,7 @@ async def create_nomination(
         entity_id=str(nomination.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after=_nomination_to_dict(nomination),
         ip=ip,
         user_agent=user_agent,
@@ -241,7 +253,7 @@ async def approve_nomination(
 
     await enqueue_notification(
         session,
-        cycle_id=nomination.cycle_id,
+        competition_id=nomination.competition_id,
         recipient_role=UserRole.INSTITUTION.value,
         recipient_id=nomination.institution_id,
         template="NOMINATION_APPROVED",
@@ -249,7 +261,7 @@ async def approve_nomination(
     )
     await enqueue_notification(
         session,
-        cycle_id=nomination.cycle_id,
+        competition_id=nomination.competition_id,
         recipient_role="ADMIN",
         recipient_id=actor.id,
         template="NOMINATION_APPROVED",
@@ -262,7 +274,7 @@ async def approve_nomination(
         entity_id=str(nomination.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=nomination.cycle_id,
+        competition_id=nomination.competition_id,
         before=before,
         after=_nomination_to_dict(nomination),
         ip=ip,
@@ -314,7 +326,7 @@ async def reject_nomination(
 
     await enqueue_notification(
         session,
-        cycle_id=nomination.cycle_id,
+        competition_id=nomination.competition_id,
         recipient_role=UserRole.INSTITUTION.value,
         recipient_id=nomination.institution_id,
         template="NOMINATION_REJECTED",
@@ -327,7 +339,7 @@ async def reject_nomination(
         entity_id=str(nomination.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=nomination.cycle_id,
+        competition_id=nomination.competition_id,
         before=before,
         after=_nomination_to_dict(nomination),
         reason=nomination.reason,

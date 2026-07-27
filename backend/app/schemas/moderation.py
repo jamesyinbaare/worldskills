@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field
 
 class ModerationApplyIn(BaseModel):
     criterionId: str = Field(min_length=1, max_length=64)
-    method: str = Field(min_length=1, max_length=32)  # STANDARDISE | MANUAL
+    method: str = Field(min_length=1, max_length=32)  # STANDARDISE | MANUAL | SELECT_ASSESSOR
     value: int | None = None
+    assessorId: UUID | None = None
     reason: str | None = None
 
 

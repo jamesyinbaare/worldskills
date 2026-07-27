@@ -28,38 +28,38 @@ from app.models import (
     Venue,
     Zone,
 )
-from pytest_tests.conftest import cycle_payload
+from pytest_tests.conftest import competition_payload
 
 
-async def _create_cycle(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
-    resp = await client.post("/cycles", json=cycle_payload(timeZone="Africa/Accra"), headers=headers)
+async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> uuid.UUID:
+    resp = await client.post("/competitions", json=competition_payload(timeZone="Africa/Accra"), headers=headers)
     assert resp.status_code == 201, resp.text
-    return uuid.UUID(resp.json()["cycleId"])
+    return uuid.UUID(resp.json()["competitionId"])
 
 
 async def _seed_schedule_world(
     session_manager: DBManager,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     *,
     venue_capacity: int = 2,
     shortlist_confirmed: bool = True,
 ) -> dict:
     async with session_manager.session() as session:
         age = AgeRule(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="U25",
             max_age=25,
             reference_date=date(2026, 1, 1),
             open_category_enabled=False,
         )
-        path = Pathway(cycle_id=cycle_id, name="National")
-        scheme = MarkingScheme(cycle_id=cycle_id, name="CIS")
-        zone = Zone(cycle_id=cycle_id, name="Greater Accra", active=True)
+        path = Pathway(competition_id=competition_id, name="National")
+        scheme = MarkingScheme(competition_id=competition_id, name="CIS")
+        zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
         session.add_all([age, path, scheme, zone])
         await session.flush()
 
         skill = Skill(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             name="Web Development",
             age_rule_id=age.id,
             pathway_id=path.id,
@@ -71,7 +71,7 @@ async def _seed_schedule_world(
         await session.flush()
 
         stage = Stage(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             skill_id=skill.id,
             name="National Finals",
             order=1,
@@ -79,13 +79,12 @@ async def _seed_schedule_world(
             quota=2,
             quota_by_zone={str(zone.id): 2},
             min_score=50,
-            scheme_id=scheme.id,
         )
         session.add(stage)
         await session.flush()
 
         venue = Venue(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             zone_id=zone.id,
             name=f"Venue-{uuid.uuid4().hex[:6]}",
             capacity=venue_capacity,
@@ -98,7 +97,7 @@ async def _seed_schedule_world(
         competitors: dict[str, Competitor] = {}
         for label in ("A", "B", "C"):
             comp = Competitor(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 skill_id=skill.id,
                 zone_id=zone.id,
                 ref_no=f"REF-{label}-{uuid.uuid4().hex[:4]}",
@@ -116,7 +115,7 @@ async def _seed_schedule_world(
             competitors[label] = comp
 
         shortlist = Shortlist(
-            cycle_id=cycle_id,
+            competition_id=competition_id,
             stage_id=stage.id,
             skill_id=skill.id,
             state="CONFIRMED" if shortlist_confirmed else "PROVISIONAL",
@@ -171,11 +170,11 @@ async def test_US_SCH_01_AC1_create_session(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id, venue_capacity=2)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id, venue_capacity=2)
 
     ok = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=2),
         headers=auth_headers,
     )
@@ -200,7 +199,7 @@ async def test_US_SCH_01_AC1_create_session(
 
     # Exceed venue capacity → CAPACITY_EXCEEDED
     over = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=3),
         headers=auth_headers,
     )
@@ -214,10 +213,10 @@ async def test_US_SCH_01_AC2_assign_slot(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id)
     created = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=2),
         headers=auth_headers,
     )
@@ -241,7 +240,7 @@ async def test_US_SCH_01_AC2_assign_slot(
             await session.execute(
                 select(NotificationOutbox).where(
                     NotificationOutbox.event_key == "SCHEDULE_SLOT_ASSIGNED",
-                    NotificationOutbox.cycle_id == cycle_id,
+                    NotificationOutbox.competition_id == competition_id,
                 )
             )
         ).scalars().all()
@@ -270,10 +269,10 @@ async def test_US_SCH_01_AC3_double_booking_prevented(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id)
     created = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=2),
         headers=auth_headers,
     )
@@ -301,10 +300,10 @@ async def test_US_SCH_01_AC4_over_capacity_prevented(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id, venue_capacity=1)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id, venue_capacity=1)
     created = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=1),
         headers=auth_headers,
     )
@@ -333,10 +332,10 @@ async def test_US_SCH_01_AC5_incident_log(
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id)
     created = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=2),
         headers=auth_headers,
     )
@@ -374,10 +373,10 @@ async def test_US_SCH_01_concurrency_no_double_booking(
     session_manager: DBManager,
 ) -> None:
     """Definition of Done: concurrency proves no double-booking under parallel assignment."""
-    cycle_id = await _create_cycle(client, auth_headers)
-    ctx = await _seed_schedule_world(session_manager, cycle_id)
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id)
     created = await client.post(
-        f"/cycles/{cycle_id}/schedule/sessions",
+        f"/competitions/{competition_id}/schedule/sessions",
         json=_session_body(ctx["venue_id"], workstations=2),
         headers=auth_headers,
     )
@@ -409,3 +408,68 @@ async def test_US_SCH_01_concurrency_no_double_booking(
             )
         ).scalars().all()
         assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_US_SCH_01_list_venues_and_sessions(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_schedule_world(session_manager, competition_id)
+
+    venues = await client.get(
+        f"/competitions/{competition_id}/venues",
+        headers=auth_headers,
+    )
+    assert venues.status_code == 200, venues.text
+    venue_rows = venues.json()
+    assert len(venue_rows) == 1
+    assert venue_rows[0]["venueId"] == str(ctx["venue_id"])
+
+    created = await client.post(
+        f"/competitions/{competition_id}/schedule/sessions",
+        json=_session_body(ctx["venue_id"], workstations=2),
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    ssid = created.json()["sessionId"]
+
+    await client.post(
+        f"/schedule/sessions/{ssid}/assignments",
+        json={"competitorId": str(ctx["competitors"]["A"]), "workstation": "WS-1"},
+        headers=auth_headers,
+    )
+
+    listed = await client.get(
+        f"/competitions/{competition_id}/schedule/sessions",
+        headers=auth_headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["sessionId"] == ssid
+    assert listed.json()[0]["assignmentCount"] == 1
+
+    by_skill = await client.get(
+        f"/competitions/{competition_id}/schedule/sessions",
+        params={"skillId": str(ctx["skill_id"])},
+        headers=auth_headers,
+    )
+    assert by_skill.status_code == 200, by_skill.text
+    assert len(by_skill.json()) == 1
+
+    other_skill = await client.get(
+        f"/competitions/{competition_id}/schedule/sessions",
+        params={"skillId": str(uuid.uuid4())},
+        headers=auth_headers,
+    )
+    assert other_skill.status_code == 200, other_skill.text
+    assert other_skill.json() == []
+
+    detail = await client.get(f"/schedule/sessions/{ssid}", headers=auth_headers)
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["sessionId"] == ssid
+    assert len(body["assignments"]) == 1
+    assert body["assignments"][0]["competitorId"] == str(ctx["competitors"]["A"])

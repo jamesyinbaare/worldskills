@@ -13,12 +13,12 @@ router = APIRouter(tags=["nominations"])
 
 
 @router.post(
-    "/cycles/{cycle_id}/nominations",
+    "/competitions/{competition_id}/nominations",
     response_model=NominationOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_nomination(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     payload: NominationCreate,
     session: DBSessionDep,
     user: CurrentUserDep,
@@ -26,7 +26,7 @@ async def create_nomination(
 ) -> NominationOut:
     ip, ua = client_meta(request)
     nomination = await nomination_service.create_nomination(
-        session, cycle_id, payload, actor=user, ip=ip, user_agent=ua
+        session, competition_id, payload, actor=user, ip=ip, user_agent=ua
     )
     return NominationOut(
         nominationId=nomination.id,

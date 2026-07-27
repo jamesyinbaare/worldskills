@@ -13,12 +13,16 @@ from app.core.errors import AppError
 from app.core.rbac import Capability, has_capability, is_admin_role
 from app.core.security import verify_token
 from app.dependencies.database import DBSessionDep
-from app.models import Cycle, User, UserRole
+from app.models import Competition, User, UserRole
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+_PASSWORD_CHANGE_ALLOWED_PATHS = {"/auth/me", "/auth/change-password", "/auth/refresh"}
+
+
 async def get_current_user(
+    request: Request,
     session: DBSessionDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> User:
@@ -37,6 +41,12 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise AppError("UNAUTHORIZED", "User not found or inactive", status_code=401)
+    if user.must_change_password and request.url.path not in _PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise AppError(
+            "PASSWORD_CHANGE_REQUIRED",
+            "You must change your password before continuing",
+            status_code=403,
+        )
     return user
 
 
@@ -68,16 +78,16 @@ def require_capability(capability: Capability):
 AdminUserDep = Annotated[User, Depends(require_roles(UserRole.ADMIN))]
 
 
-async def get_cycle_scoped(
-    cycle_id: uuid.UUID,
+async def get_competition_scoped(
+    competition_id: uuid.UUID,
     session: DBSessionDep,
     user: CurrentUserDep,
-) -> Cycle:
+) -> Competition:
     """Ensure cycle exists; non-admins still need auth (operational scoping added later)."""
-    result = await session.execute(select(Cycle).where(Cycle.id == cycle_id))
+    result = await session.execute(select(Competition).where(Competition.id == competition_id))
     cycle = result.scalar_one_or_none()
     if cycle is None:
-        raise AppError("CYCLE_NOT_FOUND", "Cycle not found", status_code=404)
+        raise AppError("COMPETITION_NOT_FOUND", "Competition not found", status_code=404)
     _ = user
     return cycle
 

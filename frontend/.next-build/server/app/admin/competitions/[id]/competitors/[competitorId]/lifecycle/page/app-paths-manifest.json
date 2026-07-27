@@ -1,0 +1,3 @@
+{
+  "/admin/competitions/[id]/competitors/[competitorId]/lifecycle/page": "app/admin/competitions/[id]/competitors/[competitorId]/lifecycle/page.js"
+}

@@ -1,0 +1,3 @@
+{
+  "/consent/[token]/page": "app/consent/[token]/page.js"
+}

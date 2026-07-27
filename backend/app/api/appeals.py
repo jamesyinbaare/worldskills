@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.core.rbac import Capability
 from app.dependencies.auth import CurrentUserDep, client_meta, require_capability
@@ -13,6 +13,7 @@ from app.dependencies.database import DBSessionDep
 from app.models import User
 from app.schemas.appeals import (
     AppealAssignIn,
+    AppealListItem,
     AppealLodgeIn,
     AppealOut,
     AppealRuleIn,
@@ -26,13 +27,35 @@ router = APIRouter(tags=["appeals"])
 AppealsOfficerDep = Annotated[User, Depends(require_capability(Capability.RULE_ON_APPEAL))]
 
 
+@router.get(
+    "/competitions/{competition_id}/appeals",
+    response_model=list[AppealListItem],
+)
+async def list_appeals(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: AppealsOfficerDep,
+    skillId: Annotated[uuid.UUID | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    state: Annotated[str | None, Query()] = None,
+) -> list[AppealListItem]:
+    return await appeals_service.list_appeals(
+        session,
+        competition_id,
+        actor=actor,
+        skill_id=skillId,
+        q=q,
+        state=state,
+    )
+
+
 @router.post(
-    "/cycles/{cycle_id}/appeals",
+    "/competitions/{competition_id}/appeals",
     response_model=AppealOut,
     status_code=status.HTTP_201_CREATED,
 )
 async def lodge_appeal(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     body: AppealLodgeIn,
     session: DBSessionDep,
     actor: CurrentUserDep,
@@ -41,7 +64,7 @@ async def lodge_appeal(
     ip, ua = client_meta(request)
     return await appeals_service.lodge_appeal(
         session,
-        cycle_id,
+        competition_id,
         competitor_id=body.competitorId,
         stage_id=body.stageId,
         reason=body.reason,

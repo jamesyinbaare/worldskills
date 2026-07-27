@@ -7,7 +7,11 @@ import uuid
 from fastapi import APIRouter, Query, Request
 
 from app.dependencies.database import DBSessionDep
-from app.schemas.public_portal import PublicCompetitorDirectoryOut, PublicCompetitorProfileOut
+from app.schemas.public_portal import (
+    PublicCompetitorDirectoryOut,
+    PublicCompetitorProfileOut,
+    SkillProgressionOut,
+)
 from app.services import public_portal as portal_service
 
 router = APIRouter(tags=["public-portal"])
@@ -23,11 +27,11 @@ def _client_key(request: Request) -> str:
 
 
 @router.get(
-    "/public/cycles/{cycle_id}/competitors",
+    "/public/competitions/{competition_id}/competitors",
     response_model=PublicCompetitorDirectoryOut,
 )
 async def list_public_competitors(
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     session: DBSessionDep,
     request: Request,
     skill: uuid.UUID | None = Query(default=None),
@@ -38,12 +42,30 @@ async def list_public_competitors(
 ) -> PublicCompetitorDirectoryOut:
     return await portal_service.list_public_competitors(
         session,
-        cycle_id,
+        competition_id,
         skill_id=skill,
         zone_id=zone,
         cursor=cursor,
         limit=limit,
         fmt=format,
+        client_key=_client_key(request),
+    )
+
+
+@router.get(
+    "/public/competitions/{competition_id}/skills/{skill_id}/progression",
+    response_model=SkillProgressionOut,
+)
+async def skill_progression(
+    competition_id: uuid.UUID,
+    skill_id: uuid.UUID,
+    session: DBSessionDep,
+    request: Request,
+) -> SkillProgressionOut:
+    return await portal_service.get_skill_progression(
+        session,
+        competition_id,
+        skill_id,
         client_key=_client_key(request),
     )
 

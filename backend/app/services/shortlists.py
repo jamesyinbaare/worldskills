@@ -19,6 +19,7 @@ from app.models import (
     ShortlistEntry,
     Skill,
     Stage,
+    StageSelectionMode,
     Submission,
     User,
 )
@@ -33,6 +34,7 @@ from app.services.pathway_engine import (
     Candidate,
     StageNode,
     compute_finalists_per_skill,
+    rank_for_national_pool,
     rank_for_shortlist,
     resolve_next_stage,
 )
@@ -46,6 +48,8 @@ def _stage_nodes(stages: list[Stage]) -> list[StageNode]:
             branch=s.branch,
             quota_by_zone={str(k): int(v) for k, v in (s.quota_by_zone or {}).items()},
             min_score=s.min_score,
+            selection_mode=s.selection_mode or StageSelectionMode.PER_ZONE.value,
+            overall_quota=s.quota if (s.selection_mode or "").upper() == "NATIONAL_POOL" else None,
         )
         for s in stages
     ]
@@ -77,7 +81,7 @@ async def _require_shortlist_capability(actor: User) -> None:
 
 async def generate_shortlist(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     *,
     actor: User,
@@ -87,11 +91,22 @@ async def generate_shortlist(
     await _require_shortlist_capability(actor)
 
     stage = await session.get(Stage, stage_id)
-    if stage is None or stage.cycle_id != cycle_id:
+    if stage is None or stage.competition_id != competition_id:
         raise AppError("STAGE_NOT_FOUND", "Stage not found in cycle", status_code=404)
 
+    selection_mode = (stage.selection_mode or StageSelectionMode.PER_ZONE.value).upper()
+    is_national = selection_mode == StageSelectionMode.NATIONAL_POOL.value
+
     quota_by_zone = {str(k): int(v) for k, v in (stage.quota_by_zone or {}).items()}
-    if not quota_by_zone and stage.quota is None:
+    if is_national:
+        if stage.quota is None:
+            raise AppError(
+                "CONFIG_INCOMPLETE",
+                "Stage overall quota is not configured",
+                status_code=409,
+                fields=[FieldError("quota", "CONFIG_INCOMPLETE")],
+            )
+    elif not quota_by_zone and stage.quota is None:
         raise AppError(
             "CONFIG_INCOMPLETE",
             "Stage quota is not configured",
@@ -106,7 +121,7 @@ async def generate_shortlist(
     subs = (
         await session.execute(
             select(Submission).where(
-                Submission.cycle_id == cycle_id,
+                Submission.competition_id == competition_id,
                 Submission.stage_id == stage_id,
                 Submission.state.in_(["ACCEPTED", "LATE"]),
             )
@@ -149,24 +164,34 @@ async def generate_shortlist(
             )
         )
 
-    # If only scalar quota, invent per-zone quotas from unique zones present
-    if not quota_by_zone and stage.quota is not None:
-        zones = {c.zone_id for c in candidates}
-        quota_by_zone = {z: int(stage.quota) for z in zones}
-
     tie_break_rules = await require_tie_break_rules_if_needed(
         session,
-        cycle_id,
+        competition_id,
         candidates=candidates,
         quota_by_zone=quota_by_zone,
         min_score=stage.min_score,
+        national_pool=is_national,
+        overall_quota=stage.quota if is_national else None,
     )
-    ranked = rank_for_shortlist(
-        candidates,
-        quota_by_zone=quota_by_zone,
-        min_score=stage.min_score,
-        tie_break_rules=tie_break_rules,
-    )
+    if is_national:
+        ranked = rank_for_national_pool(
+            candidates,
+            quota=int(stage.quota or 0),
+            min_score=stage.min_score,
+            tie_break_rules=tie_break_rules,
+        )
+    else:
+        # If only scalar quota, invent per-zone quotas from unique zones present
+        if not quota_by_zone and stage.quota is not None:
+            zones = {c.zone_id for c in candidates}
+            quota_by_zone = {z: int(stage.quota) for z in zones}
+
+        ranked = rank_for_shortlist(
+            candidates,
+            quota_by_zone=quota_by_zone,
+            min_score=stage.min_score,
+            tie_break_rules=tie_break_rules,
+        )
 
     skill_stages: list[Stage] = []
     if stage.skill_id:
@@ -174,7 +199,7 @@ async def generate_shortlist(
             (
                 await session.execute(
                     select(Stage)
-                    .where(Stage.cycle_id == cycle_id, Stage.skill_id == stage.skill_id)
+                    .where(Stage.competition_id == competition_id, Stage.skill_id == stage.skill_id)
                     .order_by(Stage.order)
                 )
             ).scalars().all()
@@ -185,7 +210,7 @@ async def generate_shortlist(
     existing = (
         await session.execute(
             select(Shortlist).where(
-                Shortlist.cycle_id == cycle_id,
+                Shortlist.competition_id == competition_id,
                 Shortlist.stage_id == stage_id,
                 Shortlist.state == "PROVISIONAL",
             )
@@ -196,8 +221,9 @@ async def generate_shortlist(
     await session.flush()
 
     by_zone_payload: dict[str, list[dict[str, Any]]] = {}
+    national_payload: list[dict[str, Any]] = []
     shortlist = Shortlist(
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         stage_id=stage_id,
         skill_id=stage.skill_id,
         state="PROVISIONAL",
@@ -208,6 +234,7 @@ async def generate_shortlist(
     await session.flush()
 
     items_out: dict[str, list[ShortlistRankedItem]] = {}
+    national_out: list[ShortlistRankedItem] = []
     for entry in ranked:
         cid = uuid.UUID(entry.competitor_id)
         zid = uuid.UUID(entry.zone_id)
@@ -233,10 +260,16 @@ async def generate_shortlist(
             reason=entry.reason,
             refNo=comp.ref_no if comp else None,
         )
-        items_out.setdefault(str(zid), []).append(item)
-        by_zone_payload.setdefault(str(zid), []).append(item.model_dump(mode="json"))
+        if is_national:
+            national_out.append(item)
+            national_payload.append(item.model_dump(mode="json"))
+        else:
+            items_out.setdefault(str(zid), []).append(item)
+            by_zone_payload.setdefault(str(zid), []).append(item.model_dump(mode="json"))
 
-    shortlist.payload = by_zone_payload
+    shortlist.payload = (
+        {"national": national_payload} if is_national else by_zone_payload
+    )
     await session.flush()
 
     await write_audit_event(
@@ -246,8 +279,14 @@ async def generate_shortlist(
         entity_id=str(shortlist.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
-        after={"stageId": str(stage_id), "state": "PROVISIONAL", "byZone": by_zone_payload},
+        competition_id=competition_id,
+        after={
+            "stageId": str(stage_id),
+            "state": "PROVISIONAL",
+            "selectionMode": selection_mode,
+            "byZone": by_zone_payload if not is_national else None,
+            "national": national_payload if is_national else None,
+        },
         ip=ip,
         user_agent=user_agent,
     )
@@ -259,14 +298,16 @@ async def generate_shortlist(
         stageId=stage_id,
         state=shortlist.state,
         isFinalStage=is_final,
-        byZone=items_out,
+        selectionMode=selection_mode,
+        byZone=items_out if not is_national else None,
+        national=national_out if is_national else None,
         generatedAt=shortlist.generated_at,
     )
 
 
 async def confirm_shortlist(
     session: AsyncSession,
-    cycle_id: uuid.UUID,
+    competition_id: uuid.UUID,
     stage_id: uuid.UUID,
     *,
     actor: User,
@@ -276,14 +317,14 @@ async def confirm_shortlist(
     await _require_shortlist_capability(actor)
 
     stage = await session.get(Stage, stage_id)
-    if stage is None or stage.cycle_id != cycle_id:
+    if stage is None or stage.competition_id != competition_id:
         raise AppError("STAGE_NOT_FOUND", "Stage not found in cycle", status_code=404)
 
     shortlist = (
         await session.execute(
             select(Shortlist)
             .where(
-                Shortlist.cycle_id == cycle_id,
+                Shortlist.competition_id == competition_id,
                 Shortlist.stage_id == stage_id,
                 Shortlist.state == "PROVISIONAL",
             )
@@ -312,7 +353,7 @@ async def confirm_shortlist(
             (
                 await session.execute(
                     select(Stage)
-                    .where(Stage.cycle_id == cycle_id, Stage.skill_id == stage.skill_id)
+                    .where(Stage.competition_id == competition_id, Stage.skill_id == stage.skill_id)
                     .order_by(Stage.order)
                 )
             ).scalars().all()
@@ -375,7 +416,7 @@ async def confirm_shortlist(
 
         session.add(
             NotificationOutbox(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 recipient_role="COMPETITOR",
                 recipient_id=comp.id,
                 template="SHORTLIST_ADVANCED" if entry.outcome == "ADVANCE" else "SHORTLIST_WAITLIST",
@@ -394,7 +435,7 @@ async def confirm_shortlist(
     for wid in waitlist_ids:
         session.add(
             NotificationOutbox(
-                cycle_id=cycle_id,
+                competition_id=competition_id,
                 recipient_role="COMPETITOR",
                 recipient_id=wid,
                 template="SHORTLIST_WAITLIST",
@@ -414,7 +455,7 @@ async def confirm_shortlist(
         entity_id=str(shortlist.id),
         actor_id=actor.id,
         actor_role=actor.role.value,
-        cycle_id=cycle_id,
+        competition_id=competition_id,
         after={
             "advanced": [str(a) for a in advanced_ids],
             "waitlist": [str(w) for w in waitlist_ids],

@@ -1,0 +1,211 @@
+{
+  "app": {
+    "[project]/app/_not-found/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/accept-invite/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/account/change-password/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/audit/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/age-rules/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/appeals/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/assignments/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/competitors/[competitorId]/eligibility/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/competitors/[competitorId]/lifecycle/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/marking-schemes/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/nominations/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/pathways/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/results/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/schedule/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/school-quotas/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/[skillId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/[skillId]/pathway/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/[skillId]/stages/[stageId]/exercise/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/associate/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/new/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/skills/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/stages/[stageId]/shortlist/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/[id]/zones/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/new/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/competitions/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/families/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/institutions/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/skills/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/users/[userId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/users/new/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/admin/users/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitions/[competitionId]/enter/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitions/[competitionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitions/[competitionId]/skills/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitions/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/competitions/[competitionId]/appeals/new/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/competitions/[competitionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/competitions/[competitionId]/results/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/competitions/[competitionId]/stages/[stageId]/submit/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/competitors/[competitorId]/consent/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/dsar/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/(portal)/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/competitions/[competitionId]/register/confirmation/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/competitor/competitions/[competitionId]/register/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/consent/[token]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/directory/[competitionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/directory/[competitionId]/skills/[skillId]/progression/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/directory/competitors/[competitorKey]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/expert/competitions/[competitionId]/queue/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/expert/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/expert/submissions/[submissionId]/moderation/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/expert/submissions/[submissionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/competitions/[competitionId]/nominations/new/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/competitions/[competitionId]/nominations/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/competitions/[competitionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/competitions/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/competitors/[competitorId]/lifecycle/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/nominate/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/(portal)/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/competitions/[competitionId]/register/confirmation/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/institution/competitions/[competitionId]/register/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/login/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/results/[competitionId]/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/signup/institution/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ],
+    "[project]/app/signup/page": [
+      "static/media/e8f2fbee2754df70-s.p.1dqa_6e_ad4sj.woff2"
+    ]
+  },
+  "appUsingSizeAdjust": true,
+  "pages": {},
+  "pagesUsingSizeAdjust": false
+}

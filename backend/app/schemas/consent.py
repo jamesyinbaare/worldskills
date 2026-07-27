@@ -36,6 +36,27 @@ class ConsentWithdrawOut(BaseModel):
     publicProfileVisible: bool
 
 
+class ConsentFormUploadOut(BaseModel):
+    competitorId: UUID
+    status: str
+    scopesGranted: list[str]
+    publicProfileVisible: bool
+    consentFormUploadedAt: str
+    sha256: str
+
+
+class ConsentVerifyIn(BaseModel):
+    outcome: str  # VERIFIED | REJECTED
+    reason: str | None = None
+
+
+class ConsentVerifyOut(BaseModel):
+    competitorId: UUID
+    consentVerificationStatus: str
+    consentVerifiedAt: str | None = None
+    consentVerificationReason: str | None = None
+
+
 class PublicCompetitorOut(BaseModel):
     competitorRef: str
     displayName: str | None = None
