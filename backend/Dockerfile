@@ -1,4 +1,4 @@
-FROM python:3.13-trixie
+FROM python:3.14-trixie
 
 ENV PYTHONUNBUFFERED=1
 
@@ -19,13 +19,16 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
 ENV UV_COMPILE_BYTECODE=1
 
-# Compile bytecode
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
-ENV UV_COMPILE_BYTECODE=1
-
 # uv Cache
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
 ENV UV_LINK_MODE=copy
+
+# Skip lint/test/dev dependency groups in production images
+# Ref: https://docs.astral.sh/uv/guides/integration/docker/#installing-a-project
+ENV UV_NO_DEV=1
+
+# Allow slower networks when downloading large wheels
+ENV UV_HTTP_TIMEOUT=120
 
 # Install dependencies
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
@@ -47,7 +50,7 @@ COPY ./alembic /app/alembic
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync
+    uv sync --frozen
 
 
 # Run the application.

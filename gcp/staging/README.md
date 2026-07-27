@@ -85,6 +85,16 @@ Staging does **not** bake `NEXT_PUBLIC_API_BASE_URL`. The browser derives `world
 - If frontend Docker builds log `[baseline-browser-mapping] The data in this module is over two months old`, prefer upgrading `next` and `eslint-config-next` to the latest stable minor first.
 - Running `npm i baseline-browser-mapping@latest -D` alone may not clear the warning on some `16.0.x` Next.js builds.
 
+## Build performance
+
+`deploy.sh` builds images **on the VM** with BuildKit enabled (`DOCKER_BUILDKIT=1`), builds **before** `compose down` (old stack stays up during compile), and uses `docker compose build --parallel`.
+
+Frontend/backend `.dockerignore` files keep `node_modules`, `.next`, and `.venv` out of the build context. The frontend image skips Playwright/Vitest/ESLint during `npm ci` and uses an npm BuildKit cache mount; the backend uses a uv cache mount.
+
+Cold (first) builds are still slow — especially Next.js on a small VM. For faster compiles, prefer **`e2-standard-4`** (or larger) over `e2-medium`. Repeat deploys with unchanged lockfiles should reuse npm/uv cache layers.
+
+Larger follow-up if deploy time is still too high: build/push images in CI to Artifact Registry and `pull` on the VM instead of compiling on-box.
+
 ## Related documentation
 
 - Sibling project GCP staging docs (if present) for Cloud SQL proxy / service-account patterns

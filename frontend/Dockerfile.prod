@@ -6,7 +6,20 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-maxtimeout=120000
+# Drop packages never needed for `next build` (Playwright/Vitest/ESLint).
+# Keep TypeScript / Tailwind / @types — required to compile.
+# --omit=peer skips Next's optional @playwright/test peer (and similar).
+# Refresh the lockfile after deletes so npm ci stays consistent.
+RUN --mount=type=cache,target=/root/.npm \
+    npm pkg delete \
+      devDependencies.@playwright/test \
+      devDependencies.@axe-core/playwright \
+      devDependencies.vitest \
+      devDependencies.eslint \
+      devDependencies.eslint-config-next \
+ && npm install --package-lock-only --omit=peer \
+ && npm ci --omit=peer \
+      --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-maxtimeout=120000
 
 FROM base AS builder
 WORKDIR /app

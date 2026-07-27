@@ -27,18 +27,22 @@ set +a
 export COMPOSE_FILE="${COMPOSE_FILE:-compose.staging.gcp.yaml}"
 echo "Compose file: $COMPOSE_FILE"
 
+# BuildKit enables cache mounts (npm/uv) and faster layer reuse on the VM
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+
 dc() {
     docker compose --env-file "$ENV_FILE" "$@"
 }
 
-echo "Stopping existing services..."
-dc down || true
-
-echo "Building Docker images..."
-dc build
+echo "Building Docker images (while old stack stays up)..."
+dc build --parallel
 
 echo "Pulling latest images (non-fatal if none)..."
 dc pull || true
+
+echo "Stopping existing services..."
+dc down || true
 
 echo "Starting services..."
 dc up -d

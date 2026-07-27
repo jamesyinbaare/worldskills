@@ -5,6 +5,9 @@ description = "A system for managing worldSkills competition"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.5",
+    "alembic-postgresql-enum>=1.10.0",
+    "alembic-utils>=0.8.8",
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.139.2",
     "google-cloud-storage>=3.0.0",
@@ -22,9 +25,6 @@ dependencies = [
 dev = [
     {include-group = "lint"},
     {include-group = "test"},
-    "alembic>=1.18.5",
-    "alembic-postgresql-enum>=1.10.0",
-    "alembic-utils>=0.8.8",
     "pre-commit>=4.6.0",
 ]
 lint = [
