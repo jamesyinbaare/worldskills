@@ -10,6 +10,9 @@ coverage
 playwright-report
 test-results
 e2e
+playwright.config.ts
+eslint.config.mjs
+vitest.config.*
 **/*.test.ts
 **/*.test.tsx
 **/*.spec.ts
