@@ -27,7 +27,7 @@ def upgrade() -> None:
     cyclestatus.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
-        "competitions",
+        "cycles",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("period_start", sa.Date(), nullable=False),
@@ -45,7 +45,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_cycles")),
     )
-    op.create_index(op.f("ix_cycles_name"), "competitions", ["name"], unique=False)
+    op.create_index(op.f("ix_cycles_name"), "cycles", ["name"], unique=False)
 
     op.create_table(
         "age_rules",
@@ -164,6 +164,6 @@ def downgrade() -> None:
     op.drop_table("pathways")
     op.drop_index(op.f("ix_age_rules_cycle_id"), table_name="age_rules")
     op.drop_table("age_rules")
-    op.drop_index(op.f("ix_cycles_name"), table_name="competitions")
-    op.drop_table("competitions")
+    op.drop_index(op.f("ix_cycles_name"), table_name="cycles")
+    op.drop_table("cycles")
     sa.Enum(name="cyclestatus").drop(op.get_bind(), checkfirst=True)

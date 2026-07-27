@@ -19,8 +19,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("competitions", sa.Column("description", sa.Text(), nullable=True))
+    # Table is still named cycles until c3d4e5f6a7b8 renames it to competitions.
+    op.add_column("cycles", sa.Column("description", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("competitions", "description")
+    op.drop_column("cycles", "description")

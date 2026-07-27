@@ -3,7 +3,8 @@ import logging
 from collections.abc import AsyncIterator
 from http.client import HTTPException
 from typing import Annotated, Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+import os
 
 from alembic_utils.replaceable_entity import registry
 from fastapi import Depends
@@ -15,7 +16,6 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
 )
-from sqlalchemy import MetaData
 from sqlalchemy.pool import NullPool
 from sqlalchemy.types import JSON
 
@@ -37,14 +37,6 @@ except ImportError:  # pragma: no cover
 if DeclarativeBase is not None:
     class Base(DeclarativeBase):
         __abstract__ = True
-        metadata = MetaData(naming_convention={
-        "ix": "ix_%(column_0_label)s",
-        "uq": "uq_%(table_name)s_%(column_0_name)s",
-        "ck": "ck_%(table_name)s_`%(constraint_name)s`",
-        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-        "pk": "pk_%(table_name)s"
-    })
-
         type_annotation_map = {
             dict[str, Any]: JSON,
         }
@@ -105,6 +97,48 @@ def convert_to_async_url(url: str) -> str:
     return url
 
 
+def asyncpg_connect_args(database_url: str) -> dict[str, Any]:
+    """Connect args for asyncpg.
+
+    Cloud SQL Auth Proxy exposes plaintext Postgres to clients (it terminates TLS
+    to Cloud SQL itself). asyncpg defaults to ssl='prefer', which can reset the
+    connection against the proxy. Local Compose Postgres also uses plaintext.
+
+    Disable SSL unless DATABASE_SSL / URL ssl|sslmode explicitly enables it.
+    Host ``cloud-sql-proxy`` always forces ssl=False.
+    """
+    normalized = (
+        database_url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
+            "postgresql+psycopg2://", "postgresql://", 1
+        )
+    )
+    parsed = urlparse(normalized)
+    query = {k.lower(): (v[-1] if v else "").lower() for k, v in parse_qs(parsed.query).items()}
+    ssl_q = query.get("ssl") or query.get("sslmode") or ""
+    env_ssl = os.environ.get("DATABASE_SSL", "").strip().lower()
+    host = (parsed.hostname or "").lower()
+
+    explicit_disable = ssl_q in {"disable", "disabled", "false", "0"} or env_ssl in {
+        "0",
+        "false",
+        "disable",
+        "disabled",
+    }
+    explicit_enable = ssl_q in {
+        "1",
+        "true",
+        "require",
+        "verify-ca",
+        "verify-full",
+        "prefer",
+        "allow",
+    } or env_ssl in {"1", "true", "require", "verify-ca", "verify-full"}
+
+    if host == "cloud-sql-proxy" or explicit_disable or not explicit_enable:
+        return {"ssl": False}
+    return {}
+
+
 class DatabaseSessionManager:
     _engine: AsyncEngine | None
     _sessionmaker: Any | None
@@ -163,17 +197,15 @@ class TestingDatabaseSessionManager(DatabaseSessionManager):
     async def configure(self) -> None:
         from pytest_postgresql.janitor import DatabaseJanitor
 
-        # Use this manager's URL (already host-rewritten by conftest), not cached settings.
-        result = urlparse(self._host.replace("postgresql+asyncpg://", "postgresql://", 1))
-        dbname = (result.path or "").lstrip("/") or "world_skills_test"
+        result = urlparse(db_settings.database_url)
         self.__janitor = DatabaseJanitor(
-            user=result.username or "postgres",
-            host=result.hostname or "127.0.0.1",
-            port=result.port or 5432,
-            dbname=dbname,
-            version=18,
-            password=result.password or "postgres",
-        )
+            user=result.username,
+            host=result.hostname,
+            port=result.port,  # type: ignore
+            dbname=result.path.strip("/"),
+            version=14,
+            password=result.password,
+        )  # type: ignore
 
         try:
             self.__janitor.drop()
@@ -214,36 +246,42 @@ class TestingDatabaseSessionManager(DatabaseSessionManager):
 if db_settings.mock_database:
     if db_settings.database_url is None:
         raise Exception("Database URL is not set")
-    elif db_settings.use_null_pool:
+    _async_url = convert_to_async_url(db_settings.database_url)
+    _connect_args = asyncpg_connect_args(_async_url)
+    if db_settings.use_null_pool:
         sessionmanager: DatabaseSessionManager = TestingDatabaseSessionManager(
-            convert_to_async_url(db_settings.database_url),
+            _async_url,
             {
                 "echo": db_settings.echo_sql,
                 "poolclass": NullPool,
+                "connect_args": _connect_args,
             },
         )
     else:
         sessionmanager = TestingDatabaseSessionManager(
-            convert_to_async_url(db_settings.database_url),
+            _async_url,
             {
                 "echo": db_settings.echo_sql,
                 "pool_size": db_settings.pool_size,
                 "max_overflow": db_settings.max_overflow,
                 "pool_timeout": db_settings.pool_timeout,
                 "pool_recycle": db_settings.pool_recycle,
+                "connect_args": _connect_args,
             },
         )
 elif db_settings.database_use:
     if db_settings.database_url is None:
         raise Exception("Database URL is not set")
+    _async_url = convert_to_async_url(db_settings.database_url)
     sessionmanager = DatabaseSessionManager(
-        convert_to_async_url(db_settings.database_url),
+        _async_url,
         {
             "echo": db_settings.echo_sql,
             "pool_size": db_settings.pool_size,
             "max_overflow": db_settings.max_overflow,
             "pool_timeout": db_settings.pool_timeout,
             "pool_recycle": db_settings.pool_recycle,
+            "connect_args": asyncpg_connect_args(_async_url),
         },
     )
 else:
