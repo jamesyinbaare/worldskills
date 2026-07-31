@@ -64,6 +64,7 @@ class PublicSkillOut(BaseModel):
     name: str
     number: str | None = None
     familyName: str | None = None
+    description: str | None = None
     hasCriteriaDocument: bool = False
     criteriaFileName: str | None = None
 

@@ -1,4 +1,4 @@
-/** Passthrough — public register routes sit here; RoleGate lives under (portal). */
+/** Passthrough layout for competitor routes (portal + registration). */
 export default function CompetitorLayout({
   children,
 }: {

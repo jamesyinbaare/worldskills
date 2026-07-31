@@ -10,6 +10,8 @@ from app.dependencies.database import DBSessionDep
 from app.models import UserRole
 from app.schemas.registrations import (
     RegistrationCreate,
+    RegistrationDraftIn,
+    RegistrationDraftOut,
     RegistrationFormAdminOut,
     RegistrationFormAdminUpdate,
     RegistrationFormOut,
@@ -87,6 +89,55 @@ async def get_registration_form(
 ) -> RegistrationFormOut:
     _assert_registration_actor(user)
     return await registration_service.get_registration_form(session, competition_id)
+
+
+@router.get("/{competition_id}/registrations/draft", response_model=RegistrationDraftOut)
+async def get_registration_draft(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    user: CurrentUserDep,
+) -> RegistrationDraftOut:
+    _assert_registration_actor(user)
+    return await registration_service.get_registration_draft(
+        session, competition_id, actor=user
+    )
+
+
+@router.get("/{competition_id}/registrations/draft/photo")
+async def get_registration_draft_photo(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    user: CurrentUserDep,
+) -> Response:
+    _assert_registration_actor(user)
+    data, content_type, filename = await registration_service.get_registration_draft_photo(
+        session, competition_id, actor=user
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.put("/{competition_id}/registrations/draft", response_model=RegistrationDraftOut)
+async def put_registration_draft(
+    competition_id: uuid.UUID,
+    payload: RegistrationDraftIn,
+    session: DBSessionDep,
+    request: Request,
+    user: CurrentUserDep,
+) -> RegistrationDraftOut:
+    _assert_registration_actor(user)
+    ip, ua = client_meta(request)
+    return await registration_service.upsert_registration_draft(
+        session,
+        competition_id,
+        payload,
+        actor=user,
+        ip=ip,
+        user_agent=ua,
+    )
 
 
 @router.post("/{competition_id}/registrations", response_model=RegistrationOut, status_code=201)

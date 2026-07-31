@@ -81,10 +81,7 @@ def is_public_profile_visible(competitor: Competitor) -> bool:
 
 
 def can_progress_past_pending_review(competitor: Competitor) -> bool:
-    """Minors marked CONSENT_PENDING cannot progress until participation consent."""
-    flags = list(competitor.flags or [])
-    if "CONSENT_PENDING" in flags or competitor.status == "CONSENT_PENDING":
-        return has_participation_consent(competitor)
+    """Guardian consent is tracked but does not block competition progression."""
     return True
 
 
@@ -121,7 +118,7 @@ async def apply_minor_gate_on_registration(
     guardian_email: str | None,
     guardian_phone: str | None,
 ) -> ConsentRequest | None:
-    """If minor without participation consent → CONSENT_PENDING. Optionally open a consent request."""
+    """Flag minors for guardian consent without blocking progression."""
     if not is_minor(
         competitor.date_of_birth,
         minor_age_under=form.minor_age_under,
@@ -135,7 +132,7 @@ async def apply_minor_gate_on_registration(
     if "CONSENT_PENDING" not in flags:
         flags.append("CONSENT_PENDING")
     _set_flags(competitor, flags)
-    competitor.status = "CONSENT_PENDING"
+    # Keep registration status (e.g. PENDING_REVIEW); consent is not a progression gate.
 
     if guardian_name and guardian_email:
         competitor.guardian_name = guardian_name.strip()
@@ -213,10 +210,6 @@ async def create_consent_request(
     if "CONSENT_PENDING" not in flags:
         flags.append("CONSENT_PENDING")
     _set_flags(competitor, flags)
-    if competitor.status not in {"CONSENT_PENDING", "PENDING_REVIEW"}:
-        competitor.status = "CONSENT_PENDING"
-    elif not has_participation_consent(competitor):
-        competitor.status = "CONSENT_PENDING"
 
     req = await _create_consent_request(session, competitor)
     await write_audit_event(
@@ -290,8 +283,10 @@ async def grant_consent(
         granted.append("participation")
         flags = [f for f in _flag_list(competitor) if f != "CONSENT_PENDING"]
         _set_flags(competitor, flags)
-        # Lift block — back to PENDING_REVIEW for admin / registration progression
-        competitor.status = "PENDING_REVIEW"
+        # Consent no longer gates progression; leave registration status unchanged
+        # unless still on the legacy CONSENT_PENDING status.
+        if competitor.status == "CONSENT_PENDING":
+            competitor.status = "PENDING_REVIEW"
 
     if "public" in scopes:
         if not has_participation_consent(competitor) and "participation" not in scopes:
@@ -365,7 +360,7 @@ async def withdraw_consent(
     if "CONSENT_PENDING" not in flags:
         flags.append("CONSENT_PENDING")
     _set_flags(competitor, flags)
-    competitor.status = "CONSENT_PENDING"
+    # Withdrawal clears consent evidence but does not block progression.
 
     await write_audit_event(
         session,
@@ -439,7 +434,8 @@ def _apply_scopes(
         granted.append("participation")
         flags = [f for f in _flag_list(competitor) if f != "CONSENT_PENDING"]
         _set_flags(competitor, flags)
-        competitor.status = "PENDING_REVIEW"
+        if competitor.status == "CONSENT_PENDING":
+            competitor.status = "PENDING_REVIEW"
 
     if "public" in scopes:
         if not has_participation_consent(competitor) and "participation" not in scopes:

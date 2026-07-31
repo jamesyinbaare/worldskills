@@ -29,6 +29,14 @@ const FIELD_LABELS: Record<string, string> = {
   hasPassport: "Passport",
   passportNumber: "Passport number",
   passportExpiresOn: "Passport expiry date",
+  coach: "Coach / team leader",
+  "coach.surname": "Coach surname",
+  "coach.firstName": "Coach first name",
+  "coach.otherName": "Coach other name",
+  "coach.contactNumber": "Coach contact number",
+  "coach.email": "Coach email",
+  "coach.whatsapp": "Coach WhatsApp",
+  "coach.dateOfBirth": "Coach date of birth",
 };
 
 const REASON_MESSAGES: Record<string, string> = {
@@ -59,6 +67,10 @@ const REASON_MESSAGES: Record<string, string> = {
   BEFORE_OPENS: "The end date must be after the start date.",
   PASSPORT_INVALID: "Enter a valid passport number.",
   PASSPORT_EXPIRED: "Passport expiry date must be today or in the future.",
+  INSTITUTION_REGISTRATION_DISABLED:
+    "Institution registration is currently disabled.",
+  MULTIPLE_ACTIVE_NOT_ALLOWED:
+    "Only one competition may be active at a time. Close the current active competition first.",
 };
 
 const CODE_TITLES: Record<string, string> = {
@@ -69,6 +81,8 @@ const CODE_TITLES: Record<string, string> = {
   CONFIG_INCOMPLETE: "Competition setup incomplete",
   WINDOW_CLOSED: "Registration closed",
   ABUSE_SUSPECTED: "Security check failed",
+  INSTITUTION_REGISTRATION_DISABLED: "Institution registration disabled",
+  MULTIPLE_ACTIVE_NOT_ALLOWED: "Another competition is already active",
   HTTP_ERROR: "Something went wrong",
 };
 

@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
+  getPublicSettings,
   homeForRole,
   lookupInstitution,
   registerInstitution,
@@ -16,6 +17,7 @@ import {
   FieldMessage,
   fieldErrorMap,
 } from "@/components/forms/ApiErrorAlert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -65,10 +67,28 @@ function InstitutionSignupContent() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [enabled, setEnabled] = useState<boolean | null>(null);
 
   const loginHref = nextPath
     ? `/login?next=${encodeURIComponent(nextPath)}`
     : "/login";
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await getPublicSettings();
+        if (!cancelled) {
+          setEnabled(settings.institutionRegistrationEnabled);
+        }
+      } catch {
+        if (!cancelled) setEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onLookup() {
     const code = schoolCode.trim();
@@ -147,6 +167,43 @@ function InstitutionSignupContent() {
           </p>
         </div>
 
+        {enabled === null ? (
+          <p className="text-center text-sm text-muted-foreground" role="status">
+            Loading…
+          </p>
+        ) : null}
+
+        {enabled === false ? (
+          <Card className="w-full shadow-sm ring-primary/10">
+            <CardHeader className="space-y-1.5 px-4 pt-6 sm:px-6">
+              <h1 className="text-xl font-bold tracking-tight text-primary sm:text-2xl">
+                School signup unavailable
+              </h1>
+              <CardDescription>
+                Institution account registration is currently disabled.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-4 sm:px-6">
+              <Alert>
+                <AlertTitle>Registration closed</AlertTitle>
+                <AlertDescription>
+                  Schools cannot claim accounts at this time. Competitors may
+                  still register individually when a competition is open.
+                </AlertDescription>
+              </Alert>
+            </CardContent>
+            <CardFooter className="flex flex-col items-stretch gap-3 px-4 pb-6 sm:px-6">
+              <Button variant="outline" className="min-h-11" asChild>
+                <Link href={loginHref}>Sign in</Link>
+              </Button>
+              <Button variant="link" className="min-h-11 justify-start px-0" asChild>
+                <Link href="/">Back to home</Link>
+              </Button>
+            </CardFooter>
+          </Card>
+        ) : null}
+
+        {enabled === true ? (
         <Card className="w-full shadow-sm ring-primary/10">
           <CardHeader className="space-y-1.5 px-4 pt-6 sm:px-6">
             <h1 className="text-xl font-bold tracking-tight text-primary sm:text-2xl">
@@ -290,6 +347,7 @@ function InstitutionSignupContent() {
             </Button>
           </CardFooter>
         </Card>
+        ) : null}
       </div>
     </div>
   );

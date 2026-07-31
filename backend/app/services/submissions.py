@@ -137,11 +137,7 @@ def _assert_uploadable(submission: Submission) -> None:
         )
 
 
-def _deadline_status(
-    stage: Stage, submission: Submission, *, now: datetime, rules: dict[str, Any]
-) -> str:
-    """Return 'ok', 'block', or 'flag' based on closesAt / timed expiry and late policy."""
-    policy = str(rules.get("latePolicy") or "block").lower()
+def _effective_deadline(stage: Stage, submission: Submission, rules: dict[str, Any]) -> datetime:
     deadline = submission.deadline_at or stage.closes_at
     if submission.timed_expires_at and (
         deadline is None or submission.timed_expires_at < deadline
@@ -154,6 +150,15 @@ def _deadline_status(
             status_code=409,
             fields=[FieldError("closesAt", "CONFIG_INCOMPLETE")],
         )
+    return deadline
+
+
+def _deadline_status(
+    stage: Stage, submission: Submission, *, now: datetime, rules: dict[str, Any]
+) -> str:
+    """Return 'ok', 'block', or 'flag' based on closesAt / timed expiry and late policy."""
+    policy = str(rules.get("latePolicy") or "block").lower()
+    deadline = _effective_deadline(stage, submission, rules)
     if now <= deadline:
         return "ok"
     if policy in {"flag-late", "flag_late", "flag"}:
@@ -197,8 +202,13 @@ async def open_submission(
     if competitor.eligibility_status not in {None, "ELIGIBLE", "OPEN_CATEGORY"}:
         if competitor.eligibility_status == "INELIGIBLE":
             raise AppError("INELIGIBLE", "Competitor is not eligible", status_code=409)
-    if competitor.status not in {"REGISTERED", "ACTIVE_IN_STAGE", "PENDING_REVIEW"}:
-        # Allow REGISTERED / ACTIVE_IN_STAGE; treat eligible registered as active in stage for MVP
+    if competitor.status not in {
+        "REGISTERED",
+        "ACTIVE_IN_STAGE",
+        "PENDING_REVIEW",
+        "CONSENT_PENDING",
+    }:
+        # Allow REGISTERED / ACTIVE_IN_STAGE / PENDING_REVIEW / legacy CONSENT_PENDING
         if competitor.status == "INELIGIBLE":
             raise AppError("INELIGIBLE", "Competitor cannot submit", status_code=409)
 
@@ -688,6 +698,82 @@ async def finalise_submission(
             "hash": submission.content_hash,
             "receipt": submission.receipt,
             "late": submission.late,
+        },
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(submission)
+    return submission
+
+
+async def reopen_submission(
+    session: AsyncSession,
+    submission_id: uuid.UUID,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> Submission:
+    """Allow replacing artefacts and re-finalising while the deadline is still open."""
+    submission, _competitor, stage = await _load_owned_submission(session, submission_id, actor)
+    now = _utcnow()
+    rules = await _rules(session, stage)
+
+    if submission.timed_expires_at and now >= submission.timed_expires_at:
+        raise AppError(
+            "DEADLINE_PASSED",
+            "Timed project has expired; submission cannot be reopened",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("timedExpiresAt", "DEADLINE_PASSED")],
+        )
+
+    if _deadline_status(stage, submission, now=now, rules=rules) != "ok":
+        raise AppError(
+            "DEADLINE_PASSED",
+            "Submission deadline has passed; submission cannot be reopened",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("deadline", "DEADLINE_PASSED")],
+        )
+
+    if not submission.upload_locked and submission.state not in IMMUTABLE_STATES:
+        return submission
+
+    before = {
+        "state": submission.state,
+        "uploadLocked": submission.upload_locked,
+        "receipt": submission.receipt,
+        "hash": submission.content_hash,
+    }
+
+    artefacts = (
+        await session.execute(
+            select(Artefact).where(
+                Artefact.submission_id == submission_id,
+                Artefact.complete.is_(True),
+            )
+        )
+    ).scalars().all()
+    has_clean = any(
+        a.scan_status == "CLEAN" and not a.quarantined for a in artefacts
+    )
+
+    submission.upload_locked = False
+    submission.late = False
+    submission.state = "UPLOADED" if has_clean else "OPEN"
+    # Keep prior receipt/hash visible until the next finalise replaces them.
+    await write_audit_event(
+        session,
+        action="SUBMISSION_REOPEN",
+        entity_type="Submission",
+        entity_id=str(submission.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=submission.competition_id,
+        before=before,
+        after={
+            "state": submission.state,
+            "uploadLocked": False,
         },
         ip=ip,
         user_agent=user_agent,

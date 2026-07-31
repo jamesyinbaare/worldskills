@@ -158,6 +158,14 @@ def _reg_payload(ctx: dict[str, uuid.UUID], *, dob: str, **overrides: object) ->
         "hasPassport": False,
         "institutionId": str(ctx["institution_id"]),
         "skillIds": [str(ctx["skill_id"])],
+        "coach": {
+            "surname": "Asante",
+            "firstName": "Kojo",
+            "contactNumber": "+233201112233",
+            "email": "coach@example.com",
+            "whatsapp": "+233201112233",
+            "dateOfBirth": "1985-04-12",
+        },
         "declarationAccepted": True,
         "photo": {"contentBase64": _PNG_1X1, "contentType": "image/png"},
         "captchaToken": "ok",
@@ -189,14 +197,15 @@ async def test_US_REG_02_AC1_consent_required_for_minor(
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["status"] == "CONSENT_PENDING"
+    assert body["status"] == "PENDING_REVIEW"
     assert "CONSENT_PENDING" in body["flags"]
 
     async with session_manager.session() as session:
         competitor = await session.get(Competitor, uuid.UUID(body["competitorId"]))
         assert competitor is not None
-        assert competitor.status == "CONSENT_PENDING"
-        assert not can_progress_past_pending_review(competitor)
+        assert competitor.status == "PENDING_REVIEW"
+        assert "CONSENT_PENDING" in (competitor.flags or [])
+        assert can_progress_past_pending_review(competitor)
         assert is_public_profile_visible(competitor) is False
 
 
@@ -380,7 +389,7 @@ async def test_US_REG_02_AC4_withdrawal(
     body = withdrawn.json()
     assert body["publicProfileVisible"] is False
     assert "CONSENT_WITHDRAWN" in body["flags"]
-    assert body["status"] == "CONSENT_PENDING"
+    assert "CONSENT_PENDING" in body["flags"]
 
     assert (await client.get(f"/public/competitors/{ref}")).status_code == 404
 
@@ -390,7 +399,10 @@ async def test_US_REG_02_AC4_withdrawal(
         assert competitor.consent_participation_at is None
         assert competitor.consent_public_at is None
         assert competitor.consent_form_key is None
-        assert not can_progress_past_pending_review(competitor)
+        assert can_progress_past_pending_review(competitor)
+        assert "CONSENT_PENDING" in (competitor.flags or [])
+        # Status must not be forced back to a blocking CONSENT_PENDING state.
+        assert competitor.status != "CONSENT_PENDING"
 
         audit = (
             await session.execute(

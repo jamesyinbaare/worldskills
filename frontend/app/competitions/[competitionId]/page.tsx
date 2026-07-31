@@ -20,12 +20,10 @@ export default function CompetitionRouterPage() {
       try {
         const data = await getPublicCompetition(competitionId);
         if (cancelled) return;
-        if (data.skills.length >= 2) {
+        if (data.skills.length >= 1) {
           router.replace(`/competitions/${competitionId}/skills`);
         } else {
-          const sole = data.skills[0]?.skillId;
-          const qs = sole ? `?skillId=${encodeURIComponent(sole)}` : "";
-          router.replace(`/competitions/${competitionId}/enter${qs}`);
+          router.replace(`/competitions/${competitionId}/enter`);
         }
       } catch (err) {
         if (!cancelled && err instanceof ApiError) {

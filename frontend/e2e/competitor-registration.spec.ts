@@ -267,6 +267,43 @@ async function mockRegistrationDeps(page: Page): Promise<void> {
       ]);
     },
   );
+  await page.route(
+    (url) =>
+      isApiPath(url.toString(), `/competitions/${CYCLE_ID}/registrations/draft`),
+    async (route) => {
+      if (
+        route.request().resourceType() !== "fetch" &&
+        route.request().resourceType() !== "xhr"
+      ) {
+        await route.fallback();
+        return;
+      }
+      const method = route.request().method();
+      if (method === "GET") {
+        await fulfillJson(
+          route,
+          404,
+          envelope("DRAFT_NOT_FOUND", "No draft"),
+        );
+        return;
+      }
+      if (method === "PUT") {
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        await fulfillJson(route, 200, {
+          competitorId: COMPETITOR_ID,
+          status: "DRAFT",
+          updatedAt: new Date().toISOString(),
+          currentStep: body.currentStep ?? 1,
+          givenNames: body.givenNames ?? null,
+          familyName: body.familyName ?? null,
+          skillIds: body.skillIds ?? [],
+          hasPhoto: Boolean(body.photo),
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
 }
 
 async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
@@ -276,24 +313,38 @@ async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
   await page.locator("#email").fill("ama@example.com");
   await page.locator("#mobile").fill("+233241234567");
   await page.locator("#nationalId").fill("GHA-123456789");
+  await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
+  await page.getByTestId("registration-continue").click();
 
+  await expect(page.getByTestId("passport-no")).toBeVisible();
   await page.getByTestId("passport-no").check();
+  await page.getByTestId("registration-continue").click();
 
+  await expect(page.getByTestId("school-search")).toBeVisible();
   await page.getByTestId("school-search").fill("Accra");
   await expect(page.getByTestId("school-search-results")).toBeVisible();
   await page
     .getByRole("option", { name: /Accra Technical Institute/i })
     .click();
   await expect(page.getByTestId("school-selected")).toBeVisible();
-
   await page.getByTestId("skill-id-0").selectOption(SKILL_A);
+  await page.getByTestId("registration-continue").click();
+
+  await expect(page.getByTestId("coach-surname")).toBeVisible();
+  await page.getByTestId("coach-surname").fill("Asante");
+  await page.getByTestId("coach-firstName").fill("Kojo");
+  await page.getByTestId("coach-otherName").fill("Mensah");
+  await page.getByTestId("coach-contactNumber").fill("+233201112233");
+  await page.getByTestId("coach-email").fill("coach@example.com");
+  await page.getByTestId("coach-whatsapp").fill("+233201112233");
+  await page.getByTestId("coach-dateOfBirth").fill("1985-04-12");
+  await page.getByTestId("registration-continue").click();
+
+  await expect(page.getByTestId("registration-declaration")).toBeVisible();
   await page.getByTestId("registration-declaration").check();
   await page
     .getByTestId("registration-captcha")
     .fill(opts?.captcha ?? "ok");
-  await page
-    .getByTestId("registration-photo")
-    .setInputFiles(tinyPngPath());
 }
 
 test.describe("US-REG-01-UI competitor registration", () => {
@@ -333,10 +384,8 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await expect(
       page.getByRole("alert").filter({ hasText: /Registration closed|WINDOW_CLOSED/i }).first(),
     ).toBeVisible();
-    await expect(page.getByTestId("registration-submit")).toBeDisabled();
-    await expect(page.getByTestId("registration-submit")).toContainText(
-      /closed/i,
-    );
+    await expect(page.getByTestId("registration-continue")).toBeDisabled();
+    await expect(page.getByTestId("registration-save-draft")).toBeDisabled();
   });
 
   test("US-REG-01-UI-AC3 missing required field shows errors without confirmation", async ({
@@ -349,8 +398,12 @@ test.describe("US-REG-01-UI competitor registration", () => {
       timeout: 15_000,
     });
     await fillHappyPath(page);
+    await page.getByTestId("registration-back").click();
+    await page.getByTestId("registration-back").click();
+    await page.getByTestId("registration-back").click();
+    await page.getByTestId("registration-back").click();
     await page.locator("#givenNames").fill("");
-    await page.getByTestId("registration-submit").click();
+    await page.getByTestId("registration-continue").click();
     await expect(
       page.getByRole("alert").filter({ hasText: /required|Given names/i }).first(),
     ).toBeVisible();
@@ -424,6 +477,16 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await expect(page.getByTestId("registration-form")).toBeVisible({
       timeout: 15_000,
     });
+    await page.locator("#givenNames").fill("Ama");
+    await page.locator("#familyName").fill("Mensah");
+    await page.locator("#dateOfBirth").fill("2005-03-15");
+    await page.locator("#email").fill("ama@example.com");
+    await page.locator("#mobile").fill("+233241234567");
+    await page.locator("#nationalId").fill("GHA-123456789");
+    await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
+    await page.getByTestId("registration-continue").click();
+    await page.getByTestId("passport-no").check();
+    await page.getByTestId("registration-continue").click();
     await expect(page.getByTestId("registration-skills")).toBeVisible();
     await expect(page.getByTestId("skill-id-0")).toBeVisible();
     await expect(page.getByTestId("skill-add")).toHaveCount(0);

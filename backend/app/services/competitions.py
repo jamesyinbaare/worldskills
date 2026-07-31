@@ -211,6 +211,7 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
                 "name": s["name"],
                 "number": s.get("number"),
                 "familyName": s.get("familyName"),
+                "description": s.get("description"),
                 "hasCriteriaDocument": bool(s.get("hasCriteriaDocument")),
                 "criteriaFileName": s.get("criteriaFileName"),
             }
@@ -643,6 +644,24 @@ async def activate_competition(
 
     if cycle.status == CompetitionStatus.ACTIVE:
         return cycle  # idempotent
+
+    from app.services import settings as settings_service
+
+    if not await settings_service.allow_multiple_active_competitions(session):
+        other = (
+            await session.execute(
+                select(Competition.id).where(
+                    Competition.status == CompetitionStatus.ACTIVE,
+                    Competition.id != competition_id,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if other is not None:
+            raise AppError(
+                "MULTIPLE_ACTIVE_NOT_ALLOWED",
+                "Only one competition may be active at a time. Close or deactivate the current active competition first.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
 
     ok, issues = await validate_competition(session, competition_id)
     if not ok:

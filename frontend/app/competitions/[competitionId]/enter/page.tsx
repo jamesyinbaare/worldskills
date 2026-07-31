@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
   getPublicCompetition,
@@ -12,25 +12,30 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
-  formatCompetitionDate,
-  loginNextHref,
   registerPath,
+  signupNextHref,
 } from "@/components/competitions/format";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
+/**
+ * Legacy entry URL. When a skill is selected, skip the chooser and send
+ * competitors straight to signup (or the registration form if signed in).
+ */
 function EnterContent() {
   const params = useParams<{ competitionId: string }>();
   const competitionId = params.competitionId;
   const searchParams = useSearchParams();
   const skillIdParam = searchParams.get("skillId");
+  const router = useRouter();
   const { status, me } = useAuth();
 
   const [cycle, setCycle] = useState<PublicCompetitionOut | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [checkedRegistration, setCheckedRegistration] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,11 +73,14 @@ function EnterContent() {
   }, [competitionId]);
 
   useEffect(() => {
+    if (status === "loading") return;
     if (status !== "authenticated" || !isCompetitorRole(me?.role ?? "")) {
       setAlreadyRegistered(false);
+      setCheckedRegistration(true);
       return;
     }
     let cancelled = false;
+    setCheckedRegistration(false);
     void (async () => {
       try {
         const rows = await listMyRegistrations();
@@ -82,6 +90,8 @@ function EnterContent() {
         );
       } catch {
         if (!cancelled) setAlreadyRegistered(false);
+      } finally {
+        if (!cancelled) setCheckedRegistration(true);
       }
     })();
     return () => {
@@ -107,27 +117,49 @@ function EnterContent() {
     competitionId,
     effectiveSkillId,
   );
-  const institutionRegister = registerPath(
-    "institution",
-    competitionId,
-    effectiveSkillId,
-  );
   const competitorDashboard = `/competitor/competitions/${competitionId}`;
 
-  const competitorHref = alreadyRegistered
-    ? competitorDashboard
-    : status === "authenticated"
-      ? competitorRegister
-      : loginNextHref(competitorRegister);
-  const institutionHref =
-    status === "authenticated"
-      ? institutionRegister
-      : loginNextHref(institutionRegister);
+  const destination = useMemo(() => {
+    if (alreadyRegistered) return competitorDashboard;
+    if (status === "authenticated" && isCompetitorRole(me?.role ?? "")) {
+      return competitorRegister;
+    }
+    return signupNextHref(competitorRegister);
+  }, [
+    alreadyRegistered,
+    competitorDashboard,
+    competitorRegister,
+    me?.role,
+    status,
+  ]);
+
+  useEffect(() => {
+    if (loading || error || !cycle || status === "loading") return;
+    if (!checkedRegistration) return;
+    // Prefer skill browse when multiple skills and none selected
+    if (!effectiveSkillId && cycle.skills.length >= 1) {
+      router.replace(`/competitions/${competitionId}/skills`);
+      return;
+    }
+    router.replace(destination);
+  }, [
+    loading,
+    error,
+    cycle,
+    status,
+    checkedRegistration,
+    effectiveSkillId,
+    competitionId,
+    destination,
+    router,
+  ]);
 
   const skillsBack =
-    cycle && cycle.skills.length >= 2
-      ? `/competitions/${competitionId}/skills`
-      : "/competitions";
+    skillIdParam
+      ? `/competitions/${competitionId}/skills/${encodeURIComponent(skillIdParam)}`
+      : cycle && cycle.skills.length >= 2
+        ? `/competitions/${competitionId}/skills`
+        : "/competitions";
 
   return (
     <div className="bg-competitions-atmosphere min-h-[calc(100dvh-var(--site-header-height))]">
@@ -135,15 +167,17 @@ function EnterContent() {
         <Button variant="link" className="h-auto min-h-11 px-0" asChild>
           <Link href={skillsBack}>
             ←{" "}
-            {cycle && cycle.skills.length >= 2
-              ? "Back to skill areas"
-              : "Back to competitions"}
+            {skillIdParam
+              ? "Back to skill area"
+              : cycle && cycle.skills.length >= 2
+                ? "Back to skill areas"
+                : "Back to competitions"}
           </Link>
         </Button>
 
-        {loading ? (
+        {loading || !error ? (
           <p className="mt-8 text-sm text-muted-foreground" role="status">
-            Loading…
+            Continuing to registration…
           </p>
         ) : null}
 
@@ -157,103 +191,6 @@ function EnterContent() {
               now.
             </AlertDescription>
           </Alert>
-        ) : null}
-
-        {cycle ? (
-          <div className="animate-comp-fade mt-6 space-y-10">
-            <header className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue/70">
-                Begin registration
-              </p>
-              <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
-                {cycle.name}
-              </h1>
-              <p className="text-sm text-muted-foreground sm:text-base">
-                {formatCompetitionDate(cycle.period.start)} →{" "}
-                {formatCompetitionDate(cycle.period.end)}
-                {cycle.window?.closesAt
-                  ? ` · Registration closes ${formatCompetitionDate(cycle.window.closesAt)}`
-                  : null}
-              </p>
-            </header>
-
-            {cycle.description?.trim() ? (
-              <section className="space-y-3" aria-labelledby="about-heading">
-                <h2
-                  id="about-heading"
-                  className="text-lg font-semibold tracking-tight text-foreground"
-                >
-                  About this competition
-                </h2>
-                <div className="whitespace-pre-wrap text-base leading-relaxed text-foreground/90">
-                  {cycle.description}
-                </div>
-              </section>
-            ) : null}
-
-            {selectedSkill ? (
-              <section
-                className="rounded-2xl bg-card p-5 ring-1 ring-border"
-                aria-labelledby="selected-skill-heading"
-              >
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Selected skill area
-                </p>
-                <h2
-                  id="selected-skill-heading"
-                  className="mt-2 text-xl font-bold tracking-tight text-primary"
-                >
-                  {selectedSkill.name}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {[
-                    selectedSkill.number && `Skill ${selectedSkill.number}`,
-                    selectedSkill.familyName,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-              </section>
-            ) : null}
-
-            <section className="space-y-4 rounded-2xl bg-card p-6 ring-1 ring-border">
-              <div>
-                <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                  How are you entering?
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {alreadyRegistered
-                    ? "You are already registered for this competition. Open your dashboard to continue."
-                    : "Sign in or create an account if needed, then complete the registration form."}
-                </p>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Button
-                  size="lg"
-                  className="min-h-11 flex-1"
-                  asChild
-                  data-testid="register-as-competitor"
-                >
-                  <Link href={competitorHref}>
-                    {alreadyRegistered
-                      ? "Go to my competition"
-                      : "Register as competitor"}
-                  </Link>
-                </Button>
-                {!alreadyRegistered ? (
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="min-h-11 flex-1"
-                    asChild
-                    data-testid="register-as-institution"
-                  >
-                    <Link href={institutionHref}>Register as institution</Link>
-                  </Button>
-                ) : null}
-              </div>
-            </section>
-          </div>
         ) : null}
       </div>
     </div>

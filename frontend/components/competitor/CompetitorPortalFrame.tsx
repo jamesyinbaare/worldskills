@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { CompetitorShell } from "@/components/competitor/CompetitorShell";
 import {
   ApiError,
@@ -12,36 +13,43 @@ type CompetitorPortalFrameProps = {
   children: ReactNode;
 };
 
+function isRegistrationFlowPath(pathname: string): boolean {
+  return pathname.includes("/register");
+}
+
 /**
- * Loads the competitor's registrations and wraps portal pages in a sidenav
- * shell when they have at least one registration.
+ * Wraps competitor portal pages in the sidenav shell.
+ * Registration/confirmation keep a cleaner full-width layout (no sidebar).
  */
 export function CompetitorPortalFrame({ children }: CompetitorPortalFrameProps) {
+  const pathname = usePathname();
   const [registrations, setRegistrations] = useState<MyRegistrationOut[] | null>(
     null,
   );
-  const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const rows = await listMyRegistrations();
-        if (!cancelled) {
-          setRegistrations(rows);
-          setError(null);
-        }
+        if (!cancelled) setRegistrations(rows);
       } catch (err) {
         if (!cancelled) {
           setRegistrations([]);
-          if (err instanceof ApiError) setError(err);
+          if (!(err instanceof ApiError)) {
+            /* ignore — pages can still render */
+          }
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
+
+  if (isRegistrationFlowPath(pathname)) {
+    return <>{children}</>;
+  }
 
   if (registrations === null) {
     return (
@@ -53,15 +61,7 @@ export function CompetitorPortalFrame({ children }: CompetitorPortalFrameProps) 
     );
   }
 
-  if (error && registrations.length === 0) {
-    // Fall through to hub without shell; pages can still work / show errors.
-  }
-
-  if (registrations.length > 0) {
-    return (
-      <CompetitorShell registrations={registrations}>{children}</CompetitorShell>
-    );
-  }
-
-  return <>{children}</>;
+  return (
+    <CompetitorShell registrations={registrations}>{children}</CompetitorShell>
+  );
 }

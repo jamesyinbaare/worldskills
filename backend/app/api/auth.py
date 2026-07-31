@@ -263,7 +263,15 @@ async def register_institution(
     request: Request,
 ) -> RegisterResponse:
     """US-SEC-04 — Claim an existing school as the primary INSTITUTION contact."""
+    from app.services import settings as settings_service
+
     ip, ua = client_meta(request)
+    if not await settings_service.institution_registration_enabled(session):
+        raise AppError(
+            "INSTITUTION_REGISTRATION_DISABLED",
+            "Institution registration is currently disabled",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
     _check_abuse(payload.captcha_token)
 
     email = payload.email.strip().lower()

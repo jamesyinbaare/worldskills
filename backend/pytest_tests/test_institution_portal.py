@@ -28,6 +28,7 @@ from app.models import (
 from pytest_tests.conftest import (
     competition_payload,
     create_competitor_account,
+    enable_institution_registration,
     login_as,
     map_region_to_zone,
     region_id_by_name,
@@ -150,6 +151,14 @@ def _payload(ctx: dict[str, uuid.UUID | str], **overrides: object) -> dict:
         "mobile": "+233241234567",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
         "skillIds": [str(ctx["skill_id"])],
+        "coach": {
+            "surname": "Asante",
+            "firstName": "Kojo",
+            "contactNumber": "+233201112233",
+            "email": "coach@example.com",
+            "whatsapp": "+233201112233",
+            "dateOfBirth": "1985-04-12",
+        },
         "declarationAccepted": True,
         "photo": {"contentBase64": _PNG_1X1, "contentType": "image/png"},
         "captchaToken": "ok",
@@ -160,8 +169,9 @@ def _payload(ctx: dict[str, uuid.UUID | str], **overrides: object) -> dict:
 
 
 async def _claim_institution(
-    client: AsyncClient, school_code: str
+    client: AsyncClient, session_manager: DBManager, school_code: str
 ) -> dict[str, str]:
+    await enable_institution_registration(session_manager)
     email = f"head-{uuid.uuid4().hex[:8]}@school.edu"
     resp = await client.post(
         "/auth/register-institution",
@@ -231,7 +241,7 @@ async def test_institution_registration_enforces_skill_quota(
 ) -> None:
     competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed(session_manager, competition_id, limit=1)
-    inst_headers = await _claim_institution(client, str(ctx["school_code"]))
+    inst_headers = await _claim_institution(client, session_manager, str(ctx["school_code"]))
 
     first = await client.post(
         f"/competitions/{competition_id}/registrations",
@@ -257,7 +267,7 @@ async def test_institution_portal_roster_and_quotas(
 ) -> None:
     competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed(session_manager, competition_id, limit=3)
-    inst_headers = await _claim_institution(client, str(ctx["school_code"]))
+    inst_headers = await _claim_institution(client, session_manager, str(ctx["school_code"]))
 
     created = await client.post(
         f"/competitions/{competition_id}/registrations",
@@ -313,7 +323,7 @@ async def test_institution_competitions_catalog_excludes_draft(
         draft_cycle.status = CompetitionStatus.DRAFT
         await session.commit()
 
-    inst_headers = await _claim_institution(client, str(active_ctx["school_code"]))
+    inst_headers = await _claim_institution(client, session_manager, str(active_ctx["school_code"]))
 
     resp = await client.get("/institutions/me/competitions", headers=inst_headers)
     assert resp.status_code == 200, resp.text

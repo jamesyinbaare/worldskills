@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ApiError, homeForRole, registerAccount } from "@/lib/api";
+import {
+  ApiError,
+  getPublicSettings,
+  registerAccount,
+  resolvePostAuthPath,
+} from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
 import {
@@ -57,6 +62,7 @@ function SignupContent() {
   const [error, setError] = useState<ApiError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
+  const [institutionSignupEnabled, setInstitutionSignupEnabled] = useState(false);
 
   const loginHref = nextPath
     ? `/login?next=${encodeURIComponent(nextPath)}`
@@ -64,6 +70,23 @@ function SignupContent() {
   const institutionSignupHref = nextPath
     ? `/signup/institution?next=${encodeURIComponent(nextPath)}`
     : "/signup/institution";
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await getPublicSettings();
+        if (!cancelled) {
+          setInstitutionSignupEnabled(settings.institutionRegistrationEnabled);
+        }
+      } catch {
+        if (!cancelled) setInstitutionSignupEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -80,7 +103,10 @@ function SignupContent() {
       });
       await refresh();
       router.push(
-        nextPath ?? homeForRole(me.role, Boolean(me.must_change_password)),
+        await resolvePostAuthPath(me.role, {
+          nextPath,
+          mustChangePassword: Boolean(me.must_change_password),
+        }),
       );
     } catch (err) {
       if (err instanceof ApiError) {
@@ -207,15 +233,17 @@ function SignupContent() {
                 Sign in
               </Link>
             </p>
-            <p className="text-sm text-muted-foreground">
-              Registering students for a school?{" "}
-              <Link
-                href={institutionSignupHref}
-                className="font-medium text-primary underline underline-offset-2"
-              >
-                Claim a school account
-              </Link>
-            </p>
+            {institutionSignupEnabled ? (
+              <p className="text-sm text-muted-foreground">
+                Registering students for a school?{" "}
+                <Link
+                  href={institutionSignupHref}
+                  className="font-medium text-primary underline underline-offset-2"
+                >
+                  Claim a school account
+                </Link>
+              </p>
+            ) : null}
             <Button variant="link" className="min-h-11 justify-start px-0" asChild>
               <Link href="/">Back to home</Link>
             </Button>

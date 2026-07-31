@@ -447,3 +447,91 @@ async def test_US_SUB_02_open_blocked_before_opens_at(
     body = resp.json()["error"]
     assert body["code"] == "WINDOW_CLOSED"
     assert any(f["name"] == "opensAt" and f["reason"] == "WINDOW_CLOSED" for f in body["fields"])
+
+
+@pytest.mark.asyncio
+async def test_resubmit_allowed_before_deadline(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+    competitor_user: User,
+) -> None:
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    stage_id, _ = await _seed_submission_world(
+        session_manager, competition_id, competitor_user, closes_in_hours=24
+    )
+    headers = await _competitor_headers(client, competitor_user)
+    sub_id = await _open_submission(client, headers, competition_id, stage_id)
+
+    assert (
+        await _upload(client, headers, sub_id, code="main", filename="work.pdf", data=b"%PDF-a")
+    ).status_code == 202
+    assert (
+        await _upload(client, headers, sub_id, code="photo", filename="shot.jpg", data=b"\xff\xd8jpeg")
+    ).status_code == 202
+
+    fin = await client.post(f"/submissions/{sub_id}:finalise", headers=headers)
+    assert fin.status_code == 200, fin.text
+    assert fin.json()["state"] == "ACCEPTED"
+    first_receipt = fin.json()["receipt"]
+
+    blocked = await _upload(
+        client, headers, sub_id, code="main", filename="work2.pdf", data=b"%PDF-b"
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "SUBMISSION_LOCKED"
+
+    reopen = await client.post(f"/submissions/{sub_id}:reopen", headers=headers)
+    assert reopen.status_code == 200, reopen.text
+    assert reopen.json()["uploadLocked"] is False
+    assert reopen.json()["state"] == "UPLOADED"
+
+    replaced = await _upload(
+        client, headers, sub_id, code="main", filename="work2.pdf", data=b"%PDF-replaced"
+    )
+    assert replaced.status_code == 202, replaced.text
+
+    fin2 = await client.post(f"/submissions/{sub_id}:finalise", headers=headers)
+    assert fin2.status_code == 200, fin2.text
+    assert fin2.json()["state"] == "ACCEPTED"
+    assert fin2.json()["receipt"] != first_receipt
+    assert fin2.json()["hash"] != fin.json()["hash"]
+
+
+@pytest.mark.asyncio
+async def test_resubmit_blocked_after_deadline(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+    competitor_user: User,
+) -> None:
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    stage_id, _ = await _seed_submission_world(
+        session_manager, competition_id, competitor_user, closes_in_hours=24
+    )
+    headers = await _competitor_headers(client, competitor_user)
+    sub_id = await _open_submission(client, headers, competition_id, stage_id)
+
+    assert (
+        await _upload(client, headers, sub_id, code="main", filename="work.pdf", data=b"%PDF-a")
+    ).status_code == 202
+    assert (
+        await _upload(client, headers, sub_id, code="photo", filename="shot.jpg", data=b"\xff\xd8jpeg")
+    ).status_code == 202
+    fin = await client.post(f"/submissions/{sub_id}:finalise", headers=headers)
+    assert fin.status_code == 200, fin.text
+
+    async with session_manager.session() as session:
+        from app.models import Stage
+
+        stage = await session.get(Stage, stage_id)
+        assert stage is not None
+        stage.closes_at = datetime.utcnow() - timedelta(hours=1)
+        sub = await session.get(Submission, sub_id)
+        assert sub is not None
+        sub.deadline_at = stage.closes_at
+        await session.commit()
+
+    reopen = await client.post(f"/submissions/{sub_id}:reopen", headers=headers)
+    assert reopen.status_code == 409, reopen.text
+    assert reopen.json()["error"]["code"] == "DEADLINE_PASSED"

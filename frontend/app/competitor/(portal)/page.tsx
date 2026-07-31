@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowRightIcon, TrophyIcon } from "lucide-react";
 import {
   ApiError,
+  competitionRegisterHref,
   downloadSkillCriteriaDocument,
   getMyStages,
+  isDraftRegistrationStatus,
   listMyRegistrations,
   listOpenCompetitions,
   triggerBrowserDownload,
@@ -62,11 +65,24 @@ function buildNextActions(
 ): NextAction[] {
   const actions: NextAction[] = [];
   for (const reg of registrations) {
-    if (!reg.consentParticipationAt) {
+    if (reg.status?.toUpperCase() === "DRAFT") {
+      actions.push({
+        key: `draft-${reg.competitionId}`,
+        title: "Continue application",
+        description: `Finish your registration for ${reg.competitionName}.`,
+        href: competitionRegisterHref(reg.competitionId),
+        cta: "Continue application",
+      });
+      continue;
+    }
+    if (
+      !reg.consentParticipationAt &&
+      (reg.flags ?? []).some((f) => f.toUpperCase() === "CONSENT_PENDING")
+    ) {
       actions.push({
         key: `consent-${reg.competitorId}`,
         title: "Guardian consent",
-        description: `Confirm participation consent for ${reg.competitionName}.`,
+        description: `Optional: upload a signed consent form for ${reg.competitionName}.`,
         href: `/competitor/competitors/${reg.competitorId}/consent`,
         cta: "Open consent",
       });
@@ -81,7 +97,14 @@ function buildNextActions(
         ["ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"].includes(
           (stage.submission.state || "").toUpperCase(),
         );
-      if (locked) continue;
+      const deadlineOpen = (() => {
+        // Prefer stage closesAt from pathway; submission may not expose deadline here.
+        if (!stage.closesAt) return !locked;
+        const closes = new Date(stage.closesAt).getTime();
+        if (Number.isNaN(closes)) return false;
+        return closes > Date.now();
+      })();
+      if (locked && !deadlineOpen) continue;
       const cta = stageCta(stage);
       if (!cta) continue;
       actions.push({
@@ -89,7 +112,7 @@ function buildNextActions(
         title: stage.exerciseTitle || stage.name,
         description: `${reg.competitionName} · Stage ${stage.order} · ${reg.skillName}`,
         href: `/competitor/competitions/${reg.competitionId}${cta.hrefSuffix}`,
-        cta: cta.label,
+        cta: locked && deadlineOpen ? "Update submission" : cta.label,
       });
     }
   }
@@ -112,15 +135,19 @@ function formatRegistrationWindow(
 function OpenCompetitionCards({
   cycles,
   registeredIds,
+  draftIds,
 }: {
   cycles: OpenCompetitionOut[];
   registeredIds: Set<string>;
+  draftIds?: Set<string>;
 }) {
   return (
     <ul className="space-y-3">
       {cycles.map((c) => {
         const windowLabel = formatRegistrationWindow(c.window);
-        const alreadyRegistered = registeredIds.has(c.competitionId);
+        const isDraft = draftIds?.has(c.competitionId) ?? false;
+        const alreadyRegistered =
+          registeredIds.has(c.competitionId) && !isDraft;
         return (
           <li key={c.competitionId}>
             <Card className="border-border/80 shadow-sm">
@@ -134,14 +161,33 @@ function OpenCompetitionCards({
                       {c.name}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      {alreadyRegistered
-                        ? "You are already registered"
-                        : (windowLabel ?? "Registration window open")}
+                      {isDraft
+                        ? "Draft application in progress"
+                        : alreadyRegistered
+                          ? "You are already registered"
+                          : (windowLabel ?? "Registration window open")}
                     </p>
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
-                  {alreadyRegistered ? (
+                  {isDraft ? (
+                    <Button
+                      size="lg"
+                      className="min-h-12 w-full gap-2 sm:w-auto sm:min-w-44"
+                      asChild
+                    >
+                      <Link
+                        href={competitionRegisterHref(c.competitionId)}
+                        data-testid={`competitor-continue-draft-${c.competitionId}`}
+                      >
+                        Continue application
+                        <ArrowRightIcon
+                          className="size-4 opacity-70"
+                          aria-hidden
+                        />
+                      </Link>
+                    </Button>
+                  ) : alreadyRegistered ? (
                     <Button
                       size="lg"
                       className="min-h-12 w-full gap-2 sm:w-auto sm:min-w-44"
@@ -165,7 +211,7 @@ function OpenCompetitionCards({
                       asChild
                     >
                       <Link
-                        href={`/competitor/competitions/${c.competitionId}/register`}
+                        href={competitionRegisterHref(c.competitionId)}
                         data-testid={`competitor-register-${c.competitionId}`}
                       >
                         Register
@@ -215,8 +261,11 @@ function RegisteredOverview({
     void (async () => {
       setLoadingStages(true);
       try {
+        const activeRegs = registrations.filter(
+          (reg) => reg.status?.toUpperCase() !== "DRAFT",
+        );
         const entries = await Promise.all(
-          registrations.map(async (reg) => {
+          activeRegs.map(async (reg) => {
             const stages = await getMyStages(reg.competitionId);
             return [reg.competitionId, stages] as const;
           }),
@@ -255,7 +304,16 @@ function RegisteredOverview({
   }, []);
 
   const nextActions = buildNextActions(registrations, stageMaps);
-  const registeredIds = new Set(registrations.map((r) => r.competitionId));
+  const draftIds = new Set(
+    registrations
+      .filter((r) => r.status?.toUpperCase() === "DRAFT")
+      .map((r) => r.competitionId),
+  );
+  const registeredIds = new Set(
+    registrations
+      .filter((r) => r.status?.toUpperCase() !== "DRAFT")
+      .map((r) => r.competitionId),
+  );
 
   return (
     <PageShell width="wide" className="space-y-8">
@@ -299,6 +357,7 @@ function RegisteredOverview({
         <h2 className="text-lg font-semibold">My competitions</h2>
         <ul className="space-y-3">
           {registrations.map((reg) => {
+            const isDraft = reg.status?.toUpperCase() === "DRAFT";
             const pathway = stageMaps[reg.competitionId];
             const openCount =
               pathway?.stages.filter(
@@ -315,8 +374,10 @@ function RegisteredOverview({
                         {reg.competitionName}
                       </h3>
                       <CardDescription>
-                        {reg.skillName}
-                        {openCount > 0
+                        {isDraft
+                          ? "Draft application"
+                          : reg.skillName}
+                        {!isDraft && openCount > 0
                           ? ` · ${openCount} open stage${openCount === 1 ? "" : "s"}`
                           : null}
                       </CardDescription>
@@ -324,19 +385,33 @@ function RegisteredOverview({
                     <StatusBadge status={reg.status} />
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-2">
-                    <Button
-                      variant="secondary"
-                      className="min-h-11"
-                      asChild
-                      data-testid={`open-competition-${reg.competitionId}`}
-                    >
-                      <Link
-                        href={`/competitor/competitions/${reg.competitionId}`}
+                    {isDraft ? (
+                      <Button
+                        className="min-h-11"
+                        asChild
+                        data-testid={`continue-draft-${reg.competitionId}`}
                       >
-                        View stages
-                      </Link>
-                    </Button>
-                    {reg.hasCriteriaDocument ? (
+                        <Link
+                          href={competitionRegisterHref(reg.competitionId)}
+                        >
+                          Continue application
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        className="min-h-11"
+                        asChild
+                        data-testid={`open-competition-${reg.competitionId}`}
+                      >
+                        <Link
+                          href={`/competitor/competitions/${reg.competitionId}`}
+                        >
+                          View stages
+                        </Link>
+                      </Button>
+                    )}
+                    {!isDraft && reg.hasCriteriaDocument && reg.skillId ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -344,14 +419,16 @@ function RegisteredOverview({
                         disabled={criteriaPendingId === reg.skillId}
                         data-testid={`download-criteria-${reg.skillId}`}
                         onClick={() => {
+                          const skillId = reg.skillId;
+                          if (!skillId) return;
                           void (async () => {
-                            setCriteriaPendingId(reg.skillId);
+                            setCriteriaPendingId(skillId);
                             setError(null);
                             try {
                               const { blob, filename } =
                                 await downloadSkillCriteriaDocument(
                                   reg.competitionId,
-                                  reg.skillId,
+                                  skillId,
                                 );
                               triggerBrowserDownload(blob, filename);
                             } catch (err) {
@@ -399,6 +476,7 @@ function RegisteredOverview({
           <OpenCompetitionCards
             cycles={openCycles}
             registeredIds={registeredIds}
+            draftIds={draftIds}
           />
         ) : null}
       </section>
@@ -480,20 +558,33 @@ function UnregisteredHub() {
 }
 
 export default function CompetitorHomePage() {
+  const router = useRouter();
   const [registrations, setRegistrations] = useState<MyRegistrationOut[] | null>(
     null,
   );
   const [error, setError] = useState<ApiError | null>(null);
+  const [resumingDraft, setResumingDraft] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const rows = await listMyRegistrations();
-        if (!cancelled) {
-          setRegistrations(rows);
-          setError(null);
+        if (cancelled) return;
+
+        const drafts = rows.filter((r) => isDraftRegistrationStatus(r.status));
+        const submitted = rows.filter(
+          (r) => !isDraftRegistrationStatus(r.status),
+        );
+        // Incomplete registration only: resume wizard instead of dashboard.
+        if (drafts.length > 0 && submitted.length === 0) {
+          setResumingDraft(true);
+          router.replace(competitionRegisterHref(drafts[0].competitionId));
+          return;
         }
+
+        setRegistrations(rows);
+        setError(null);
       } catch (err) {
         if (!cancelled) {
           setRegistrations([]);
@@ -504,13 +595,15 @@ export default function CompetitorHomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
-  if (registrations === null) {
+  if (resumingDraft || registrations === null) {
     return (
       <PageShell width="narrow" className="space-y-6">
         <p className="text-sm text-muted-foreground" role="status">
-          Loading…
+          {resumingDraft
+            ? "Continuing your application…"
+            : "Loading…"}
         </p>
       </PageShell>
     );

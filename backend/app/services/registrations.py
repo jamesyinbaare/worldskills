@@ -24,8 +24,11 @@ from app.models import (
     UserRole,
 )
 from app.schemas.registrations import (
+    CoachBioIn,
     FormFieldOut,
     RegistrationCreate,
+    RegistrationDraftIn,
+    RegistrationDraftOut,
     RegistrationFormAdminOut,
     RegistrationFormAdminUpdate,
     RegistrationFormOut,
@@ -34,7 +37,7 @@ from app.schemas.registrations import (
     RegistrationWindowUpdate,
 )
 from app.services.audit import write_audit_event
-from app.services.consent import apply_minor_gate_on_registration, can_progress_past_pending_review
+from app.services.consent import apply_minor_gate_on_registration
 from app.services.eligibility import screen_competitor
 from app.services.geography import resolve_zone_for_registration
 from app.services.nominations import enqueue_notification
@@ -50,7 +53,8 @@ _CAPTCHA_OK = {"ok", "valid", "pass"}
 _CAPTCHA_RATE = {"rate-limited", "rate_limit"}
 
 ALLOWED_GENDERS = frozenset({"Male", "Female"})
-_QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN"})
+_QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN", "DRAFT"})
+_DRAFT_STATUS = "DRAFT"
 _GENDER_FIELD = {
     "name": "gender",
     "type": "enum",
@@ -273,6 +277,70 @@ def _validate_against_form(form: RegistrationFormDefinition, payload: Registrati
     return errors
 
 
+def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]:
+    """Coach bio-data is always required for competitor registration."""
+    raw = payload.coach
+    if raw is None:
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach / team leader details are required",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("coach", "REQUIRED")],
+        )
+    try:
+        if isinstance(raw, CoachBioIn):
+            coach = raw
+        else:
+            coach = CoachBioIn.model_validate(raw)
+    except Exception as exc:
+        fields: list[FieldError] = []
+        from pydantic import ValidationError
+
+        if isinstance(exc, ValidationError):
+            for err in exc.errors():
+                loc = err.get("loc") or ()
+                name = str(loc[0]) if loc else "coach"
+                fields.append(FieldError(f"coach.{name}", "REQUIRED"))
+        if not fields:
+            fields = [FieldError("coach", "REQUIRED")]
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach / team leader details are incomplete or invalid",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=fields,
+        ) from exc
+
+    if coach.dateOfBirth >= date.today():
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach date of birth is invalid",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("coach.dateOfBirth", "INVALID_DATE")],
+        )
+    if not _PHONE_RE.match(coach.contactNumber.replace(" ", "")):
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach contact number is invalid",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("coach.contactNumber", "PHONE_INVALID")],
+        )
+    if not _PHONE_RE.match(coach.whatsapp.replace(" ", "")):
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach WhatsApp number is invalid",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("coach.whatsapp", "PHONE_INVALID")],
+        )
+    if not _EMAIL_RE.match(coach.email):
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Coach email is invalid",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("coach.email", "EMAIL_INVALID")],
+        )
+    return coach.model_dump(mode="json")
+
+
 def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreate) -> tuple[bytes, str] | None:
     # Photo required if listed in form
     photo_required = any(f.get("name") == "photo" and f.get("required") for f in (form.fields or []))
@@ -365,6 +433,438 @@ async def _enforce_institution_nomination_quota(
             fields=[FieldError("skillIds", "NOMINATION_LIMIT_REACHED")],
         )
 
+async def _find_competitor_draft_for_user(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Competitor | None:
+    return (
+        await session.execute(
+            select(Competitor).where(
+                Competitor.competition_id == competition_id,
+                Competitor.user_id == user_id,
+                Competitor.status == _DRAFT_STATUS,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _find_competitor_for_user(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> Competitor | None:
+    return (
+        await session.execute(
+            select(Competitor).where(
+                Competitor.competition_id == competition_id,
+                Competitor.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _draft_payload_dict(competitor: Competitor) -> dict[str, Any]:
+    raw = competitor.registration_payload
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+async def _draft_out(session: AsyncSession, competitor: Competitor) -> RegistrationDraftOut:
+    payload = _draft_payload_dict(competitor)
+    skill_ids_raw = payload.get("skillIds") or []
+    skill_ids: list[uuid.UUID] = []
+    for item in skill_ids_raw:
+        try:
+            skill_ids.append(uuid.UUID(str(item)))
+        except (ValueError, TypeError):
+            continue
+    if not skill_ids and competitor.skill_id is not None:
+        skill_ids = [competitor.skill_id]
+
+    has_passport = payload.get("hasPassport")
+    if has_passport is None:
+        has_passport = bool(competitor.has_passport) if competitor.has_passport else None
+
+    coach = competitor.coach if isinstance(competitor.coach, dict) else payload.get("coach")
+    if coach is not None and not isinstance(coach, dict):
+        coach = None
+
+    current_step = payload.get("currentStep")
+    try:
+        step_out = int(current_step) if current_step is not None else None
+    except (TypeError, ValueError):
+        step_out = None
+
+    updated = competitor.updated_at or _now()
+
+    institution_name: str | None = None
+    institution_code: str | None = None
+    if competitor.institution_id is not None:
+        inst = await session.get(Institution, competitor.institution_id)
+        if inst is not None:
+            institution_name = inst.name
+            institution_code = inst.code
+    if not institution_name and isinstance(payload.get("institutionName"), str):
+        institution_name = payload["institutionName"] or None
+    if not institution_code and isinstance(payload.get("institutionCode"), str):
+        institution_code = payload["institutionCode"] or None
+
+    return RegistrationDraftOut(
+        competitorId=competitor.id,
+        status=competitor.status,
+        updatedAt=updated,
+        currentStep=step_out,
+        givenNames=competitor.given_names or payload.get("givenNames"),
+        familyName=competitor.family_name or payload.get("familyName"),
+        gender=competitor.gender or payload.get("gender"),
+        dateOfBirth=competitor.date_of_birth
+        or (
+            date.fromisoformat(payload["dateOfBirth"])
+            if isinstance(payload.get("dateOfBirth"), str)
+            else payload.get("dateOfBirth")
+        ),
+        email=competitor.email or payload.get("email"),
+        mobile=competitor.mobile or payload.get("mobile"),
+        whatsapp=competitor.whatsapp or payload.get("whatsapp"),
+        nationalId=competitor.national_id or payload.get("nationalId"),
+        nationality=competitor.nationality or payload.get("nationality"),
+        hasPassport=has_passport,
+        passportNumber=competitor.passport_number or payload.get("passportNumber"),
+        passportExpiresOn=competitor.passport_expires_on
+        or (
+            date.fromisoformat(payload["passportExpiresOn"])
+            if isinstance(payload.get("passportExpiresOn"), str)
+            else payload.get("passportExpiresOn")
+        ),
+        institutionId=competitor.institution_id
+        or (
+            uuid.UUID(str(payload["institutionId"]))
+            if payload.get("institutionId")
+            else None
+        ),
+        regionId=competitor.region_id
+        or (uuid.UUID(str(payload["regionId"])) if payload.get("regionId") else None),
+        skillIds=skill_ids,
+        coach=coach,
+        declarationAccepted=payload.get("declarationAccepted"),
+        hasPhoto=bool(competitor.photo_key),
+        institutionName=institution_name,
+        institutionCode=institution_code,
+        guardianName=competitor.guardian_name or payload.get("guardianName"),
+        guardianEmail=competitor.guardian_email or payload.get("guardianEmail"),
+        guardianPhone=competitor.guardian_phone or payload.get("guardianPhone"),
+    )
+
+
+async def get_registration_draft(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+) -> RegistrationDraftOut:
+    if actor.role != UserRole.COMPETITOR:
+        raise AppError(
+            "FORBIDDEN",
+            "Only competitors may load registration drafts",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    draft = await _find_competitor_draft_for_user(session, competition_id, actor.id)
+    if draft is None:
+        raise AppError(
+            "DRAFT_NOT_FOUND",
+            "No registration draft found for this competition",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return await _draft_out(session, draft)
+
+
+async def upsert_registration_draft(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    payload: RegistrationDraftIn,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    storage: ObjectStorage | None = None,
+) -> RegistrationDraftOut:
+    if actor.role != UserRole.COMPETITOR:
+        raise AppError(
+            "FORBIDDEN",
+            "Only competitors may save registration drafts",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    form, window = await load_form_config(session, competition_id)
+    if not _window_open(window):
+        raise AppError(
+            "WINDOW_CLOSED",
+            "Registration window is closed",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("window", "WINDOW_CLOSED")],
+        )
+
+    existing = await _find_competitor_for_user(session, competition_id, actor.id)
+    if existing is not None and existing.status != _DRAFT_STATUS:
+        raise AppError(
+            "DUPLICATE",
+            "You already have a registration for this competition",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("userId", "DUPLICATE")],
+        )
+
+    draft = existing
+    if draft is None:
+        draft = Competitor(
+            competition_id=competition_id,
+            user_id=actor.id,
+            skill_id=None,
+            zone_id=None,
+            region_id=None,
+            institution_id=None,
+            ref_no=None,
+            status=_DRAFT_STATUS,
+            flags=[],
+            registration_payload={},
+            has_passport=False,
+            enrolment_attested=False,
+            public_profile_visible=False,
+            updated_at=_now(),
+        )
+        session.add(draft)
+        await session.flush()
+
+    data = payload.model_dump(exclude_unset=True)
+    payload_json = _draft_payload_dict(draft)
+
+    if "givenNames" in data:
+        draft.given_names = (data["givenNames"] or "").strip() or None
+        payload_json["givenNames"] = draft.given_names
+    if "familyName" in data:
+        draft.family_name = (data["familyName"] or "").strip() or None
+        payload_json["familyName"] = draft.family_name
+    if "gender" in data:
+        draft.gender = data["gender"]
+        payload_json["gender"] = data["gender"]
+    if "dateOfBirth" in data:
+        draft.date_of_birth = data["dateOfBirth"]
+        payload_json["dateOfBirth"] = (
+            data["dateOfBirth"].isoformat() if data["dateOfBirth"] else None
+        )
+    if "email" in data:
+        draft.email = (data["email"] or "").strip().lower() or None
+        payload_json["email"] = draft.email
+    if "mobile" in data:
+        draft.mobile = (data["mobile"] or "").strip() or None
+        payload_json["mobile"] = draft.mobile
+    if "whatsapp" in data:
+        draft.whatsapp = (data["whatsapp"] or "").strip() or None
+        payload_json["whatsapp"] = draft.whatsapp
+    if "nationalId" in data:
+        draft.national_id = (data["nationalId"] or "").strip() or None
+        payload_json["nationalId"] = draft.national_id
+    if "nationality" in data:
+        draft.nationality = (data["nationality"] or "").strip().upper() or None
+        payload_json["nationality"] = draft.nationality
+    if "hasPassport" in data:
+        draft.has_passport = bool(data["hasPassport"]) if data["hasPassport"] is not None else False
+        payload_json["hasPassport"] = data["hasPassport"]
+        if data["hasPassport"] is False:
+            draft.passport_number = None
+            draft.passport_expires_on = None
+            payload_json["passportNumber"] = None
+            payload_json["passportExpiresOn"] = None
+    if "passportNumber" in data:
+        draft.passport_number = (data["passportNumber"] or "").strip() or None
+        payload_json["passportNumber"] = draft.passport_number
+    if "passportExpiresOn" in data:
+        draft.passport_expires_on = data["passportExpiresOn"]
+        payload_json["passportExpiresOn"] = (
+            data["passportExpiresOn"].isoformat() if data["passportExpiresOn"] else None
+        )
+    if "institutionId" in data:
+        draft.institution_id = data["institutionId"]
+        payload_json["institutionId"] = (
+            str(data["institutionId"]) if data["institutionId"] else None
+        )
+        if data["institutionId"] is None:
+            payload_json["institutionName"] = None
+            payload_json["institutionCode"] = None
+        else:
+            inst = await session.get(Institution, data["institutionId"])
+            if inst is not None:
+                payload_json["institutionName"] = inst.name
+                payload_json["institutionCode"] = inst.code
+    if "regionId" in data:
+        draft.region_id = data["regionId"]
+        payload_json["regionId"] = str(data["regionId"]) if data["regionId"] else None
+    if "guardianName" in data:
+        draft.guardian_name = (data["guardianName"] or "").strip() or None
+        payload_json["guardianName"] = draft.guardian_name
+    if "guardianEmail" in data:
+        draft.guardian_email = (data["guardianEmail"] or "").strip() or None
+        payload_json["guardianEmail"] = draft.guardian_email
+    if "guardianPhone" in data:
+        draft.guardian_phone = (data["guardianPhone"] or "").strip() or None
+        payload_json["guardianPhone"] = draft.guardian_phone
+    if "declarationAccepted" in data:
+        payload_json["declarationAccepted"] = data["declarationAccepted"]
+        draft.enrolment_attested = bool(data["declarationAccepted"])
+    if "currentStep" in data and data["currentStep"] is not None:
+        payload_json["currentStep"] = int(data["currentStep"])
+
+    if "skillIds" in data and data["skillIds"] is not None:
+        skill_ids = list(data["skillIds"])
+        payload_json["skillIds"] = [str(s) for s in skill_ids]
+        if skill_ids:
+            skill = await session.get(Skill, skill_ids[0])
+            if skill is not None and skill.competition_id == competition_id and skill.active:
+                draft.skill_id = skill.id
+            else:
+                draft.skill_id = None
+        else:
+            draft.skill_id = None
+
+    if "coach" in data:
+        coach_raw = data["coach"]
+        if coach_raw is None:
+            draft.coach = None
+            payload_json["coach"] = None
+        elif isinstance(coach_raw, dict):
+            cleaned: dict[str, Any] = {}
+            for key, value in coach_raw.items():
+                if isinstance(value, str):
+                    stripped = value.strip()
+                    cleaned[key] = stripped or None
+                elif isinstance(value, date):
+                    cleaned[key] = value.isoformat()
+                else:
+                    cleaned[key] = value
+            draft.coach = cleaned
+            payload_json["coach"] = cleaned
+
+    if "photo" in data and data["photo"] is not None:
+        photo_data = _validate_photo_optional(form, payload.photo)
+        blob, content_type = photo_data
+        ext = "jpg" if "jpeg" in content_type else "png"
+        store = storage or get_object_storage()
+        stored = store.put(
+            blob,
+            prefix=f"cycles/{competition_id}/photos",
+            filename=f"{uuid.uuid4()}.{ext}",
+        )
+        draft.photo_key = stored.key
+        payload_json["hasPhoto"] = True
+        payload_json["photoContentType"] = content_type
+
+    # Best-effort zone resolution when geography fields are present
+    try:
+        region_id, zone_id = await resolve_zone_for_registration(
+            session,
+            competition_id,
+            region_id=draft.region_id,
+            institution_id=draft.institution_id,
+        )
+        if region_id is not None:
+            draft.region_id = region_id
+        if zone_id is not None:
+            draft.zone_id = zone_id
+    except AppError:
+        pass
+
+    draft.status = _DRAFT_STATUS
+    draft.updated_at = _now()
+    draft.registration_payload = payload_json
+
+    await write_audit_event(
+        session,
+        action="REGISTRATION_DRAFT_SAVE",
+        entity_type="Competitor",
+        entity_id=str(draft.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=competition_id,
+        after={"status": _DRAFT_STATUS, "currentStep": payload_json.get("currentStep")},
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(draft)
+    return await _draft_out(session, draft)
+
+
+async def get_registration_draft_photo(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    storage: ObjectStorage | None = None,
+) -> tuple[bytes, str, str]:
+    """Return saved draft photo bytes, content-type, and filename for the actor."""
+    if actor.role != UserRole.COMPETITOR:
+        raise AppError(
+            "FORBIDDEN",
+            "Only competitors may load registration draft photos",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    draft = await _find_competitor_draft_for_user(session, competition_id, actor.id)
+    if draft is None or not draft.photo_key:
+        raise AppError(
+            "DRAFT_PHOTO_NOT_FOUND",
+            "No saved photo on this registration draft",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    store = storage or get_object_storage()
+    try:
+        data = store.get(draft.photo_key)
+    except AppError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise AppError(
+            "FILE_NOT_FOUND",
+            "Draft photo could not be read",
+            status_code=status.HTTP_404_NOT_FOUND,
+        ) from exc
+
+    payload = _draft_payload_dict(draft)
+    content_type = payload.get("photoContentType")
+    if not isinstance(content_type, str) or not content_type:
+        key_lower = draft.photo_key.lower()
+        if key_lower.endswith(".png"):
+            content_type = "image/png"
+        else:
+            content_type = "image/jpeg"
+    ext = "png" if "png" in content_type else "jpg"
+    filename = f"registration-photo.{ext}"
+    return data, content_type, filename
+
+
+def _validate_photo_optional(form: RegistrationFormDefinition, photo) -> tuple[bytes, str]:
+    """Validate provided photo bytes/type without requiring presence."""
+    fake = RegistrationCreate(photo=photo)
+    # Temporarily mark photo as not required
+    original = list(form.fields or [])
+    patched = []
+    for field in original:
+        if str(field.get("name")) == "photo":
+            patched.append({**field, "required": False})
+        else:
+            patched.append(field)
+    form.fields = patched
+    try:
+        result = _validate_photo(form, fake)
+        if result is None:
+            raise AppError(
+                "PHOTO_INVALID",
+                "Photo is invalid",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                fields=[FieldError("photo", "PHOTO_INVALID")],
+            )
+        return result
+    finally:
+        form.fields = original
+
+
 async def create_registration(
     session: AsyncSession,
     competition_id: uuid.UUID,
@@ -393,6 +893,14 @@ async def create_registration(
     effective_institution_id = payload.institutionId
 
     if actor is not None and actor.role == UserRole.INSTITUTION:
+        from app.services import settings as settings_service
+
+        if not await settings_service.institution_registration_enabled(session):
+            raise AppError(
+                "INSTITUTION_REGISTRATION_DISABLED",
+                "Institution registration is currently disabled",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
         if actor.institution_id is None:
             raise AppError(
                 "FORBIDDEN",
@@ -413,6 +921,7 @@ async def create_registration(
         effective_institution_id = actor.institution_id
         payload = payload.model_copy(update={"institutionId": effective_institution_id})
 
+    draft_to_finalize: Competitor | None = None
     if actor is not None and actor.role == UserRole.COMPETITOR:
         bind_user_id = actor.id
         existing_for_user = (
@@ -423,16 +932,16 @@ async def create_registration(
                 )
             )
         ).scalar_one_or_none()
-        if existing_for_user is not None and not idempotency_key:
-            raise AppError(
-                "DUPLICATE",
-                "You already have a registration for this competition",
-                status_code=status.HTTP_409_CONFLICT,
-                fields=[FieldError("userId", "DUPLICATE")],
-            )
-        if existing_for_user is not None and idempotency_key:
-            # Fall through to idempotency lookup below; if no record, still DUPLICATE
-            pass
+        if existing_for_user is not None:
+            if existing_for_user.status == _DRAFT_STATUS:
+                draft_to_finalize = existing_for_user
+            elif not idempotency_key:
+                raise AppError(
+                    "DUPLICATE",
+                    "You already have a registration for this competition",
+                    status_code=status.HTTP_409_CONFLICT,
+                    fields=[FieldError("userId", "DUPLICATE")],
+                )
 
     if idempotency_key:
         existing = (
@@ -445,7 +954,7 @@ async def create_registration(
         ).scalar_one_or_none()
         if existing is not None:
             return RegistrationOut.model_validate(existing.response_body), existing.status_code
-        if bind_user_id is not None:
+        if bind_user_id is not None and draft_to_finalize is None:
             existing_for_user = (
                 await session.execute(
                     select(Competitor).where(
@@ -454,13 +963,15 @@ async def create_registration(
                     )
                 )
             ).scalar_one_or_none()
-            if existing_for_user is not None:
+            if existing_for_user is not None and existing_for_user.status != _DRAFT_STATUS:
                 raise AppError(
                     "DUPLICATE",
                     "You already have a registration for this competition",
                     status_code=status.HTTP_409_CONFLICT,
                     fields=[FieldError("userId", "DUPLICATE")],
                 )
+            if existing_for_user is not None and existing_for_user.status == _DRAFT_STATUS:
+                draft_to_finalize = existing_for_user
 
     form, window = await load_form_config(session, competition_id)
     if not _window_open(window):
@@ -475,6 +986,17 @@ async def create_registration(
 
     _ensure_gender_on_form(form)
     field_errors = _validate_against_form(form, payload)
+    # Draft may already hold a saved photo; omit photo REQUIRED in that case.
+    if (
+        draft_to_finalize is not None
+        and draft_to_finalize.photo_key
+        and payload.photo is None
+    ):
+        field_errors = [
+            err
+            for err in field_errors
+            if not (err.name == "photo" and err.reason == "REQUIRED")
+        ]
     if field_errors:
         raise AppError(
             "VALIDATION_ERROR",
@@ -535,7 +1057,19 @@ async def create_registration(
                 fields=[FieldError("institutionId", "REQUIRED")],
             )
 
-    photo_data = _validate_photo(form, payload)
+    photo_data = None
+    try:
+        photo_data = _validate_photo(form, payload)
+    except AppError as photo_err:
+        if (
+            photo_err.code == "PHOTO_INVALID"
+            and payload.photo is None
+            and draft_to_finalize is not None
+            and draft_to_finalize.photo_key
+        ):
+            photo_data = None
+        else:
+            raise
     photo_key: str | None = None
     if photo_data is not None:
         data, content_type = photo_data
@@ -543,6 +1077,10 @@ async def create_registration(
         store = storage or get_object_storage()
         stored = store.put(data, prefix=f"cycles/{competition_id}/photos", filename=f"{uuid.uuid4()}.{ext}")
         photo_key = stored.key
+    elif draft_to_finalize is not None and draft_to_finalize.photo_key:
+        photo_key = draft_to_finalize.photo_key
+
+    coach_data = _validate_and_normalize_coach(payload)
 
     flags: list[str] = []
     if payload.nationalId and payload.dateOfBirth:
@@ -552,59 +1090,97 @@ async def create_registration(
                     Competitor.competition_id == competition_id,
                     Competitor.national_id == payload.nationalId,
                     Competitor.date_of_birth == payload.dateOfBirth,
+                    Competitor.status != _DRAFT_STATUS,
                 )
             )
         ).scalar_one_or_none()
-        if dup is not None:
+        if dup is not None and (draft_to_finalize is None or dup.id != draft_to_finalize.id):
             flags.append("DUPLICATE_SUSPECTED")
 
     ref = _issue_ref()
-    competitor = Competitor(
-        competition_id=competition_id,
-        user_id=bind_user_id,
-        skill_id=skill_id,
-        zone_id=zone_id,
-        region_id=region_id,
-        institution_id=payload.institutionId,
-        ref_no=ref,
-        status="PENDING_REVIEW",
-        given_names=payload.givenNames,
-        family_name=payload.familyName,
-        gender=payload.gender,
-        date_of_birth=payload.dateOfBirth,
-        email=payload.email,
-        mobile=payload.mobile,
-        whatsapp=payload.whatsapp,
-        national_id=payload.nationalId,
-        nationality=(payload.nationality or "").strip().upper() or None,
-        enrolment_attested=bool(payload.declarationAccepted),
-        has_passport=bool(payload.hasPassport),
-        passport_number=(payload.passportNumber or "").strip() or None
+    registration_payload = {
+        "skillIds": [str(s) for s in payload.skillIds],
+        "gender": payload.gender,
+        "nationality": (payload.nationality or "").strip().upper() or None,
+        "hasPassport": bool(payload.hasPassport),
+        "passportNumber": (payload.passportNumber or "").strip() or None
         if payload.hasPassport
         else None,
-        passport_expires_on=payload.passportExpiresOn if payload.hasPassport else None,
-        photo_key=photo_key,
-        coach=payload.coach,
-        flags=flags,
-        public_profile_visible=False,
-        guardian_name=payload.guardianName,
-        guardian_email=payload.guardianEmail,
-        guardian_phone=payload.guardianPhone,
-        registration_payload={
-            "skillIds": [str(s) for s in payload.skillIds],
-            "gender": payload.gender,
-            "nationality": (payload.nationality or "").strip().upper() or None,
-            "hasPassport": bool(payload.hasPassport),
-            "passportNumber": (payload.passportNumber or "").strip() or None
+        "passportExpiresOn": payload.passportExpiresOn.isoformat()
+        if payload.hasPassport and payload.passportExpiresOn
+        else None,
+    }
+
+    if draft_to_finalize is not None:
+        competitor = draft_to_finalize
+        competitor.skill_id = skill_id
+        competitor.zone_id = zone_id
+        competitor.region_id = region_id
+        competitor.institution_id = payload.institutionId
+        competitor.ref_no = ref
+        competitor.status = "PENDING_REVIEW"
+        competitor.given_names = payload.givenNames
+        competitor.family_name = payload.familyName
+        competitor.gender = payload.gender
+        competitor.date_of_birth = payload.dateOfBirth
+        competitor.email = payload.email
+        competitor.mobile = payload.mobile
+        competitor.whatsapp = payload.whatsapp
+        competitor.national_id = payload.nationalId
+        competitor.nationality = (payload.nationality or "").strip().upper() or None
+        competitor.enrolment_attested = bool(payload.declarationAccepted)
+        competitor.has_passport = bool(payload.hasPassport)
+        competitor.passport_number = (
+            (payload.passportNumber or "").strip() or None if payload.hasPassport else None
+        )
+        competitor.passport_expires_on = (
+            payload.passportExpiresOn if payload.hasPassport else None
+        )
+        competitor.photo_key = photo_key
+        competitor.coach = coach_data
+        competitor.flags = flags
+        competitor.public_profile_visible = False
+        competitor.guardian_name = payload.guardianName
+        competitor.guardian_email = payload.guardianEmail
+        competitor.guardian_phone = payload.guardianPhone
+        competitor.registration_payload = registration_payload
+        competitor.updated_at = _now()
+    else:
+        competitor = Competitor(
+            competition_id=competition_id,
+            user_id=bind_user_id,
+            skill_id=skill_id,
+            zone_id=zone_id,
+            region_id=region_id,
+            institution_id=payload.institutionId,
+            ref_no=ref,
+            status="PENDING_REVIEW",
+            given_names=payload.givenNames,
+            family_name=payload.familyName,
+            gender=payload.gender,
+            date_of_birth=payload.dateOfBirth,
+            email=payload.email,
+            mobile=payload.mobile,
+            whatsapp=payload.whatsapp,
+            national_id=payload.nationalId,
+            nationality=(payload.nationality or "").strip().upper() or None,
+            enrolment_attested=bool(payload.declarationAccepted),
+            has_passport=bool(payload.hasPassport),
+            passport_number=(payload.passportNumber or "").strip() or None
             if payload.hasPassport
             else None,
-            "passportExpiresOn": payload.passportExpiresOn.isoformat()
-            if payload.hasPassport and payload.passportExpiresOn
-            else None,
-            # Never persist captcha / raw photo bytes in payload
-        },
-    )
-    session.add(competitor)
+            passport_expires_on=payload.passportExpiresOn if payload.hasPassport else None,
+            photo_key=photo_key,
+            coach=coach_data,
+            flags=flags,
+            public_profile_visible=False,
+            guardian_name=payload.guardianName,
+            guardian_email=payload.guardianEmail,
+            guardian_phone=payload.guardianPhone,
+            registration_payload=registration_payload,
+            updated_at=_now(),
+        )
+        session.add(competitor)
     await session.flush()
 
     screen = await screen_competitor(
@@ -656,9 +1232,12 @@ async def create_registration(
         message = "Registration received; identity check is pending admin review"
     if (
         (actor is None or actor.role != UserRole.INSTITUTION)
-        and not can_progress_past_pending_review(competitor)
+        and "CONSENT_PENDING" in (competitor.flags or [])
     ):
-        message = (message + "; " if message else "") + "Guardian consent required before progression"
+        message = (
+            (message + "; " if message else "")
+            + "Guardian consent form is available in your portal (optional for progression)"
+        )
 
     await enqueue_notification(
         session,

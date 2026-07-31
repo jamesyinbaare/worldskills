@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FormFieldOut(BaseModel):
@@ -28,6 +28,40 @@ class PhotoIn(BaseModel):
     contentType: str
 
 
+class CoachBioIn(BaseModel):
+    surname: str = Field(min_length=1, max_length=120)
+    firstName: str = Field(min_length=1, max_length=120)
+    otherName: str | None = Field(default=None, max_length=120)
+    contactNumber: str = Field(min_length=1, max_length=32)
+    email: str = Field(min_length=3, max_length=255)
+    whatsapp: str = Field(min_length=1, max_length=32)
+    dateOfBirth: date
+
+    @field_validator("surname", "firstName", "contactNumber", "email", "whatsapp", mode="before")
+    @classmethod
+    def strip_required(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("otherName", mode="before")
+    @classmethod
+    def strip_optional(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def email_has_at(cls, value: str) -> str:
+        if "@" not in value:
+            raise ValueError("EMAIL_INVALID")
+        return value.lower()
+
+
 class RegistrationCreate(BaseModel):
     givenNames: str | None = None
     familyName: str | None = None
@@ -45,7 +79,7 @@ class RegistrationCreate(BaseModel):
     regionId: UUID | None = None
     zoneId: UUID | None = None  # rejected — zone is derived from region
     skillIds: list[UUID] = Field(default_factory=list)
-    coach: dict[str, Any] | None = None
+    coach: CoachBioIn | dict[str, Any] | None = None
     declarationAccepted: bool | None = None
     photo: PhotoIn | None = None
     captchaToken: str | None = None
@@ -60,6 +94,65 @@ class RegistrationOut(BaseModel):
     status: str
     flags: list[str] = Field(default_factory=list)
     message: str | None = None
+
+
+class RegistrationDraftIn(BaseModel):
+    """Partial registration payload for server-side drafts (all fields optional)."""
+
+    givenNames: str | None = None
+    familyName: str | None = None
+    gender: str | None = None
+    dateOfBirth: date | None = None
+    email: str | None = None
+    mobile: str | None = None
+    whatsapp: str | None = None
+    nationalId: str | None = None
+    nationality: str | None = None
+    hasPassport: bool | None = None
+    passportNumber: str | None = None
+    passportExpiresOn: date | None = None
+    institutionId: UUID | None = None
+    regionId: UUID | None = None
+    zoneId: UUID | None = None
+    skillIds: list[UUID] | None = None
+    coach: dict[str, Any] | None = None
+    declarationAccepted: bool | None = None
+    photo: PhotoIn | None = None
+    captchaToken: str | None = None
+    guardianName: str | None = None
+    guardianEmail: str | None = None
+    guardianPhone: str | None = None
+    currentStep: int | None = Field(default=None, ge=1, le=5)
+
+
+class RegistrationDraftOut(BaseModel):
+    competitorId: UUID
+    status: str
+    updatedAt: datetime
+    currentStep: int | None = None
+    givenNames: str | None = None
+    familyName: str | None = None
+    gender: str | None = None
+    dateOfBirth: date | None = None
+    email: str | None = None
+    mobile: str | None = None
+    whatsapp: str | None = None
+    nationalId: str | None = None
+    nationality: str | None = None
+    hasPassport: bool | None = None
+    passportNumber: str | None = None
+    passportExpiresOn: date | None = None
+    institutionId: UUID | None = None
+    regionId: UUID | None = None
+    skillIds: list[UUID] = Field(default_factory=list)
+    coach: dict[str, Any] | None = None
+    declarationAccepted: bool | None = None
+    hasPhoto: bool = False
+    institutionName: str | None = None
+    institutionCode: str | None = None
+    guardianName: str | None = None
+    guardianEmail: str | None = None
+    guardianPhone: str | None = None
 
 
 class RegistrationWindowOut(BaseModel):

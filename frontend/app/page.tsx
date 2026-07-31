@@ -8,8 +8,7 @@ const journeySteps = [
   {
     number: "01",
     title: "Register",
-    description:
-      "Enter as a competitor, or register through your institution",
+    description: "Create a competitor account and enter your skill area",
   },
   {
     number: "02",
@@ -69,7 +68,7 @@ export default function Home() {
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Button size="lg" variant="accent" className="min-h-11" asChild>
-                <a href="#competitions">View open competitions</a>
+                <a href="#competitions">Explore what&apos;s open</a>
               </Button>
               <Button
                 size="lg"
@@ -129,7 +128,7 @@ export default function Home() {
               href="#competitions"
               className="text-sm font-semibold text-primary underline-offset-4 hover:underline"
             >
-              View open competitions
+              Explore what&apos;s open
             </a>
           </p>
         </div>
