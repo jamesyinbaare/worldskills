@@ -1,9 +1,13 @@
 # File-provider routes for world-skills (avoids duplicate routers vs compose labels).
-# Dual hostnames: jamesyin.com + ctvet.gov.gh (same services; ACME SAN on each router).
+# One Host per router so Let's Encrypt can issue when only some DNS records exist.
+# (Bundling jamesyin + ctvet in one Host() OR rule fails ACME entirely if ctvet NXDOMAIN.)
+#
+# ctvet.gov.gh hosts are omitted until A/AAAA records exist — enable the block at the
+# bottom of this file once DNS points at the VM, then recreate Traefik.
 http:
   routers:
-    worldskills-frontend-staging:
-      rule: "Host(`worldskills.jamesyin.com`) || Host(`worldskills.ctvet.gov.gh`)"
+    worldskills-frontend-jamesyin:
+      rule: "Host(`worldskills.jamesyin.com`)"
       entryPoints:
         - websecure
       service: worldskills-frontend-staging
@@ -12,16 +16,16 @@ http:
       middlewares:
         - worldskills-security-headers
 
-    worldskills-frontend-staging-http:
-      rule: "Host(`worldskills.jamesyin.com`) || Host(`worldskills.ctvet.gov.gh`)"
+    worldskills-frontend-jamesyin-http:
+      rule: "Host(`worldskills.jamesyin.com`)"
       entryPoints:
         - web
       service: worldskills-frontend-staging
       middlewares:
         - worldskills-security-headers
 
-    worldskills-backend-staging:
-      rule: "Host(`worldskills-api.jamesyin.com`) || Host(`worldskills-api.ctvet.gov.gh`)"
+    worldskills-backend-jamesyin:
+      rule: "Host(`worldskills-api.jamesyin.com`)"
       entryPoints:
         - websecure
       service: worldskills-backend-staging
@@ -30,8 +34,8 @@ http:
       middlewares:
         - worldskills-security-headers
 
-    worldskills-backend-staging-http:
-      rule: "Host(`worldskills-api.jamesyin.com`) || Host(`worldskills-api.ctvet.gov.gh`)"
+    worldskills-backend-jamesyin-http:
+      rule: "Host(`worldskills-api.jamesyin.com`)"
       entryPoints:
         - web
       service: worldskills-backend-staging

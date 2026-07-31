@@ -44,98 +44,150 @@ export default function CycleSkillsPage() {
   }, [competitionId]);
 
   return (
-    <PageShell>
-      <PageHeader
-        title="Skills"
-        description="Associate catalog skills to this competition, then set age rules and pathways."
-        backHref={`/admin/competitions/${competitionId}`}
-        backLabel="Competition workspace"
-        actions={
-          <Button className="min-h-11 w-full sm:w-auto" asChild>
-            <Link href={`/admin/competitions/${competitionId}/skills/associate`}>
-              Associate skill
-            </Link>
-          </Button>
-        }
-      />
+    <PageShell width="wide" className="max-w-6xl px-0 py-0 sm:px-0 sm:py-0">
+      <div className="admin-panel mb-5 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:mb-6 sm:p-7">
+        <PageHeader
+          className="mb-0"
+          title="Skills"
+          description="Associate catalog skills to this competition, then set age rules and pathways."
+          backHref={`/admin/competitions/${competitionId}`}
+          backLabel="Competition workspace"
+          actions={
+            <Button className="min-h-11 w-full rounded-2xl sm:w-auto" asChild>
+              <Link
+                href={`/admin/competitions/${competitionId}/skills/associate`}
+              >
+                Associate skill
+              </Link>
+            </Button>
+          }
+        />
+      </div>
 
       {loading && (
         <div className="space-y-3" role="status" aria-label="Loading">
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-28 rounded-[1.5rem]" />
+          <Skeleton className="h-28 rounded-[1.5rem]" />
         </div>
       )}
 
       <ApiErrorAlert error={error} className="mb-6" />
 
       {!loading && !error && (
-        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+        <div className="admin-panel overflow-hidden rounded-[1.5rem] bg-card shadow-sm ring-1 ring-foreground/5">
           {skills.length === 0 ? (
-            <p className="px-6 py-8 text-sm text-muted-foreground">
-              No skills yet. Associate a catalog skill to configure this competition.
-            </p>
+            <div className="space-y-4 px-5 py-12 text-center sm:px-6">
+              <p className="text-sm text-muted-foreground">
+                No skills yet. Associate a catalog skill to configure this
+                competition.
+              </p>
+              <Button className="min-h-11 rounded-2xl" asChild>
+                <Link
+                  href={`/admin/competitions/${competitionId}/skills/associate`}
+                >
+                  Associate skill
+                </Link>
+              </Button>
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead>Skill</TableHead>
-                  <TableHead className="hidden sm:table-cell">Details</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="px-5 sm:px-6">Skill</TableHead>
+                  <TableHead className="hidden md:table-cell">Family</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
+                  <TableHead className="pr-5 text-right sm:pr-6">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {skills.map((s) => (
-                  <TableRow key={s.skillId}>
-                    <TableCell>
-                      <Link
-                        href={`/admin/competitions/${competitionId}/skills/${s.skillId}`}
-                        className="font-semibold hover:underline"
-                      >
-                        {s.name}
-                      </Link>
-                      <p className="text-xs text-muted-foreground sm:hidden">
-                        {[
-                          s.familyName,
-                          s.ageRule ? `Max age ${s.ageRule.maxAge}` : null,
-                          s.capacity != null ? `Capacity ${s.capacity}` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || "—"}
-                      </p>
-                    </TableCell>
-                    <TableCell className="hidden text-muted-foreground sm:table-cell">
-                      {[
-                        s.familyName,
-                        s.ageRule ? `Max age ${s.ageRule.maxAge}` : null,
-                        s.capacity != null ? `Capacity ${s.capacity}` : null,
-                        s.hasPathway ? "Pathway set" : "Pathway missing",
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        {s.active ? (
-                          <Badge variant="success">Active</Badge>
-                        ) : null}
-                        <Button variant="link" className="h-auto px-0" asChild>
-                          <Link
-                            href={`/admin/competitions/${competitionId}/skills/${s.skillId}`}
+                {skills.map((s) => {
+                  const details = [
+                    s.ageRule ? `Max age ${s.ageRule.maxAge}` : null,
+                    s.capacity != null ? `Capacity ${s.capacity}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+
+                  return (
+                    <TableRow key={s.skillId}>
+                      <TableCell className="px-5 sm:px-6">
+                        <Link
+                          href={`/admin/competitions/${competitionId}/skills/${s.skillId}`}
+                          className="font-semibold hover:underline"
+                        >
+                          {s.name}
+                        </Link>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {[s.familyName, details].filter(Boolean).join(" · ") ||
+                            "—"}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5 sm:hidden">
+                          <Badge
+                            variant={s.active ? "secondary" : "outline"}
+                            className="font-normal"
                           >
-                            Configure
-                          </Link>
-                        </Button>
-                        <Button variant="link" className="h-auto px-0" asChild>
-                          <Link
-                            href={`/admin/competitions/${competitionId}/skills/${s.skillId}/pathway`}
+                            {s.active ? "Active" : "Inactive"}
+                          </Badge>
+                          <Badge
+                            variant={s.hasPathway ? "secondary" : "outline"}
+                            className="font-normal"
                           >
-                            Pathway
-                          </Link>
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                            {s.hasPathway ? "Pathway set" : "Pathway missing"}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden text-muted-foreground md:table-cell">
+                        {s.familyName || "—"}
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        <div className="flex flex-wrap gap-1.5">
+                          <Badge
+                            variant={s.active ? "secondary" : "outline"}
+                            className="font-normal"
+                          >
+                            {s.active ? "Active" : "Inactive"}
+                          </Badge>
+                          <Badge
+                            variant={s.hasPathway ? "secondary" : "outline"}
+                            className="font-normal"
+                          >
+                            {s.hasPathway ? "Pathway set" : "Pathway missing"}
+                          </Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell className="pr-5 text-right sm:pr-6">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-xl"
+                            asChild
+                          >
+                            <Link
+                              href={`/admin/competitions/${competitionId}/skills/${s.skillId}`}
+                            >
+                              Configure
+                            </Link>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-xl"
+                            asChild
+                          >
+                            <Link
+                              href={`/admin/competitions/${competitionId}/skills/${s.skillId}/pathway`}
+                            >
+                              Pathway
+                            </Link>
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

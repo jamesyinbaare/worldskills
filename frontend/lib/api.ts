@@ -1,6 +1,6 @@
 /** API client for SCMS backend — parses standard error envelope; refresh-on-401. */
 
-function getApiBase(): string {
+export function getApiBase(): string {
   const forced = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
   if (forced) return forced;
 
@@ -43,6 +43,17 @@ export class ApiError extends Error {
     this.fields = body.error.fields || [];
     this.traceId = body.error.traceId;
   }
+}
+
+/** Human-readable message when fetch fails before an ApiError envelope (CORS, TLS, DNS). */
+export function formatApiNetworkError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message;
+  const detail = err instanceof Error && err.message ? err.message : null;
+  const base = getApiBase();
+  if (detail) {
+    return `${fallback} (${detail}; API ${base})`;
+  }
+  return `${fallback} (API ${base})`;
 }
 
 const TOKEN_KEY = "scms_access_token";

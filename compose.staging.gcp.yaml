@@ -70,10 +70,14 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile.prod
+      args:
+        # Baked into the client bundle so browsers always hit the public API even if
+        # hostname rewrite does not match (runtime rewrite still preferred when unset).
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://worldskills-api.jamesyin.com}
     container_name: world-skills-frontend-staging
     environment:
       - NODE_ENV=production
-      # Server-side fetches inside the frontend container (no NEXT_PUBLIC_API_BASE_URL).
+      # Server-side fetches inside the frontend container.
       - INTERNAL_API_BASE_URL=http://world-skills-backend:80
     restart: unless-stopped
     depends_on:

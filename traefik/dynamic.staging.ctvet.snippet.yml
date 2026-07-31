@@ -1,0 +1,39 @@
+# Paste these routers under http.routers in dynamic.staging.yml after
+# worldskills.ctvet.gov.gh and worldskills-api.ctvet.gov.gh DNS A/AAAA records
+# point at the staging VM. Then: docker compose ... up -d --force-recreate traefik
+
+    worldskills-frontend-ctvet:
+      rule: "Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-frontend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-frontend-ctvet-http:
+      rule: "Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-frontend-staging
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-ctvet:
+      rule: "Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-backend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-ctvet-http:
+      rule: "Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-backend-staging
+      middlewares:
+        - worldskills-security-headers
