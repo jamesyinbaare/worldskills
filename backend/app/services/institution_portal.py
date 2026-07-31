@@ -35,7 +35,7 @@ from app.schemas.institution_portal import (
 )
 from app.services.audit import write_audit_event
 
-_QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN"})
+_QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN", "DRAFT"})
 
 
 def _require_institution_actor(actor: User) -> uuid.UUID:
@@ -82,6 +82,8 @@ async def list_institution_registrations(
 
     out: list[InstitutionRegistrationOut] = []
     for comp in competitors:
+        if comp.status == "DRAFT":
+            continue
         competition = await session.get(Competition, comp.competition_id)
         skill = await session.get(Skill, comp.skill_id)
         if competition is None or skill is None:

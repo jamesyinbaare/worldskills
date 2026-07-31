@@ -336,15 +336,15 @@ class Competitor(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
-    skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=True, index=True)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=True, index=True)
     region_id = Column(UUID(as_uuid=True), ForeignKey("regions.id", ondelete="RESTRICT"), nullable=True, index=True)
     institution_id = Column(
         UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Bound login account for competitor portal actions (US-SUB-02)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    ref_no = Column(String(64), nullable=False)
+    ref_no = Column(String(64), nullable=True)
     status = Column(String(32), nullable=False, default="REGISTERED")
     # Registration profile (nullable when created via nomination shell)
     given_names = Column(String(100), nullable=True)
@@ -362,6 +362,7 @@ class Competitor(Base):
     coach = Column(JSON, nullable=True)
     flags = Column(JSON, nullable=False, default=list)
     registration_payload = Column(JSON, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     # Guardian consent (US-REG-02) — privacy by default for minors
     guardian_name = Column(String(200), nullable=True)
     guardian_email = Column(String(255), nullable=True)
@@ -1097,3 +1098,14 @@ class DsarJob(Base):
     result_summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
+
+
+class SystemSettings(Base):
+    """Singleton platform settings (one row)."""
+
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    institution_registration_enabled = Column(Boolean, nullable=False, default=False)
+    allow_multiple_active_competitions = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

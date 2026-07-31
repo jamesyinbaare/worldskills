@@ -28,6 +28,7 @@ from app.models import (
 from pytest_tests.conftest import (
     create_competitor_account,
     competition_payload,
+    enable_institution_registration,
     login_as,
     map_region_to_zone,
     region_id_by_name,
@@ -164,6 +165,14 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "hasPassport": False,
         "institutionId": str(ctx["institution_id"]),
         "skillIds": [str(ctx["skill_id"])],
+        "coach": {
+            "surname": "Asante",
+            "firstName": "Kojo",
+            "contactNumber": "+233201112233",
+            "email": "coach@example.com",
+            "whatsapp": "+233201112233",
+            "dateOfBirth": "1985-04-12",
+        },
         "declarationAccepted": True,
         "photo": {"contentBase64": _PNG_1X1, "contentType": "image/png"},
         "captchaToken": "ok",
@@ -175,6 +184,7 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
 async def _claim_institution(
     client: AsyncClient, session_manager: DBManager, school_code: str
 ) -> dict[str, str]:
+    await enable_institution_registration(session_manager)
     email = f"head-{uuid.uuid4().hex[:8]}@school.edu"
     resp = await client.post(
         "/auth/register-institution",

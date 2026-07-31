@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  competitionRegisterHref,
   getMyStages,
+  isDraftRegistrationStatus,
+  listMyRegistrations,
   type MyStageOut,
   type MyStagesOut,
 } from "@/lib/api";
@@ -50,8 +53,16 @@ function stagePrimaryAction(
   if (!stage.exerciseAvailable) return null;
   const state = (stage.submission.state || "").toUpperCase();
   const href = `/competitor/competitions/${competitionId}/stages/${stage.stageId}/submit`;
+  const deadlineOpen =
+    stage.windowStatus === "open" ||
+    (stage.closesAt
+      ? new Date(stage.closesAt).getTime() > Date.now()
+      : false);
   if (["ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"].includes(state)) {
-    return { label: "View receipt", href };
+    return {
+      label: deadlineOpen ? "Update submission" : "View receipt",
+      href,
+    };
   }
   if (state === "OPEN" || state === "UPLOADED" || state === "SCANNING" || state === "QUARANTINED") {
     return { label: "Continue submission", href };
@@ -88,11 +99,40 @@ function stageStatusBadge(stage: MyStageOut): { status: string; label: string } 
 export default function CompetitorCompetitionPage() {
   const params = useParams<{ competitionId: string }>();
   const competitionId = params.competitionId;
+  const router = useRouter();
   const [pathway, setPathway] = useState<MyStagesOut | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
+  const [checkingDraft, setCheckingDraft] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setCheckingDraft(true);
+      try {
+        const regs = await listMyRegistrations();
+        const draft = regs.find(
+          (r) =>
+            r.competitionId === competitionId &&
+            isDraftRegistrationStatus(r.status),
+        );
+        if (!cancelled && draft) {
+          router.replace(competitionRegisterHref(competitionId));
+          return;
+        }
+      } catch {
+        /* Continue to stages load */
+      } finally {
+        if (!cancelled) setCheckingDraft(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [competitionId, router]);
+
+  useEffect(() => {
+    if (checkingDraft) return;
     let cancelled = false;
     void (async () => {
       setLoading(true);
@@ -114,7 +154,17 @@ export default function CompetitorCompetitionPage() {
     return () => {
       cancelled = true;
     };
-  }, [competitionId]);
+  }, [competitionId, checkingDraft]);
+
+  if (checkingDraft) {
+    return (
+      <PageShell width="wide" className="space-y-6">
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading…
+        </p>
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell width="wide" className="space-y-6">

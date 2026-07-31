@@ -64,6 +64,7 @@ from app.models import (  # noqa: E402
     Region,
     Skill,
     Stage,
+    SystemSettings,
     User,
     UserRole,
 )
@@ -82,6 +83,19 @@ async def session_manager() -> AsyncIterator[TestingDatabaseSessionManager]:
     await seed_ghana_regions(manager)
     yield manager
     await manager.close()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_system_settings(
+    session_manager: TestingDatabaseSessionManager,
+) -> AsyncIterator[None]:
+    """Keep platform toggles deterministic across tests that share the DB."""
+    await set_system_settings(
+        session_manager,
+        institution_registration_enabled=False,
+        allow_multiple_active_competitions=True,
+    )
+    yield
 
 
 @pytest_asyncio.fixture
@@ -215,6 +229,61 @@ def competition_payload(**overrides: object) -> dict:
     }
     base.update(overrides)
     return base
+
+
+VALID_COACH: dict = {
+    "surname": "Asante",
+    "firstName": "Kojo",
+    "otherName": "Mensah",
+    "contactNumber": "+233201112233",
+    "email": "coach@example.com",
+    "whatsapp": "+233201112233",
+    "dateOfBirth": "1985-04-12",
+}
+
+
+async def enable_institution_registration(
+    session_manager: TestingDatabaseSessionManager,
+) -> None:
+    async with session_manager.session() as session:
+        row = (
+            await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+        ).scalar_one_or_none()
+        if row is None:
+            row = SystemSettings(
+                id=1,
+                institution_registration_enabled=True,
+                allow_multiple_active_competitions=True,
+            )
+            session.add(row)
+        else:
+            row.institution_registration_enabled = True
+        await session.commit()
+
+
+async def set_system_settings(
+    session_manager: TestingDatabaseSessionManager,
+    *,
+    institution_registration_enabled: bool | None = None,
+    allow_multiple_active_competitions: bool | None = None,
+) -> None:
+    async with session_manager.session() as session:
+        row = (
+            await session.execute(select(SystemSettings).where(SystemSettings.id == 1))
+        ).scalar_one_or_none()
+        if row is None:
+            row = SystemSettings(
+                id=1,
+                institution_registration_enabled=False,
+                allow_multiple_active_competitions=True,
+            )
+            session.add(row)
+            await session.flush()
+        if institution_registration_enabled is not None:
+            row.institution_registration_enabled = institution_registration_enabled
+        if allow_multiple_active_competitions is not None:
+            row.allow_multiple_active_competitions = allow_multiple_active_competitions
+        await session.commit()
 
 
 async def region_id_by_name(

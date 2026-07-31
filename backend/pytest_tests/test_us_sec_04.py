@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import AuditEvent, Institution, User, UserRole
-from pytest_tests.conftest import region_id_by_name
+from pytest_tests.conftest import region_id_by_name, enable_institution_registration
 
 
 async def _seed_school(
@@ -37,6 +37,7 @@ async def _seed_school(
 async def test_US_SEC_04_AC1_successful_claim(
     client: AsyncClient, session_manager: DBManager
 ) -> None:
+    await enable_institution_registration(session_manager)
     school = await _seed_school(session_manager)
     email = f"head-{uuid.uuid4().hex[:8]}@school.edu"
     resp = await client.post(
@@ -81,7 +82,10 @@ async def test_US_SEC_04_AC1_successful_claim(
 
 
 @pytest.mark.asyncio
-async def test_US_SEC_04_AC2_unknown_code(client: AsyncClient) -> None:
+async def test_US_SEC_04_AC2_unknown_code(
+    client: AsyncClient, session_manager: DBManager
+) -> None:
+    await enable_institution_registration(session_manager)
     resp = await client.post(
         "/auth/register-institution",
         json={
@@ -101,6 +105,7 @@ async def test_US_SEC_04_AC2_unknown_code(client: AsyncClient) -> None:
 async def test_US_SEC_04_AC3_inactive_school(
     client: AsyncClient, session_manager: DBManager
 ) -> None:
+    await enable_institution_registration(session_manager)
     school = await _seed_school(session_manager, active=False)
     resp = await client.post(
         "/auth/register-institution",
@@ -121,6 +126,7 @@ async def test_US_SEC_04_AC3_inactive_school(
 async def test_US_SEC_04_AC4_already_claimed(
     client: AsyncClient, session_manager: DBManager
 ) -> None:
+    await enable_institution_registration(session_manager)
     school = await _seed_school(session_manager)
     payload = {
         "email": f"first-{uuid.uuid4().hex[:8]}@school.edu",
@@ -149,6 +155,7 @@ async def test_US_SEC_04_AC4_already_claimed(
 async def test_US_SEC_04_AC5_duplicate_email(
     client: AsyncClient, session_manager: DBManager
 ) -> None:
+    await enable_institution_registration(session_manager)
     school_a = await _seed_school(session_manager)
     school_b = await _seed_school(session_manager)
     email = f"dup-{uuid.uuid4().hex[:8]}@school.edu"

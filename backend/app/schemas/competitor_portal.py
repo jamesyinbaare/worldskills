@@ -12,10 +12,11 @@ class MyRegistrationOut(BaseModel):
     competitorId: UUID
     competitionId: UUID
     competitionName: str
-    skillId: UUID
+    skillId: UUID | None = None
     skillName: str
     status: str
     zoneId: UUID | None = None
+    flags: list[str] = []
     consentParticipationAt: datetime | None = None
     consentPublicAt: datetime | None = None
     publicProfileVisible: bool = False

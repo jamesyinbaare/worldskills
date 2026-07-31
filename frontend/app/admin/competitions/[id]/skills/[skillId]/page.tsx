@@ -16,6 +16,7 @@ import {
   listCycleZones,
   listSkills,
   listUsers,
+  patchCatalogSkill,
   patchCycleSkill,
   triggerBrowserDownload,
   uploadSkillCriteriaDocument,
@@ -41,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -78,6 +80,11 @@ export default function CycleSkillDetailPage() {
   >({});
   const [skillPending, setSkillPending] = useState(false);
   const [skillSaved, setSkillSaved] = useState<string | null>(null);
+
+  const [description, setDescription] = useState("");
+  const [descPending, setDescPending] = useState(false);
+  const [descError, setDescError] = useState<ApiError | null>(null);
+  const [descSaved, setDescSaved] = useState<string | null>(null);
 
   const [criteriaPending, setCriteriaPending] = useState(false);
   const [criteriaError, setCriteriaError] = useState<ApiError | null>(null);
@@ -117,6 +124,7 @@ export default function CycleSkillDetailPage() {
         setOpenCategory(found.ageRule.openCategoryEnabled);
       }
       setCapacity(found?.capacity != null ? String(found.capacity) : "");
+      setDescription(found?.description ?? "");
     } catch (err) {
       if (err instanceof ApiError) setLoadError(err);
     } finally {
@@ -153,6 +161,30 @@ export default function CycleSkillDetailPage() {
       }
     } finally {
       setSkillPending(false);
+    }
+  }
+
+  async function onSaveDescription(e: FormEvent) {
+    e.preventDefault();
+    if (!skill?.catalogSkillId) return;
+    setDescError(null);
+    setDescSaved(null);
+    setDescPending(true);
+    try {
+      const updated = await patchCatalogSkill(skill.catalogSkillId, {
+        description: description.trim() || null,
+      });
+      setDescription(updated.description ?? "");
+      setSkill((prev) =>
+        prev
+          ? { ...prev, description: updated.description ?? null }
+          : prev,
+      );
+      setDescSaved("Public description saved.");
+    } catch (err) {
+      if (err instanceof ApiError) setDescError(err);
+    } finally {
+      setDescPending(false);
     }
   }
 
@@ -248,6 +280,58 @@ export default function CycleSkillDetailPage() {
           </Button>
         }
       />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Public description</CardTitle>
+          <CardDescription>
+            Multi-line about text shown on the public skill area page. Shared
+            across competitions that use this catalog skill.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {skill.catalogSkillId ? (
+            <form onSubmit={onSaveDescription} className="space-y-4" noValidate>
+              <div className="space-y-2">
+                <Label htmlFor="skillDescription">About this skill area</Label>
+                <Textarea
+                  id="skillDescription"
+                  className="min-h-40"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  maxLength={20000}
+                  placeholder="Describe this skill area for competitors and institutions…"
+                  data-testid="cycle-skill-description"
+                />
+              </div>
+              <ApiErrorAlert error={descError} title="Could not save description" />
+              {descSaved ? (
+                <p className="text-sm text-muted-foreground" role="status">
+                  {descSaved}
+                </p>
+              ) : null}
+              <Button
+                type="submit"
+                disabled={descPending}
+                className="min-h-11"
+                data-testid="cycle-skill-description-save"
+              >
+                {descPending ? "Saving…" : "Save description"}
+              </Button>
+            </form>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              This skill is not linked to the catalog, so a public description
+              cannot be edited here. Associate a catalog skill or edit skills
+              under{" "}
+              <Link href="/admin/skills" className="font-medium underline">
+                Skills catalog
+              </Link>
+              .
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

@@ -1,15 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { ArrowRightIcon, DownloadIcon, FileTextIcon } from "lucide-react";
+import { FileTextIcon } from "lucide-react";
+import type { PublicSkillOut } from "@/lib/api";
 import {
-  ApiError,
-  downloadPublicSkillCriteriaDocument,
-  triggerBrowserDownload,
-  type PublicSkillOut,
-} from "@/lib/api";
-import { Button } from "@/components/ui/button";
+  skillCoverPalette,
+  skillDetailHref,
+} from "@/components/competitions/SkillAreasCarousel";
 import { cn } from "@/lib/utils";
 
 type SkillAreaCardProps = {
@@ -18,28 +15,13 @@ type SkillAreaCardProps = {
   index?: number;
 };
 
-const ACCENTS = [
-  "bg-brand-blue text-brand-blue",
-  "bg-brand-green text-brand-green",
-  "bg-brand-magenta text-brand-magenta",
-  "bg-brand-orange text-brand-orange",
-] as const;
-
-function accentFor(skillId: string, index: number) {
-  let hash = index;
-  for (const char of skillId) {
-    hash = (hash + char.charCodeAt(0) * 13) % ACCENTS.length;
-  }
-  return ACCENTS[hash] ?? ACCENTS[0];
-}
-
 export function SkillAreaCard({
   competitionId,
   skill,
   index = 0,
 }: SkillAreaCardProps) {
-  const enterHref = `/competitions/${competitionId}/enter?skillId=${encodeURIComponent(skill.skillId)}`;
-  const accent = accentFor(skill.skillId, index);
+  const href = skillDetailHref(competitionId, skill.skillId);
+  const palette = skillCoverPalette(skill.skillId, index);
   const hasCriteria = Boolean(skill.hasCriteriaDocument);
   const meta = [
     skill.number ? `Skill ${skill.number}` : null,
@@ -48,98 +30,62 @@ export function SkillAreaCard({
     .filter(Boolean)
     .join(" · ");
 
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function onDownloadCriteria() {
-    setPending(true);
-    setError(null);
-    try {
-      const { blob, filename } = await downloadPublicSkillCriteriaDocument(
-        competitionId,
-        skill.skillId,
-      );
-      triggerBrowserDownload(blob, filename);
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "Could not download criteria document.",
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
   return (
-    <article
+    <Link
+      href={href}
       data-testid="skill-area-card"
+      aria-label={`${skill.name} — view skill area details`}
       className={cn(
-        "animate-comp-fade group relative overflow-hidden rounded-2xl border border-border/80 bg-card",
-        "transition-[border-color,box-shadow] duration-200",
-        "hover:border-brand-blue/35 hover:shadow-[0_12px_32px_-24px_rgba(0,55,100,0.45)]",
+        "animate-comp-fade group flex h-full flex-col overflow-hidden rounded-2xl",
+        "border border-border/70 bg-card shadow-[0_14px_36px_-28px_rgba(0,55,100,0.45)]",
+        "outline-none transition-[transform,box-shadow,border-color] duration-300 ease-out",
+        "hover:-translate-y-1 hover:border-brand-blue/30 hover:shadow-[0_24px_44px_-24px_rgba(0,55,100,0.55)]",
+        "focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-offset-2",
       )}
-      style={{ animationDelay: `${0.05 * index}s` }}
+      style={{ animationDelay: `${0.04 * index}s` }}
     >
       <div
-        className={cn("absolute inset-y-0 left-0 w-1", accent.split(" ")[0])}
+        className={cn(
+          "relative aspect-16/10 overflow-hidden bg-linear-to-br sm:aspect-4/3",
+          palette.panel,
+        )}
         aria-hidden
-      />
-
-      <div className="flex flex-col gap-4 p-4 pl-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:p-5 sm:pl-6">
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="space-y-1">
-            {meta ? (
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {meta}
-              </p>
-            ) : null}
-            <h2 className="text-lg font-bold leading-snug tracking-tight text-foreground sm:text-xl">
-              {skill.name}
-            </h2>
-          </div>
-
-          {hasCriteria ? (
-            <p className="inline-flex max-w-full items-center gap-1.5 text-sm text-muted-foreground">
-              <FileTextIcon
-                className={cn("size-3.5 shrink-0", accent.split(" ")[1])}
-                aria-hidden
-              />
-              <span className="truncate">
-                {skill.criteriaFileName?.trim() || "Criteria document available"}
-              </span>
-            </p>
-          ) : null}
-
-          {error ? (
-            <p className="text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
-          {hasCriteria ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 w-full gap-2 sm:w-auto"
-              disabled={pending}
-              onClick={() => void onDownloadCriteria()}
-              data-testid={`download-criteria-${skill.skillId}`}
-            >
-              <DownloadIcon className="size-4" aria-hidden />
-              {pending ? "Downloading…" : "Download criteria"}
-            </Button>
-          ) : null}
-          <Button className="min-h-11 w-full gap-2 sm:min-w-36 sm:w-auto" asChild>
-            <Link href={enterHref}>
-              Continue
-              <ArrowRightIcon className="size-4 opacity-80" aria-hidden />
-            </Link>
-          </Button>
-        </div>
+      >
+        <div
+          className="absolute inset-0 opacity-45"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 18% 18%, rgba(255,255,255,0.28), transparent 42%), radial-gradient(circle at 82% 78%, rgba(0,0,0,0.28), transparent 48%)",
+          }}
+        />
+        <div
+          className={cn(
+            "absolute -top-8 right-[-8%] size-28 rounded-full blur-2xl opacity-70 transition-opacity duration-300 group-hover:opacity-100",
+            palette.glow,
+          )}
+        />
       </div>
-    </article>
+
+      <div className="flex flex-1 flex-col gap-2 p-4 sm:p-5">
+        {meta ? (
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            {meta}
+          </p>
+        ) : null}
+        <h2 className="text-lg font-bold leading-snug tracking-tight text-foreground sm:text-xl">
+          {skill.name}
+        </h2>
+        {hasCriteria ? (
+          <p className="mt-auto inline-flex max-w-full items-center gap-1.5 pt-1 text-sm text-muted-foreground">
+            <FileTextIcon className="size-3.5 shrink-0 text-brand-blue" aria-hidden />
+            <span>Criteria available</span>
+          </p>
+        ) : (
+          <p className="mt-auto pt-1 text-sm text-muted-foreground/80">
+            View details
+          </p>
+        )}
+      </div>
+    </Link>
   );
 }

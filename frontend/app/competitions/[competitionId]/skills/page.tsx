@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ChevronLeftIcon } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronLeftIcon, SearchIcon } from "lucide-react";
+import { useParams } from "next/navigation";
 import {
   ApiError,
   getPublicCompetition,
@@ -14,6 +14,7 @@ import { previewText } from "@/components/competitions/format";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 function formatWindow(
   window?: { opensAt: string; closesAt: string } | null,
@@ -28,13 +29,13 @@ function formatWindow(
   })}`;
 }
 
-export default function CompetitionSkillsPage() {
+export default function CompetitionSkillsBrowsePage() {
   const params = useParams<{ competitionId: string }>();
   const competitionId = params.competitionId;
-  const router = useRouter();
   const [cycle, setCycle] = useState<PublicCompetitionOut | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -43,12 +44,6 @@ export default function CompetitionSkillsPage() {
       try {
         const data = await getPublicCompetition(competitionId);
         if (cancelled) return;
-        if (data.skills.length < 2) {
-          const sole = data.skills[0]?.skillId;
-          const qs = sole ? `?skillId=${encodeURIComponent(sole)}` : "";
-          router.replace(`/competitions/${competitionId}/enter${qs}`);
-          return;
-        }
         setCycle(data);
         setError(null);
       } catch (err) {
@@ -74,7 +69,20 @@ export default function CompetitionSkillsPage() {
     return () => {
       cancelled = true;
     };
-  }, [competitionId, router]);
+  }, [competitionId]);
+
+  const filtered = useMemo(() => {
+    if (!cycle) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return cycle.skills;
+    return cycle.skills.filter((skill) => {
+      const haystack = [skill.name, skill.number, skill.familyName]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [cycle, query]);
 
   const blurb = previewText(cycle?.description, 180);
   const windowLabel = formatWindow(cycle?.window);
@@ -82,7 +90,7 @@ export default function CompetitionSkillsPage() {
 
   return (
     <div className="bg-competitions-atmosphere min-h-[calc(100dvh-var(--site-header-height))]">
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12 lg:py-16">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12 lg:py-16">
         <Button
           variant="ghost"
           size="sm"
@@ -115,10 +123,10 @@ export default function CompetitionSkillsPage() {
 
         {cycle ? (
           <div className="space-y-8 sm:space-y-10">
-            <header className="animate-comp-fade space-y-4">
+            <header className="animate-comp-fade max-w-2xl space-y-4">
               <div className="space-y-2">
                 <p className="text-xs font-semibold tracking-[0.16em] text-brand-blue/70 uppercase">
-                  Choose a skill area
+                  Browse skill areas
                 </p>
                 <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl">
                   {cycle.name}
@@ -151,17 +159,50 @@ export default function CompetitionSkillsPage() {
               aria-hidden
             />
 
-            <ul className="space-y-3 sm:space-y-4">
-              {cycle.skills.map((skill, index) => (
-                <li key={skill.skillId} className="min-w-0">
-                  <SkillAreaCard
-                    competitionId={competitionId}
-                    skill={skill}
-                    index={index}
+            {skillCount === 0 ? (
+              <p className="text-base text-muted-foreground">
+                No skill areas are open for this competition yet.
+              </p>
+            ) : (
+              <div className="space-y-6">
+                <div className="relative max-w-md">
+                  <SearchIcon
+                    className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
                   />
-                </li>
-              ))}
-            </ul>
+                  <Input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search skill areas…"
+                    className="min-h-11 pl-9"
+                    aria-label="Search skill areas"
+                    data-testid="skill-areas-search"
+                  />
+                </div>
+
+                {filtered.length === 0 ? (
+                  <p className="text-sm text-muted-foreground" role="status">
+                    No skill areas match “{query.trim()}”.
+                  </p>
+                ) : (
+                  <ul
+                    className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3"
+                    data-testid="skill-areas-list"
+                  >
+                    {filtered.map((skill, index) => (
+                      <li key={skill.skillId} className="min-w-0">
+                        <SkillAreaCard
+                          competitionId={competitionId}
+                          skill={skill}
+                          index={index}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         ) : null}
       </div>

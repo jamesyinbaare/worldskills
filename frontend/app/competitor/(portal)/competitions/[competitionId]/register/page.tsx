@@ -12,7 +12,7 @@ function CompetitorRegisterForm() {
     <CompetitionRegistrationForm
       competitionId={competitionId}
       mode="competitor"
-      backHref="/competitor"
+      backHref="/"
       confirmationHref={`/competitor/competitions/${competitionId}/register/confirmation`}
     />
   );

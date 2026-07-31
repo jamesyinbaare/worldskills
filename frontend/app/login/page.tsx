@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ApiError, homeForRole, login } from "@/lib/api";
+import { ApiError, getPublicSettings, login, resolvePostAuthPath } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
@@ -49,6 +49,7 @@ function LoginContent() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
   const [pending, setPending] = useState(false);
+  const [institutionSignupEnabled, setInstitutionSignupEnabled] = useState(false);
 
   const signupHref = nextPath
     ? `/signup?next=${encodeURIComponent(nextPath)}`
@@ -56,6 +57,23 @@ function LoginContent() {
   const institutionSignupHref = nextPath
     ? `/signup/institution?next=${encodeURIComponent(nextPath)}`
     : "/signup/institution";
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await getPublicSettings();
+        if (!cancelled) {
+          setInstitutionSignupEnabled(settings.institutionRegistrationEnabled);
+        }
+      } catch {
+        if (!cancelled) setInstitutionSignupEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -65,7 +83,10 @@ function LoginContent() {
       const me = await login(email.trim(), password);
       await refresh();
       router.push(
-        nextPath ?? homeForRole(me.role, Boolean(me.must_change_password)),
+        await resolvePostAuthPath(me.role, {
+          nextPath,
+          mustChangePassword: Boolean(me.must_change_password),
+        }),
       );
     } catch (err) {
       if (err instanceof ApiError) {
@@ -159,15 +180,17 @@ function LoginContent() {
                 Create an account
               </Link>
             </p>
-            <p className="text-sm text-muted-foreground">
-              School primary contact?{" "}
-              <Link
-                href={institutionSignupHref}
-                className="font-medium text-primary underline underline-offset-2"
-              >
-                Claim a school account
-              </Link>
-            </p>
+            {institutionSignupEnabled ? (
+              <p className="text-sm text-muted-foreground">
+                School primary contact?{" "}
+                <Link
+                  href={institutionSignupHref}
+                  className="font-medium text-primary underline underline-offset-2"
+                >
+                  Claim a school account
+                </Link>
+              </p>
+            ) : null}
             <Button variant="link" className="min-h-11 justify-start px-0" asChild>
               <Link href="/">Back to home</Link>
             </Button>

@@ -12,6 +12,7 @@ import {
   LogOutIcon,
   ScaleIcon,
   ScrollTextIcon,
+  SettingsIcon,
   ShapesIcon,
   TrophyIcon,
   UsersIcon,
@@ -66,6 +67,7 @@ const RUN_NAV = [
 const MORE_NAV = [
   { href: "/admin/institutions", label: "Institutions", icon: Building2Icon },
   { href: "/admin/users", label: "Users", icon: UsersIcon },
+  { href: "/admin/settings", label: "Settings", icon: SettingsIcon },
   { href: "/admin/audit", label: "Audit", icon: ScrollTextIcon },
 ] as const;
 

@@ -121,13 +121,13 @@ test.describe("US-REG-02-UI guardian consent", () => {
     await mockRegistrations(page);
   });
 
-  test("US-REG-02-UI-AC1 consent pending gate is shown", async ({ page }) => {
+  test("US-REG-02-UI-AC1 consent pending reminder is shown", async ({ page }) => {
     await page.goto(`/competitor/competitors/${COMPETITOR_ID}/consent`);
     await expect(page.getByTestId("consent-pending-alert")).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByTestId("consent-pending-alert")).toContainText(
-      "CONSENT_PENDING",
+      "Progression is not blocked",
     );
     await expect(page.getByTestId("scope-public")).toHaveAttribute(
       "data-granted",

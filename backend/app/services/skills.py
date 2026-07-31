@@ -125,8 +125,10 @@ async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID
         if not skill.active:
             continue
         family_name = None
+        description = None
         catalog = skill.__dict__.get("catalog_skill")
         if catalog is not None:
+            description = catalog.description
             family = catalog.__dict__.get("family")
             if family is not None:
                 family_name = family.name
@@ -136,6 +138,7 @@ async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID
                 "name": skill.name,
                 "number": skill.number,
                 "familyName": family_name,
+                "description": description,
                 "active": True,
                 "hasCriteriaDocument": bool(
                     skill.criteria_object_key and skill.criteria_file_name

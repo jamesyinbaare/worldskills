@@ -46,3 +46,7 @@ export function registerPath(
 export function loginNextHref(nextPath: string): string {
   return `/login?next=${encodeURIComponent(nextPath)}`;
 }
+
+export function signupNextHref(nextPath: string): string {
+  return `/signup?next=${encodeURIComponent(nextPath)}`;
+}

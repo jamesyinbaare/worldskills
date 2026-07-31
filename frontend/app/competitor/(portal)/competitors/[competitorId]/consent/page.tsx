@@ -340,11 +340,11 @@ export default function CompetitorConsentPage() {
         <CardContent className="space-y-6 px-4 sm:px-6">
           {!participationGranted ? (
             <Alert data-testid="consent-pending-alert" role="status">
-              <AlertTitle>CONSENT_PENDING</AlertTitle>
+              <AlertTitle>Consent recommended</AlertTitle>
               <AlertDescription>
-                Progression past review is blocked until a signed participation
-                consent form is uploaded. Public display stays withheld by
-                default.
+                A signed guardian consent form can be uploaded here. Progression
+                is not blocked while consent is pending. Public display stays
+                withheld by default.
               </AlertDescription>
             </Alert>
           ) : null}

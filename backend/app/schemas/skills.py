@@ -102,6 +102,7 @@ class SkillOut(BaseModel):
     number: str | None = None
     familyId: str | None = None
     familyName: str | None = None
+    description: str | None = None
     ageRuleId: UUID | None = None
     ageRule: AgeRuleEmbed | None = None
     pathwayId: UUID | None = None
@@ -120,6 +121,7 @@ class AvailableSkillOut(BaseModel):
     name: str
     number: str | None = None
     familyName: str | None = None
+    description: str | None = None
     active: bool = True
     hasCriteriaDocument: bool = False
     criteriaFileName: str | None = None

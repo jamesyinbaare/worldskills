@@ -45,7 +45,7 @@ class CatalogSkillCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     number: str | None = Field(default=None, max_length=32)
     familyId: UUID
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=20000)
 
     @field_validator("name")
     @classmethod
@@ -55,12 +55,20 @@ class CatalogSkillCreate(BaseModel):
             raise ValueError("REQUIRED")
         return stripped
 
+    @field_validator("description")
+    @classmethod
+    def description_normalize(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
+
 
 class CatalogSkillPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     number: str | None = Field(default=None, max_length=32)
     familyId: UUID | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=20000)
     active: bool | None = None
 
     @field_validator("name")
@@ -72,6 +80,14 @@ class CatalogSkillPatch(BaseModel):
         if not stripped:
             raise ValueError("REQUIRED")
         return stripped
+
+    @field_validator("description")
+    @classmethod
+    def description_normalize(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
 
 
 class CatalogSkillOut(BaseModel):

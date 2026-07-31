@@ -34,6 +34,23 @@ async function fulfillJson(
 
 async function mockPublicDiscovery(page: Page): Promise<void> {
   await page.route(
+    (url) => isApiPath(url.toString(), "/settings"),
+    async (route) => {
+      if (
+        route.request().resourceType() !== "fetch" &&
+        route.request().resourceType() !== "xhr"
+      ) {
+        await route.fallback();
+        return;
+      }
+      await fulfillJson(route, 200, {
+        institutionRegistrationEnabled: true,
+        allowMultipleActiveCompetitions: true,
+      });
+    },
+  );
+
+  await page.route(
     (url) => isApiPath(url.toString(), "/competitions:open-for-registration"),
     async (route) => {
       if (
@@ -132,34 +149,33 @@ test.describe("Public competition browse", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: /WorldSkills Ghana 2026/i }),
     ).toBeVisible();
+    await expect(page.getByTestId("skill-areas-list")).toBeVisible();
     await expect(page.getByTestId("skill-area-card")).toHaveCount(2);
 
-    await page
-      .getByTestId("skill-area-card")
-      .first()
-      .getByRole("link", { name: /continue/i })
-      .click();
+    await page.getByTestId("skill-area-card").first().click();
     await expect(page).toHaveURL(
-      new RegExp(`/competitions/${CYCLE_ID}/enter\\?skillId=${SKILL_A}`),
+      new RegExp(`/competitions/${CYCLE_ID}/skills/${SKILL_A}`),
     );
-    await expect(page.getByText(/Selected skill area/i)).toBeVisible();
-    await expect(page.getByText(/Web Development/)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: /Web Development/i }),
+    ).toBeVisible();
+    await expect(page.getByTestId("start-registration")).toBeVisible();
 
-    await page.getByTestId("register-as-competitor").click();
-    await expect(page).toHaveURL(/\/login/);
+    await page.getByTestId("start-registration").click();
+    await expect(page).toHaveURL(/\/signup/);
     const url = new URL(page.url());
     expect(url.searchParams.get("next")).toBe(
       `/competitor/competitions/${CYCLE_ID}/register?skillId=${SKILL_A}`,
     );
 
     await page.goto(
-      `/competitions/${CYCLE_ID}/enter?skillId=${encodeURIComponent(SKILL_B)}`,
+      `/competitions/${CYCLE_ID}/skills/${encodeURIComponent(SKILL_B)}`,
     );
-    await page.getByTestId("register-as-institution").click();
-    await expect(page).toHaveURL(/\/login/);
-    const instUrl = new URL(page.url());
-    expect(instUrl.searchParams.get("next")).toBe(
-      `/institution/competitions/${CYCLE_ID}/register?skillId=${SKILL_B}`,
+    await page.getByTestId("start-registration").click();
+    await expect(page).toHaveURL(/\/signup/);
+    const skillBUrl = new URL(page.url());
+    expect(skillBUrl.searchParams.get("next")).toBe(
+      `/competitor/competitions/${CYCLE_ID}/register?skillId=${SKILL_B}`,
     );
   });
 });

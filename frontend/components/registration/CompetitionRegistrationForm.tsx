@@ -25,18 +25,23 @@ import {
   createRegistration,
   getNominationQuotas,
   getPublicCompetition,
+  getRegistrationDraft,
+  getRegistrationDraftPhoto,
   getRegistrationForm,
   isCompetitorRole,
   isInstitutionRole,
   listAvailableSkills,
   listMyRegistrations,
   listRegions,
+  putRegistrationDraft,
   type AvailableSkillOut,
   type NominationQuotaOut,
   type RegionOut,
   type RegistrationCreateInput,
+  type RegistrationDraftInput,
   type RegistrationFormField,
   type RegistrationFormOut,
+  type CoachBioInput,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { saveRegistrationConfirmation } from "@/lib/registrationConfirmation";
@@ -45,6 +50,11 @@ import {
   FieldMessage,
   fieldErrorMap,
 } from "@/components/forms/ApiErrorAlert";
+import { RegistrationProgress } from "@/components/registration/RegistrationProgress";
+import {
+  clampStep,
+  type RegistrationStepId,
+} from "@/components/registration/registrationSteps";
 import {
   SchoolSearchSelect,
   type SchoolSelection,
@@ -54,6 +64,38 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+
+const DRAFT_VALUE_KEYS = [
+  "givenNames",
+  "familyName",
+  "gender",
+  "dateOfBirth",
+  "email",
+  "mobile",
+  "whatsapp",
+  "nationalId",
+  "nationality",
+  "guardianName",
+  "guardianEmail",
+  "guardianPhone",
+] as const;
+
+function asDateInput(value: unknown): string {
+  if (value == null || value === "") return "";
+  return String(value).slice(0, 10);
+}
+
+function formatDraftSavedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 const SPECIAL_FIELDS = new Set([
   "skillIds",
@@ -66,6 +108,7 @@ const SPECIAL_FIELDS = new Set([
   "hasPassport",
   "passportNumber",
   "passportExpiresOn",
+  "coach",
 ]);
 
 const INSTITUTION_HIDDEN_FIELDS = new Set([
@@ -205,6 +248,15 @@ export function CompetitionRegistrationForm({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoClientError, setPhotoClientError] = useState<string | null>(null);
+  const [coach, setCoach] = useState({
+    surname: "",
+    firstName: "",
+    otherName: "",
+    contactNumber: "",
+    email: "",
+    whatsapp: "",
+    dateOfBirth: "",
+  });
 
   const [error, setError] = useState<ApiError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -212,6 +264,10 @@ export function CompetitionRegistrationForm({
   const [checkingExisting, setCheckingExisting] = useState(
     mode === "competitor",
   );
+  const [currentStep, setCurrentStep] = useState<RegistrationStepId>(1);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftPending, setDraftPending] = useState(false);
+  const [hasSavedPhoto, setHasSavedPhoto] = useState(false);
 
   const idempotencyKeyRef = useRef(newIdempotencyKey());
 
@@ -231,9 +287,9 @@ export function CompetitionRegistrationForm({
   useEffect(() => {
     if (status === "loading") return;
     if (status === "anonymous") {
-      router.replace(loginHref);
+      router.replace(signupHref);
     }
-  }, [status, router, loginHref]);
+  }, [status, router, signupHref]);
 
   useEffect(() => {
     if (mode !== "competitor") {
@@ -254,7 +310,7 @@ export function CompetitionRegistrationForm({
         const rows = await listMyRegistrations();
         if (cancelled) return;
         const existing = rows.find((r) => r.competitionId === competitionId);
-        if (existing) {
+        if (existing && existing.status?.toUpperCase() !== "DRAFT") {
           redirected = true;
           router.replace(`/competitor/competitions/${competitionId}`);
           return;
@@ -327,16 +383,108 @@ export function CompetitionRegistrationForm({
         );
       }
       const slotCount = Math.max(1, Math.min(def.maxSkills, 1));
-      const preferred =
+      let preferred =
         preferredSkillId &&
         activeSkills.some((s) => s.skillId === preferredSkillId)
           ? preferredSkillId
           : "";
-      setSkillIds(
-        Array.from({ length: slotCount }, (_, i) =>
-          i === 0 && preferred ? preferred : "",
-        ),
-      );
+
+      if (mode === "competitor") {
+        try {
+          const draft = await getRegistrationDraft(competitionId);
+          const nextValues: Record<string, string> = {};
+          for (const key of DRAFT_VALUE_KEYS) {
+            const raw = draft[key];
+            if (raw == null || raw === "") continue;
+            nextValues[key] =
+              key === "dateOfBirth" ? asDateInput(raw) : String(raw);
+          }
+          setValues(nextValues);
+
+          if (draft.hasPassport != null) setHasPassport(draft.hasPassport);
+          setPassportNumber(draft.passportNumber?.trim() ?? "");
+          setPassportExpiresOn(asDateInput(draft.passportExpiresOn));
+
+          if (draft.coach && typeof draft.coach === "object") {
+            setCoach({
+              surname: draft.coach.surname ?? "",
+              firstName: draft.coach.firstName ?? "",
+              otherName: draft.coach.otherName ?? "",
+              contactNumber: draft.coach.contactNumber ?? "",
+              email: draft.coach.email ?? "",
+              whatsapp: draft.coach.whatsapp ?? "",
+              dateOfBirth: asDateInput(draft.coach.dateOfBirth),
+            });
+          }
+
+          if (draft.institutionId) {
+            setSchool({
+              institutionId: String(draft.institutionId),
+              code: draft.institutionCode?.trim() ?? "",
+              name:
+                draft.institutionName?.trim() ||
+                draft.institutionCode?.trim() ||
+                "Selected school",
+            });
+            setRegionId("");
+          } else {
+            setSchool(null);
+            setRegionId(draft.regionId ? String(draft.regionId) : "");
+          }
+
+          const draftSkills = (draft.skillIds ?? [])
+            .map((id) => String(id))
+            .filter(Boolean);
+          if (draftSkills.length > 0) {
+            setSkillIds(
+              Array.from(
+                { length: Math.max(slotCount, Math.min(draftSkills.length, def.maxSkills)) },
+                (_, i) => draftSkills[i] ?? "",
+              ),
+            );
+          } else {
+            setSkillIds(
+              Array.from({ length: slotCount }, (_, i) =>
+                i === 0 && preferred ? preferred : "",
+              ),
+            );
+          }
+
+          if (draft.declarationAccepted != null) {
+            setDeclarationAccepted(Boolean(draft.declarationAccepted));
+          }
+          setCurrentStep(clampStep(draft.currentStep ?? 1));
+          setHasSavedPhoto(Boolean(draft.hasPhoto));
+          setDraftSavedAt(draft.updatedAt);
+
+          if (draft.hasPhoto) {
+            try {
+              const blob = await getRegistrationDraftPhoto(competitionId);
+              setPhotoPreview((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return URL.createObjectURL(blob);
+              });
+            } catch {
+              /* Keep hasSavedPhoto fallback UI */
+            }
+          }
+        } catch (err) {
+          if (!(err instanceof ApiError && err.status === 404)) {
+            /* Soft-fail draft load; form still usable */
+          }
+          setSkillIds(
+            Array.from({ length: slotCount }, (_, i) =>
+              i === 0 && preferred ? preferred : "",
+            ),
+          );
+        }
+      } else {
+        setSkillIds(
+          Array.from({ length: slotCount }, (_, i) =>
+            i === 0 && preferred ? preferred : "",
+          ),
+        );
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setLoadError(err);
@@ -436,9 +584,230 @@ export function CompetitionRegistrationForm({
     setPhotoPreview(URL.createObjectURL(file));
   }
 
+  async function buildDraftPayload(
+    step?: number,
+  ): Promise<RegistrationDraftInput> {
+    const payload: RegistrationDraftInput = {
+      currentStep: step ?? currentStep,
+      skillIds: skillIds.map((s) => s.trim()).filter(Boolean),
+      declarationAccepted,
+      hasPassport,
+      passportNumber:
+        hasPassport === true ? passportNumber.trim() || null : null,
+      passportExpiresOn:
+        hasPassport === true ? passportExpiresOn.trim() || null : null,
+      captchaToken: captchaToken.trim() || null,
+    };
+
+    for (const key of DRAFT_VALUE_KEYS) {
+      const raw = values[key]?.trim() ?? "";
+      if (raw) {
+        (payload as Record<string, unknown>)[key] = raw;
+      }
+    }
+
+    const coachPayload: CoachBioInput = {
+      surname: coach.surname.trim(),
+      firstName: coach.firstName.trim(),
+      otherName: coach.otherName.trim() || null,
+      contactNumber: coach.contactNumber.trim(),
+      email: coach.email.trim(),
+      whatsapp: coach.whatsapp.trim(),
+      dateOfBirth: coach.dateOfBirth.trim(),
+    };
+    if (
+      coachPayload.surname ||
+      coachPayload.firstName ||
+      coachPayload.contactNumber ||
+      coachPayload.email ||
+      coachPayload.whatsapp ||
+      coachPayload.dateOfBirth
+    ) {
+      payload.coach = coachPayload;
+    }
+
+    if (mode === "institution") {
+      payload.institutionId = sessionInstitutionId;
+    } else if (school?.institutionId) {
+      payload.institutionId = school.institutionId;
+      payload.regionId = null;
+    } else {
+      payload.institutionId = null;
+      payload.regionId = regionId || null;
+    }
+
+    if (photoFile) {
+      payload.photo = {
+        contentBase64: await readFileAsBase64(photoFile),
+        contentType: photoFile.type || "image/png",
+      };
+    }
+
+    return payload;
+  }
+
+  async function saveDraft(step?: number): Promise<boolean> {
+    if (mode !== "competitor" || status !== "authenticated") return true;
+    setDraftPending(true);
+    try {
+      const payload = await buildDraftPayload(step);
+      const out = await putRegistrationDraft(competitionId, payload);
+      setDraftSavedAt(out.updatedAt);
+      if (photoFile || out.hasPhoto) {
+        setHasSavedPhoto(Boolean(out.hasPhoto) || Boolean(photoFile));
+      }
+      setError(null);
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err);
+        setFieldErrors(fieldErrorMap(err.fields));
+      } else {
+        setError(
+          new ApiError(0, {
+            error: {
+              code: "HTTP_ERROR",
+              message: "Could not save draft",
+              fields: [],
+              traceId: "",
+            },
+          }),
+        );
+      }
+      return false;
+    } finally {
+      setDraftPending(false);
+    }
+  }
+
+  function validateStep(step: number): boolean {
+    if (!formDef) return false;
+    setError(null);
+    const nextErrors: Record<string, string> = {};
+    const stepStandardFields = formDef.fields.filter(
+      (f) =>
+        !SPECIAL_FIELDS.has(f.name) &&
+        !(mode === "institution" && INSTITUTION_HIDDEN_FIELDS.has(f.name)),
+    );
+    const stepHasDeclaration = formDef.fields.some(
+      (f) => f.name === "declarationAccepted",
+    );
+
+    if (step === 1) {
+      for (const field of stepStandardFields) {
+        if (!field.required) continue;
+        const raw = values[field.name]?.trim() ?? "";
+        if (!raw) {
+          nextErrors[field.name] =
+            field.name === "dateOfBirth"
+              ? "Enter your date of birth."
+              : "This field is required.";
+        }
+      }
+      const photoRequired = formDef.fields.some(
+        (f) => f.name === "photo" && f.required,
+      );
+      if (photoClientError) {
+        nextErrors.photo = photoClientError;
+      } else if (photoRequired && !photoFile && !hasSavedPhoto) {
+        nextErrors.photo = "Please upload your photo.";
+      }
+    }
+
+    if (step === 2) {
+      if (hasPassport === null) {
+        nextErrors.hasPassport = "Tell us whether you have a passport.";
+      } else if (hasPassport) {
+        if (!passportNumber.trim()) {
+          nextErrors.passportNumber = "Enter your passport number.";
+        }
+        if (!passportExpiresOn.trim()) {
+          nextErrors.passportExpiresOn = "Enter your passport expiry date.";
+        }
+      }
+    }
+
+    if (step === 3) {
+      const trimmedSkills = skillIds.map((s) => s.trim()).filter(Boolean);
+      if (trimmedSkills.length !== formDef.maxSkills) {
+        nextErrors.skillIds = `Select exactly ${formDef.maxSkills} skill(s)`;
+      }
+      if (mode === "competitor" && !school?.institutionId && !regionId) {
+        nextErrors.regionId =
+          "Select a region when registering without a school, or search for your school first.";
+      }
+    }
+
+    if (step === 4) {
+      const coachRequired: Array<{ key: keyof typeof coach; field: string }> = [
+        { key: "surname", field: "coach.surname" },
+        { key: "firstName", field: "coach.firstName" },
+        { key: "contactNumber", field: "coach.contactNumber" },
+        { key: "email", field: "coach.email" },
+        { key: "whatsapp", field: "coach.whatsapp" },
+        { key: "dateOfBirth", field: "coach.dateOfBirth" },
+      ];
+      for (const { key, field } of coachRequired) {
+        if (!coach[key].trim()) {
+          nextErrors[field] = "Required";
+        }
+      }
+    }
+
+    if (step === 5) {
+      if (stepHasDeclaration && !declarationAccepted) {
+        nextErrors.declarationAccepted =
+          "Please accept the declaration to continue.";
+      }
+      if (!captchaToken.trim()) {
+        nextErrors.captchaToken = "Complete the security check.";
+      }
+    }
+
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setError(
+        new ApiError(422, {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Please fix the highlighted fields before continuing.",
+            fields: Object.keys(nextErrors).map((name) => ({
+              name,
+              reason: "REQUIRED",
+            })),
+            traceId: "",
+          },
+        }),
+      );
+      return false;
+    }
+    return true;
+  }
+
+  async function handleContinue() {
+    if (!formDef || formDef.readOnly) return;
+    if (!validateStep(currentStep)) return;
+    const next = clampStep(currentStep + 1);
+    const ok = await saveDraft(next);
+    if (!ok) return;
+    setCurrentStep(next);
+  }
+
+  async function handleSaveDraftClick() {
+    setError(null);
+    await saveDraft(currentStep);
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!formDef || formDef.readOnly) return;
+
+    if (currentStep < 5) {
+      await handleContinue();
+      return;
+    }
+
+    if (!validateStep(5)) return;
 
     setError(null);
     setFieldErrors({});
@@ -545,6 +914,38 @@ export function CompetitionRegistrationForm({
         });
       }
 
+      const coachRequired: Array<{ key: keyof typeof coach; field: string }> = [
+        { key: "surname", field: "coach.surname" },
+        { key: "firstName", field: "coach.firstName" },
+        { key: "contactNumber", field: "coach.contactNumber" },
+        { key: "email", field: "coach.email" },
+        { key: "whatsapp", field: "coach.whatsapp" },
+        { key: "dateOfBirth", field: "coach.dateOfBirth" },
+      ];
+      for (const { key, field } of coachRequired) {
+        if (!coach[key].trim()) {
+          throw new ApiError(422, {
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Please complete the coach / team leader details.",
+              fields: [{ name: field, reason: "REQUIRED" }],
+              traceId: "",
+            },
+          });
+        }
+      }
+
+      const coachPayload: CoachBioInput = {
+        surname: coach.surname.trim(),
+        firstName: coach.firstName.trim(),
+        otherName: coach.otherName.trim() || null,
+        contactNumber: coach.contactNumber.trim(),
+        email: coach.email.trim(),
+        whatsapp: coach.whatsapp.trim(),
+        dateOfBirth: coach.dateOfBirth.trim(),
+      };
+      payload.coach = coachPayload;
+
       if (mode === "institution") {
         payload.institutionId = sessionInstitutionId;
       } else if (school?.institutionId) {
@@ -577,7 +978,7 @@ export function CompetitionRegistrationForm({
           contentBase64,
           contentType: photoFile.type || "image/png",
         };
-      } else if (photoRequired) {
+      } else if (photoRequired && !hasSavedPhoto) {
         payload.photo = null;
       }
 
@@ -625,6 +1026,23 @@ export function CompetitionRegistrationForm({
   const quotaBySkill = Object.fromEntries(
     quotas.map((q) => [q.skillId, q]),
   ) as Record<string, NominationQuotaOut>;
+  const summaryName =
+    [values.givenNames, values.familyName].filter(Boolean).join(" ") || "—";
+  const summarySkill =
+    skillIds
+      .map((id) => skills.find((s) => s.skillId === id)?.name)
+      .filter(Boolean)
+      .join(", ") || "—";
+  const summarySchool =
+    mode === "institution"
+      ? "Your claimed school"
+      : school?.name
+        ? school.code
+          ? `${school.name} (${school.code})`
+          : school.name
+        : regionId
+          ? (regions.find((r) => r.regionId === regionId)?.name ?? "Region selected")
+          : "—";
   const authLoading = status === "loading" || status === "anonymous";
   const wrongRole =
     status === "authenticated" &&
@@ -727,6 +1145,23 @@ export function CompetitionRegistrationForm({
                 : `Signed in as ${me?.email ?? me?.full_name}. Search for your school, or choose a region if you are unaffiliated.`}
             </p>
           </header>
+
+          {formDef ? (
+            <div className="space-y-2">
+              <RegistrationProgress
+                currentStep={currentStep}
+                onStepSelect={(s) => setCurrentStep(s)}
+              />
+              {draftSavedAt ? (
+                <p
+                  className="text-xs text-muted-foreground"
+                  data-testid="registration-draft-saved-at"
+                >
+                  Last saved {formatDraftSavedAt(draftSavedAt)}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         {loadingForm ? (
@@ -756,6 +1191,8 @@ export function CompetitionRegistrationForm({
             data-testid="registration-form"
             aria-describedby={formHintId}
           >
+            {currentStep === 1 && (
+              <>
             <FormSection
               icon={UserRound}
               title="Your details"
@@ -791,7 +1228,7 @@ export function CompetitionRegistrationForm({
                           className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           required={field.required}
                           value={values[field.name] ?? ""}
-                          disabled={readOnly || pending}
+                          disabled={readOnly || pending || draftPending}
                           aria-invalid={Boolean(err)}
                           aria-describedby={err ? errId : undefined}
                           onChange={(e) => setValue(field.name, e.target.value)}
@@ -814,7 +1251,7 @@ export function CompetitionRegistrationForm({
                           maxLength={field.maxLength ?? undefined}
                           pattern={field.pattern ?? undefined}
                           value={values[field.name] ?? ""}
-                          disabled={readOnly || pending}
+                          disabled={readOnly || pending || draftPending}
                           aria-invalid={Boolean(err)}
                           aria-describedby={err ? errId : undefined}
                           onChange={(e) => setValue(field.name, e.target.value)}
@@ -828,6 +1265,88 @@ export function CompetitionRegistrationForm({
               </div>
             </FormSection>
 
+            {hasPhoto ? (
+              <FormSection
+                icon={Camera}
+                title="Photo"
+                description={`Accepted: ${formDef.photoFormats.join(", ") || "image files"}; max ${formDef.photoMaxMb} MB.`}
+              >
+                <div className="space-y-3">
+                  <Label htmlFor="photo" className="sr-only">
+                    Photo *
+                  </Label>
+                  <label
+                    htmlFor="photo"
+                    className={cn(
+                      "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-brand-blue/30 bg-brand-blue/[0.03] px-4 py-8 text-center transition-colors hover:bg-brand-blue/[0.06]",
+                      (readOnly || pending || draftPending) && "pointer-events-none opacity-60",
+                    )}
+                  >
+                    {photoPreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={photoPreview}
+                        alt="Selected registration photo preview"
+                        className="size-28 rounded-lg object-cover ring-2 ring-brand-gold/50"
+                      />
+                    ) : hasSavedPhoto ? (
+                      <div className="space-y-1">
+                        <Camera
+                          className="mx-auto size-8 text-brand-blue/70"
+                          aria-hidden
+                        />
+                        <p className="text-sm font-medium text-foreground">
+                          Photo already saved
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Upload a new file to replace it
+                        </p>
+                      </div>
+                    ) : (
+                      <Camera
+                        className="size-8 text-brand-blue/70"
+                        aria-hidden
+                      />
+                    )}
+                    <span className="text-sm font-medium text-foreground">
+                      {photoFile
+                        ? photoFile.name
+                        : hasSavedPhoto
+                          ? "Replace photo"
+                          : "Click to upload your photo"}
+                    </span>
+                  </label>
+                  <Input
+                    id="photo"
+                    type="file"
+                    accept={formDef.photoFormats.join(",") || "image/*"}
+                    className="sr-only"
+                    disabled={readOnly || pending || draftPending}
+                    aria-describedby={
+                      photoClientError || fieldErrors.photo
+                        ? "photo-error"
+                        : undefined
+                    }
+                    aria-invalid={Boolean(
+                      photoClientError || fieldErrors.photo,
+                    )}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      void onPhotoChange(file);
+                    }}
+                    data-testid="registration-photo"
+                  />
+                  <FieldMessage
+                    id="photo-error"
+                    message={photoClientError || fieldErrors.photo}
+                  />
+                </div>
+              </FormSection>
+            ) : null}
+              </>
+            )}
+
+            {currentStep === 2 && (
             <FormSection
               icon={BookUser}
               title="Passport"
@@ -835,7 +1354,7 @@ export function CompetitionRegistrationForm({
             >
               <fieldset
                 className="space-y-3"
-                disabled={readOnly || pending}
+                disabled={readOnly || pending || draftPending}
                 data-testid="registration-passport"
               >
                 <legend className="text-sm font-medium">
@@ -908,7 +1427,7 @@ export function CompetitionRegistrationForm({
                         name="passportNumber"
                         className="min-h-11 font-mono uppercase"
                         value={passportNumber}
-                        disabled={readOnly || pending}
+                        disabled={readOnly || pending || draftPending}
                         autoComplete="off"
                         placeholder="e.g. G1234567"
                         aria-invalid={Boolean(fieldErrors.passportNumber)}
@@ -934,7 +1453,7 @@ export function CompetitionRegistrationForm({
                         type="date"
                         className="min-h-11"
                         value={passportExpiresOn}
-                        disabled={readOnly || pending}
+                        disabled={readOnly || pending || draftPending}
                         aria-invalid={Boolean(fieldErrors.passportExpiresOn)}
                         data-testid="passport-expires-on"
                         onChange={(e) => {
@@ -955,7 +1474,10 @@ export function CompetitionRegistrationForm({
                 ) : null}
               </fieldset>
             </FormSection>
+            )}
 
+            {currentStep === 3 && (
+              <>
             {mode === "institution" ? (
               <FormSection
                 icon={MapPin}
@@ -977,7 +1499,7 @@ export function CompetitionRegistrationForm({
                   <SchoolSearchSelect
                     value={school}
                     onChange={onSchoolChange}
-                    disabled={readOnly || pending}
+                    disabled={readOnly || pending || draftPending}
                     error={
                       fieldErrors.institutionId ||
                       fieldErrors.schoolCode ||
@@ -1000,7 +1522,7 @@ export function CompetitionRegistrationForm({
                       id="regionId"
                       className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                       value={regionId}
-                      disabled={readOnly || pending}
+                      disabled={readOnly || pending || draftPending}
                       onChange={(e) => setRegionId(e.target.value)}
                       aria-invalid={Boolean(fieldErrors.regionId)}
                       required={!school}
@@ -1054,7 +1576,7 @@ export function CompetitionRegistrationForm({
                 <fieldset
                   className="space-y-3"
                   data-testid="registration-skills"
-                  disabled={readOnly || pending}
+                  disabled={readOnly || pending || draftPending}
                 >
                   <legend className="sr-only">Skill selection</legend>
                   {skillIds.map((skillId, index) => (
@@ -1131,76 +1653,122 @@ export function CompetitionRegistrationForm({
                 </fieldset>
               </FormSection>
             ) : null}
+              </>
+            )}
 
-            {hasPhoto ? (
-              <FormSection
-                icon={Camera}
-                title="Photo"
-                description={`Accepted: ${formDef.photoFormats.join(", ") || "image files"}; max ${formDef.photoMaxMb} MB.`}
-              >
-                <div className="space-y-3">
-                  <Label htmlFor="photo" className="sr-only">
-                    Photo *
-                  </Label>
-                  <label
-                    htmlFor="photo"
-                    className={cn(
-                      "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-brand-blue/30 bg-brand-blue/[0.03] px-4 py-8 text-center transition-colors hover:bg-brand-blue/[0.06]",
-                      (readOnly || pending) && "pointer-events-none opacity-60",
-                    )}
-                  >
-                    {photoPreview ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={photoPreview}
-                        alt="Selected registration photo preview"
-                        className="size-28 rounded-lg object-cover ring-2 ring-brand-gold/50"
+            {currentStep === 4 && (
+            <FormSection
+              icon={UserRound}
+              title="Coach / team leader"
+              description="BIO-DATA OF TEAM LEADER/COACH/COMPATRIOT EXPERT OF THE COMPETITOR FROM THE COMPETING INSTITUTION"
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                {(
+                  [
+                    { key: "surname", label: "Surname", required: true },
+                    { key: "firstName", label: "First name", required: true },
+                    { key: "otherName", label: "Other name", required: false },
+                    {
+                      key: "contactNumber",
+                      label: "Contact number",
+                      required: true,
+                      type: "tel",
+                    },
+                    {
+                      key: "email",
+                      label: "Email address",
+                      required: true,
+                      type: "email",
+                    },
+                    {
+                      key: "whatsapp",
+                      label: "WhatsApp line / contact",
+                      required: true,
+                      type: "tel",
+                    },
+                    {
+                      key: "dateOfBirth",
+                      label: "Date of birth",
+                      required: true,
+                      type: "date",
+                      wide: true,
+                    },
+                  ] as const
+                ).map((field) => {
+                  const errKey = `coach.${field.key}`;
+                  const err = fieldErrors[errKey] || fieldErrors.coach;
+                  return (
+                    <div
+                      key={field.key}
+                      className={cn(
+                        "space-y-2",
+                        "wide" in field && field.wide ? "sm:col-span-2" : null,
+                      )}
+                    >
+                      <Label htmlFor={`coach-${field.key}`}>
+                        {field.label}
+                        {field.required ? " *" : ""}
+                      </Label>
+                      <Input
+                        id={`coach-${field.key}`}
+                        name={errKey}
+                        type={"type" in field ? field.type : "text"}
+                        className="min-h-11"
+                        required={field.required}
+                        value={coach[field.key]}
+                        disabled={readOnly || pending || draftPending}
+                        aria-invalid={Boolean(err)}
+                        data-testid={`coach-${field.key}`}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setCoach((prev) => ({ ...prev, [field.key]: value }));
+                          setFieldErrors((prev) => {
+                            const next = { ...prev };
+                            delete next[errKey];
+                            delete next.coach;
+                            return next;
+                          });
+                        }}
+                        autoComplete="off"
                       />
-                    ) : (
-                      <Camera
-                        className="size-8 text-brand-blue/70"
-                        aria-hidden
-                      />
-                    )}
-                    <span className="text-sm font-medium text-foreground">
-                      {photoFile
-                        ? photoFile.name
-                        : "Click to upload your photo"}
-                    </span>
-                  </label>
-                  <Input
-                    id="photo"
-                    type="file"
-                    accept={formDef.photoFormats.join(",") || "image/*"}
-                    className="sr-only"
-                    disabled={readOnly || pending}
-                    aria-describedby={
-                      photoClientError || fieldErrors.photo
-                        ? "photo-error"
-                        : undefined
-                    }
-                    aria-invalid={Boolean(
-                      photoClientError || fieldErrors.photo,
-                    )}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] ?? null;
-                      void onPhotoChange(file);
-                    }}
-                    data-testid="registration-photo"
-                  />
-                  <FieldMessage
-                    id="photo-error"
-                    message={photoClientError || fieldErrors.photo}
-                  />
-                </div>
-              </FormSection>
-            ) : null}
+                      <FieldMessage message={err} />
+                    </div>
+                  );
+                })}
+              </div>
+            </FormSection>
+            )}
 
+            {currentStep === 5 && (
             <FormSection
               icon={ShieldCheck}
               title="Confirm & submit"
               description="Review your details before submitting. You will receive a competitor reference on success."
             >
+              <dl
+                className="space-y-3 rounded-lg border border-border/70 bg-muted/30 px-4 py-3 text-sm"
+                data-testid="registration-review-summary"
+              >
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                  <dt className="text-muted-foreground">Name</dt>
+                  <dd className="font-medium text-foreground sm:text-right">
+                    {summaryName}
+                  </dd>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                  <dt className="text-muted-foreground">Skill</dt>
+                  <dd className="font-medium text-foreground sm:text-right">
+                    {summarySkill}
+                  </dd>
+                </div>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                  <dt className="text-muted-foreground">School / region</dt>
+                  <dd className="font-medium text-foreground sm:text-right">
+                    {summarySchool}
+                  </dd>
+                </div>
+              </dl>
+
               {hasDeclaration ? (
                 <div className="space-y-2">
                   <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-3 py-3">
@@ -1209,7 +1777,7 @@ export function CompetitionRegistrationForm({
                       type="checkbox"
                       className="mt-1 size-4 accent-brand-blue"
                       checked={declarationAccepted}
-                      disabled={readOnly || pending}
+                      disabled={readOnly || pending || draftPending}
                       aria-invalid={Boolean(fieldErrors.declarationAccepted)}
                       onChange={(e) =>
                         setDeclarationAccepted(e.target.checked)
@@ -1234,7 +1802,7 @@ export function CompetitionRegistrationForm({
                   id="captchaToken"
                   className="min-h-11"
                   value={captchaToken}
-                  disabled={readOnly || pending}
+                  disabled={readOnly || pending || draftPending}
                   onChange={(e) => setCaptchaToken(e.target.value)}
                   autoComplete="off"
                   data-testid="registration-captcha"
@@ -1258,26 +1826,70 @@ export function CompetitionRegistrationForm({
                 />
               </div>
             </FormSection>
+            )}
+
+            {error && currentStep < 5 ? (
+              <ApiErrorAlert
+                error={error}
+                title="Could not save progress"
+              />
+            ) : null}
 
             <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border/80 bg-white/90 px-4 py-3 backdrop-blur-md sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
-              <div className="mx-auto flex max-w-2xl flex-col gap-2 sm:mx-0">
-                <Button
-                  type="submit"
-                  className="min-h-12 w-full gap-2 text-base"
-                  disabled={pending || readOnly}
-                  data-testid="registration-submit"
-                >
-                  {pending ? (
-                    "Submitting…"
-                  ) : readOnly ? (
-                    "Registration closed"
-                  ) : (
-                    <>
-                      <CheckCircle2 className="size-4" aria-hidden />
-                      Submit registration
-                    </>
-                  )}
-                </Button>
+              <div className="mx-auto flex max-w-2xl flex-col gap-2 sm:mx-0 sm:flex-row sm:flex-wrap">
+                {currentStep > 1 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-12 flex-1 gap-2 text-base sm:flex-none sm:min-w-28"
+                    disabled={pending || draftPending}
+                    onClick={() => setCurrentStep(clampStep(currentStep - 1))}
+                    data-testid="registration-back"
+                  >
+                    Back
+                  </Button>
+                ) : null}
+                {mode === "competitor" ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="min-h-12 flex-1 gap-2 text-base sm:flex-none sm:min-w-32"
+                    disabled={pending || draftPending || readOnly}
+                    onClick={() => void handleSaveDraftClick()}
+                    data-testid="registration-save-draft"
+                  >
+                    {draftPending ? "Saving…" : "Save draft"}
+                  </Button>
+                ) : null}
+                {currentStep < 5 ? (
+                  <Button
+                    type="button"
+                    className="min-h-12 w-full flex-1 gap-2 text-base sm:min-w-40"
+                    disabled={pending || draftPending || readOnly}
+                    onClick={() => void handleContinue()}
+                    data-testid="registration-continue"
+                  >
+                    {draftPending ? "Saving…" : "Continue"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    className="min-h-12 w-full flex-1 gap-2 text-base sm:min-w-40"
+                    disabled={pending || draftPending || readOnly}
+                    data-testid="registration-submit"
+                  >
+                    {pending ? (
+                      "Submitting…"
+                    ) : readOnly ? (
+                      "Registration closed"
+                    ) : (
+                      <>
+                        <CheckCircle2 className="size-4" aria-hidden />
+                        Submit registration
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
           </form>

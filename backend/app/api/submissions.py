@@ -180,6 +180,20 @@ async def finalise_submission(
     )
 
 
+@router.post("/submissions/{submission_id}:reopen", response_model=SubmissionOut)
+async def reopen_submission(
+    submission_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: CompetitorUserDep,
+    request: Request,
+) -> SubmissionOut:
+    ip, ua = client_meta(request)
+    sub = await submission_service.reopen_submission(
+        session, submission_id, actor=actor, ip=ip, user_agent=ua
+    )
+    return _submission_out(sub)
+
+
 @router.post("/submissions/{submission_id}:expire-timer", response_model=FinaliseOut)
 async def expire_timer(
     submission_id: uuid.UUID,

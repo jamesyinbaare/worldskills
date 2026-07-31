@@ -31,8 +31,10 @@ _REG_DISCOVERY_ROLES = {
 
 def _skill_out(skill: Skill, *, has_pathway: bool = False) -> SkillOut:
     family_name = None
+    description = None
     catalog = skill.__dict__.get("catalog_skill")
     if catalog is not None:
+        description = catalog.description
         family = catalog.__dict__.get("family")
         if family is not None:
             family_name = family.name
@@ -45,6 +47,7 @@ def _skill_out(skill: Skill, *, has_pathway: bool = False) -> SkillOut:
         number=skill.number,
         familyId=skill.family_id,
         familyName=family_name,
+        description=description,
         ageRuleId=skill.age_rule_id,
         ageRule=_age_rule_embed(skill),
         pathwayId=skill.pathway_id,

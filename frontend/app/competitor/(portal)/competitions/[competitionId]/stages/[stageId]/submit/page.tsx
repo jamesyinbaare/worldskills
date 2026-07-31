@@ -12,6 +12,7 @@ import {
   getExercise,
   getMyStages,
   openSubmission,
+  reopenSubmission,
   triggerBrowserDownload,
   uploadArtefact,
   uploadArtefactResumable,
@@ -76,6 +77,27 @@ function scanLabel(scan: string, quarantined: boolean): string {
   return scan;
 }
 
+const LOCKED_STATES = new Set(["ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"]);
+
+function submissionUploadsLocked(submission: SubmissionOut | null): boolean {
+  if (!submission) return false;
+  if (submission.uploadLocked) return true;
+  return LOCKED_STATES.has((submission.state || "").toUpperCase());
+}
+
+function canResubmitBeforeDeadline(submission: SubmissionOut | null): boolean {
+  if (!submission || !submissionUploadsLocked(submission)) return false;
+  const now = Date.now();
+  if (submission.timedExpiresAt) {
+    const timed = new Date(submission.timedExpiresAt).getTime();
+    if (!Number.isNaN(timed) && timed <= now) return false;
+  }
+  if (!submission.deadlineAt) return false;
+  const deadline = new Date(submission.deadlineAt).getTime();
+  if (Number.isNaN(deadline)) return false;
+  return deadline > now;
+}
+
 export default function CompetitorSubmitPage() {
   const params = useParams<{ competitionId: string; stageId: string }>();
   const competitionId = params.competitionId;
@@ -98,13 +120,8 @@ export default function CompetitorSubmitPage() {
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const expireCalled = useRef(false);
 
-  const locked =
-    Boolean(submission?.uploadLocked) ||
-    Boolean(
-      submission?.state &&
-        ["ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"].includes(submission.state),
-    ) ||
-    Boolean(finaliseOut);
+  const locked = submissionUploadsLocked(submission);
+  const resubmitAllowed = canResubmitBeforeDeadline(submission);
 
   const applyError = useCallback((err: unknown, fallback: string) => {
     if (err instanceof ApiError) {
@@ -218,6 +235,14 @@ export default function CompetitorSubmitPage() {
         if (cancelled) return;
         setSubmission(out);
         setExercise(ex);
+        const codes = (ex?.deliverables ?? [])
+          .map((d) => d.code?.trim())
+          .filter(Boolean);
+        if (codes.length > 0) {
+          setDeliverableCode((prev) =>
+            prev && codes.includes(prev) ? prev : codes[0]!,
+          );
+        }
         setStatusMessage(
           out.state === "OPEN"
             ? "Submission open — upload required deliverables, then finalise."
@@ -333,6 +358,15 @@ export default function CompetitorSubmitPage() {
         );
       } else {
         setStatusMessage(`Uploaded “${code}” (${out.scan}).`);
+        const remaining = (exercise?.deliverables ?? [])
+          .map((d) => d.code?.trim())
+          .filter(Boolean)
+          .filter((c) => {
+            if (c === code) return false;
+            const existing = uploads.find((u) => u.deliverableCode === c);
+            return !(existing?.complete && !existing.quarantined);
+          });
+        if (remaining[0]) setDeliverableCode(remaining[0]);
       }
       setFile(null);
       const input = document.getElementById(
@@ -370,10 +404,30 @@ export default function CompetitorSubmitPage() {
       setStatusMessage(
         out.late
           ? "Submission accepted and marked LATE per competition policy."
-          : "Submission accepted and locked.",
+          : "Submission accepted. You can still replace it before the deadline.",
       );
     } catch (err) {
       applyError(err, "Could not finalise submission");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function onResubmit() {
+    if (!submission || !resubmitAllowed) return;
+    setPending(true);
+    setError(null);
+    setFieldErrors({});
+    setStatusMessage(null);
+    try {
+      const out = await reopenSubmission(submission.submissionId);
+      setSubmission(out);
+      setFinaliseOut(null);
+      setStatusMessage(
+        "Submission reopened — replace artefacts if needed, then finalise again.",
+      );
+    } catch (err) {
+      applyError(err, "Could not reopen submission");
     } finally {
       setPending(false);
     }
@@ -398,6 +452,18 @@ export default function CompetitorSubmitPage() {
   const displayHash = finaliseOut?.hash ?? submission?.hash ?? null;
   const configIncomplete = error?.code === "CONFIG_INCOMPLETE";
   const packAvailable = Boolean(exercise?.packFileName);
+  const requiredDeliverables = exercise?.deliverables ?? [];
+  const selectedDeliverable =
+    requiredDeliverables.find((d) => d.code === deliverableCode) ?? null;
+  const acceptTypes =
+    selectedDeliverable?.allowedTypes &&
+    selectedDeliverable.allowedTypes.length > 0
+      ? selectedDeliverable.allowedTypes.join(",")
+      : undefined;
+
+  function deliverableStatus(code: string): UploadRecord | undefined {
+    return uploads.find((u) => u.deliverableCode === code);
+  }
 
   return (
     <PageShell width="wide" className="space-y-6">
@@ -547,9 +613,26 @@ export default function CompetitorSubmitPage() {
 
             {locked ? (
               <Alert data-testid="submission-locked">
-                <AlertTitle>Uploads locked</AlertTitle>
-                <AlertDescription>
-                  This submission no longer accepts new artefacts.
+                <AlertTitle>
+                  {resubmitAllowed ? "Submission locked" : "Uploads locked"}
+                </AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <p>
+                    {resubmitAllowed
+                      ? "Your submission is recorded. You can reopen it to replace files until the deadline."
+                      : "This submission no longer accepts new artefacts."}
+                  </p>
+                  {resubmitAllowed ? (
+                    <Button
+                      type="button"
+                      className="min-h-11"
+                      disabled={pending}
+                      onClick={() => void onResubmit()}
+                      data-testid="submission-resubmit"
+                    >
+                      {pending ? "Reopening…" : "Replace / resubmit"}
+                    </Button>
+                  ) : null}
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -578,11 +661,62 @@ export default function CompetitorSubmitPage() {
           <CardHeader>
             <CardTitle className="text-lg">Upload artefact</CardTitle>
             <CardDescription>
-              Enter the deliverable code from your test project brief, then
-              choose a file. Large files upload in resumable chunks.
+              Choose a required deliverable from this exercise, then attach the
+              matching file. Large files upload in resumable chunks.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-5">
+            {requiredDeliverables.length > 0 ? (
+              <ul
+                className="space-y-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-sm"
+                data-testid="submission-deliverable-checklist"
+              >
+                {requiredDeliverables.map((item) => {
+                  const status = deliverableStatus(item.code);
+                  const done =
+                    Boolean(status?.complete) && !status?.quarantined;
+                  const bad = Boolean(status?.quarantined);
+                  return (
+                    <li
+                      key={item.code}
+                      className="flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <span>
+                        <span className="font-medium">
+                          {item.label?.trim() || item.code}
+                        </span>
+                        {item.label?.trim() && item.label.trim() !== item.code ? (
+                          <span className="ml-2 font-mono text-xs text-muted-foreground">
+                            {item.code}
+                          </span>
+                        ) : null}
+                        {item.required !== false ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            Required
+                          </span>
+                        ) : null}
+                      </span>
+                      <span
+                        className={
+                          done
+                            ? "text-emerald-700"
+                            : bad
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {done
+                          ? "Uploaded"
+                          : bad
+                            ? "Replace file"
+                            : "Not uploaded"}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+
             <form
               onSubmit={onUpload}
               className="space-y-4"
@@ -590,23 +724,50 @@ export default function CompetitorSubmitPage() {
               data-testid="submission-upload-form"
             >
               <div className="space-y-2">
-                <Label htmlFor="deliverableCode">Deliverable code</Label>
-                <Input
-                  id="deliverableCode"
-                  className="min-h-11"
-                  value={deliverableCode}
-                  onChange={(e) => setDeliverableCode(e.target.value)}
-                  required
-                  autoComplete="off"
-                  disabled={pending || configIncomplete}
-                  data-testid="submission-deliverable-code"
-                  aria-invalid={Boolean(fieldErrors.deliverableCode)}
-                  aria-describedby={
-                    fieldErrors.deliverableCode
-                      ? "deliverableCode-error"
-                      : undefined
-                  }
-                />
+                <Label htmlFor="deliverableCode">Deliverable</Label>
+                {requiredDeliverables.length > 0 ? (
+                  <select
+                    id="deliverableCode"
+                    className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={deliverableCode}
+                    onChange={(e) => setDeliverableCode(e.target.value)}
+                    required
+                    disabled={pending || configIncomplete}
+                    data-testid="submission-deliverable-code"
+                    aria-invalid={Boolean(fieldErrors.deliverableCode)}
+                    aria-describedby={
+                      fieldErrors.deliverableCode
+                        ? "deliverableCode-error"
+                        : undefined
+                    }
+                  >
+                    {requiredDeliverables.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.label?.trim()
+                          ? `${item.label.trim()} (${item.code})`
+                          : item.code}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    id="deliverableCode"
+                    className="min-h-11"
+                    value={deliverableCode}
+                    onChange={(e) => setDeliverableCode(e.target.value)}
+                    required
+                    autoComplete="off"
+                    disabled={pending || configIncomplete}
+                    data-testid="submission-deliverable-code"
+                    aria-invalid={Boolean(fieldErrors.deliverableCode)}
+                    aria-describedby={
+                      fieldErrors.deliverableCode
+                        ? "deliverableCode-error"
+                        : undefined
+                    }
+                    placeholder="Deliverable code"
+                  />
+                )}
                 <FieldMessage
                   id="deliverableCode-error"
                   message={fieldErrors.deliverableCode}
@@ -618,15 +779,20 @@ export default function CompetitorSubmitPage() {
                   id="artefactFile"
                   type="file"
                   className="min-h-11"
+                  accept={acceptTypes}
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                   required
-                  disabled={pending || configIncomplete}
+                  disabled={pending || configIncomplete || !deliverableCode}
                   data-testid="submission-file"
                   aria-describedby="artefactFile-hint"
                 />
                 <p id="artefactFile-hint" className="text-xs text-muted-foreground">
-                  Allowed types and size limits are enforced by the server for
-                  each deliverable code.
+                  {selectedDeliverable?.allowedTypes?.length
+                    ? `Allowed types: ${selectedDeliverable.allowedTypes.join(", ")}`
+                    : "Allowed types and size limits are enforced by the server for each deliverable."}
+                  {selectedDeliverable?.maxSizeBytes
+                    ? ` · Max ${(selectedDeliverable.maxSizeBytes / (1024 * 1024)).toFixed(1)} MB`
+                    : ""}
                 </p>
                 <FieldMessage
                   id="filename-error"
@@ -640,7 +806,7 @@ export default function CompetitorSubmitPage() {
               <Button
                 type="submit"
                 className="min-h-11 w-full"
-                disabled={pending || !file || configIncomplete}
+                disabled={pending || !file || !deliverableCode || configIncomplete}
                 data-testid="submission-upload"
               >
                 {pending ? "Uploading…" : "Upload"}

@@ -41,24 +41,39 @@ async def list_my_registrations(session: AsyncSession, *, actor: User) -> list[M
     out: list[MyRegistrationOut] = []
     for comp in competitors:
         competition = await session.get(Competition, comp.competition_id)
-        skill = await session.get(Skill, comp.skill_id)
-        if competition is None or skill is None:
+        if competition is None:
             continue
+        skill = await session.get(Skill, comp.skill_id) if comp.skill_id else None
+        skill_name = skill.name if skill is not None else "Draft application"
+        skill_id = skill.id if skill is not None else None
+        payload = comp.registration_payload if isinstance(comp.registration_payload, dict) else {}
+        if skill is None and payload.get("skillIds"):
+            try:
+                maybe = uuid.UUID(str(payload["skillIds"][0]))
+                skill = await session.get(Skill, maybe)
+                if skill is not None:
+                    skill_id = skill.id
+                    skill_name = skill.name
+            except (ValueError, TypeError, IndexError):
+                pass
         out.append(
             MyRegistrationOut(
                 competitorId=comp.id,
                 competitionId=competition.id,
                 competitionName=competition.name,
-                skillId=skill.id,
-                skillName=skill.name,
+                skillId=skill_id,
+                skillName=skill_name,
                 status=comp.status,
                 zoneId=comp.zone_id,
+                flags=list(comp.flags or []),
                 consentParticipationAt=comp.consent_participation_at,
                 consentPublicAt=comp.consent_public_at,
                 publicProfileVisible=bool(comp.public_profile_visible),
                 consentFormUploadedAt=comp.consent_form_uploaded_at,
-                hasCriteriaDocument=bool(skill.criteria_object_key and skill.criteria_file_name),
-                criteriaFileName=skill.criteria_file_name,
+                hasCriteriaDocument=bool(
+                    skill and skill.criteria_object_key and skill.criteria_file_name
+                ),
+                criteriaFileName=skill.criteria_file_name if skill else None,
             )
         )
     # Stable order: competition name then skill name
@@ -88,7 +103,7 @@ async def get_my_stages(
             )
         )
     ).scalar_one_or_none()
-    if competitor is None:
+    if competitor is None or competitor.status == "DRAFT":
         raise AppError(
             "COMPETITOR_NOT_FOUND",
             "You are not registered in this competition",

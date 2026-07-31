@@ -150,9 +150,11 @@ export function SchoolSearchSelect({
           />
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-foreground">{value.name}</p>
-            <p className="text-xs text-muted-foreground">
-              Code <span className="font-mono">{value.code}</span>
-            </p>
+            {value.code ? (
+              <p className="text-xs text-muted-foreground">
+                Code <span className="font-mono">{value.code}</span>
+              </p>
+            ) : null}
           </div>
           <Button
             type="button"

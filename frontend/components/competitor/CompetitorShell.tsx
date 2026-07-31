@@ -16,6 +16,10 @@ import { CrestLogo } from "@/components/brand/LogoMark";
 import { useAuth } from "@/components/auth/AuthProvider";
 import type { MyRegistrationOut } from "@/lib/api";
 import {
+  competitionRegisterHref,
+  isDraftRegistrationStatus,
+} from "@/lib/api";
+import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -52,7 +56,15 @@ export function CompetitorShell({
   const pathname = usePathname();
   const { me, logout } = useAuth();
 
-  const primaryCompetitorId = registrations[0]?.competitorId;
+  const activeRegs = registrations.filter(
+    (reg) => !isDraftRegistrationStatus(reg.status),
+  );
+  const primaryCompetitorId = activeRegs[0]?.competitorId;
+  const consentPending = activeRegs.some((reg) =>
+    (reg.flags ?? []).some((f) => f.toUpperCase() === "CONSENT_PENDING"),
+  );
+  const soleReg = activeRegs.length === 1 ? activeRegs[0] : null;
+  const soleIsDraft = false;
 
   return (
     <div className="competitor-shell min-h-svh bg-[var(--admin-canvas)]">
@@ -122,8 +134,19 @@ export function CompetitorShell({
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu className="gap-2 group-data-[collapsible=icon]:items-center">
+                  {registrations.length === 0 ? (
+                    <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
+                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                        No competitions yet
+                      </p>
+                    </SidebarMenuItem>
+                  ) : null}
                   {registrations.map((reg) => {
+                    const isDraft = isDraftRegistrationStatus(reg.status);
                     const base = `/competitor/competitions/${reg.competitionId}`;
+                    const href = isDraft
+                      ? competitionRegisterHref(reg.competitionId)
+                      : base;
                     const active = navActive(pathname, base);
                     return (
                       <SidebarMenuItem
@@ -134,19 +157,27 @@ export function CompetitorShell({
                           asChild
                           isActive={active}
                           size="lg"
-                          tooltip={reg.competitionName}
+                          tooltip={
+                            isDraft
+                              ? `Continue ${reg.competitionName}`
+                              : reg.competitionName
+                          }
                           className={cn(
                             "rounded-2xl px-3 font-medium",
                             !active && "text-sidebar-foreground/65",
                           )}
                         >
                           <Link
-                            href={base}
+                            href={href}
                             aria-current={active ? "page" : undefined}
                             data-testid={`competitor-nav-competition-${reg.competitionId}`}
                           >
                             <TrophyIcon />
-                            <span className="truncate">{reg.competitionName}</span>
+                            <span className="truncate">
+                              {isDraft
+                                ? `Continue · ${reg.competitionName}`
+                                : reg.competitionName}
+                            </span>
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -156,7 +187,7 @@ export function CompetitorShell({
               </SidebarGroupContent>
             </SidebarGroup>
 
-            {registrations.length === 1 ? (
+            {soleReg && !soleIsDraft ? (
               <SidebarGroup className="px-1 group-data-[collapsible=icon]:px-0">
                 <SidebarGroupLabel className="mb-2 px-3 text-[0.7rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                   This competition
@@ -166,20 +197,20 @@ export function CompetitorShell({
                     {(
                       [
                         {
-                          href: `/competitor/competitions/${registrations[0].competitionId}`,
+                          href: `/competitor/competitions/${soleReg.competitionId}`,
                           label: "Stages",
                           icon: ClipboardListIcon,
                           exact: true,
                           testId: "competitor-nav-stages",
                         },
                         {
-                          href: `/competitor/competitions/${registrations[0].competitionId}/results`,
+                          href: `/competitor/competitions/${soleReg.competitionId}/results`,
                           label: "Results",
                           icon: ScaleIcon,
                           testId: "competitor-nav-results",
                         },
                         {
-                          href: `/competitor/appeals/new?competitionId=${registrations[0].competitionId}`,
+                          href: `/competitor/appeals/new?competitionId=${soleReg.competitionId}`,
                           label: "Appeal",
                           icon: FileWarningIcon,
                           testId: "competitor-nav-appeal",
@@ -239,7 +270,11 @@ export function CompetitorShell({
                           `/competitor/competitors/${primaryCompetitorId}/consent`,
                         )}
                         size="lg"
-                        tooltip="Guardian consent"
+                        tooltip={
+                          consentPending
+                            ? "Guardian consent (optional)"
+                            : "Guardian consent"
+                        }
                         className={cn(
                           "rounded-2xl px-3 font-medium",
                           !navActive(
@@ -253,7 +288,11 @@ export function CompetitorShell({
                           data-testid="competitor-nav-consent"
                         >
                           <ShieldCheckIcon />
-                          <span>Guardian consent</span>
+                          <span>
+                            {consentPending
+                              ? "Consent (optional)"
+                              : "Guardian consent"}
+                          </span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

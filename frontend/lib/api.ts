@@ -354,6 +354,7 @@ export type SkillOut = {
   number?: string | null;
   familyId?: string | null;
   familyName?: string | null;
+  description?: string | null;
   ageRuleId?: string | null;
   ageRule?: {
     maxAge: number;
@@ -1091,13 +1092,23 @@ export type RegistrationCreateInput = {
   regionId?: string | null;
   zoneId?: string | null;
   skillIds?: string[];
-  coach?: Record<string, unknown> | null;
+  coach?: CoachBioInput | null;
   declarationAccepted?: boolean | null;
   photo?: RegistrationPhotoIn | null;
   captchaToken?: string | null;
   guardianName?: string | null;
   guardianEmail?: string | null;
   guardianPhone?: string | null;
+};
+
+export type CoachBioInput = {
+  surname: string;
+  firstName: string;
+  otherName?: string | null;
+  contactNumber: string;
+  email: string;
+  whatsapp: string;
+  dateOfBirth: string;
 };
 
 export type RegistrationOut = {
@@ -1108,11 +1119,75 @@ export type RegistrationOut = {
   message?: string | null;
 };
 
+export type RegistrationDraftOut = {
+  competitorId: string;
+  status: string;
+  updatedAt: string;
+  currentStep?: number | null;
+  givenNames?: string | null;
+  familyName?: string | null;
+  gender?: string | null;
+  dateOfBirth?: string | null;
+  email?: string | null;
+  mobile?: string | null;
+  whatsapp?: string | null;
+  nationalId?: string | null;
+  nationality?: string | null;
+  hasPassport?: boolean | null;
+  passportNumber?: string | null;
+  passportExpiresOn?: string | null;
+  institutionId?: string | null;
+  institutionName?: string | null;
+  institutionCode?: string | null;
+  regionId?: string | null;
+  skillIds: string[];
+  coach?: Partial<CoachBioInput> | null;
+  declarationAccepted?: boolean | null;
+  hasPhoto?: boolean;
+  guardianName?: string | null;
+  guardianEmail?: string | null;
+  guardianPhone?: string | null;
+};
+
+export type RegistrationDraftInput = Partial<RegistrationCreateInput> & {
+  currentStep?: number | null;
+};
+
 export async function getRegistrationForm(
   competitionId: string,
 ): Promise<RegistrationFormOut> {
   return apiFetch<RegistrationFormOut>(
     `/competitions/${competitionId}/registration-form`,
+  );
+}
+
+export async function getRegistrationDraft(
+  competitionId: string,
+): Promise<RegistrationDraftOut> {
+  return apiFetch<RegistrationDraftOut>(
+    `/competitions/${competitionId}/registrations/draft`,
+  );
+}
+
+export async function getRegistrationDraftPhoto(
+  competitionId: string,
+): Promise<Blob> {
+  const { blob } = await apiFetchBlob(
+    `/competitions/${competitionId}/registrations/draft/photo`,
+  );
+  return blob;
+}
+
+export async function putRegistrationDraft(
+  competitionId: string,
+  payload: RegistrationDraftInput,
+): Promise<RegistrationDraftOut> {
+  return apiFetch<RegistrationDraftOut>(
+    `/competitions/${competitionId}/registrations/draft`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
   );
 }
 
@@ -1151,6 +1226,7 @@ export type PublicSkillOut = {
   name: string;
   number?: string | null;
   familyName?: string | null;
+  description?: string | null;
   hasCriteriaDocument?: boolean;
   criteriaFileName?: string | null;
 };
@@ -1170,6 +1246,7 @@ export type AvailableSkillOut = {
   name: string;
   number?: string | null;
   familyName?: string | null;
+  description?: string | null;
   active: boolean;
   hasCriteriaDocument?: boolean;
   criteriaFileName?: string | null;
@@ -1191,10 +1268,11 @@ export type MyRegistrationOut = {
   competitorId: string;
   competitionId: string;
   competitionName: string;
-  skillId: string;
+  skillId?: string | null;
   skillName: string;
   status: string;
   zoneId?: string | null;
+  flags?: string[];
   consentParticipationAt?: string | null;
   consentPublicAt?: string | null;
   publicProfileVisible?: boolean;
@@ -1907,6 +1985,14 @@ export async function finaliseSubmission(
   submissionId: string,
 ): Promise<FinaliseOut> {
   return apiFetch<FinaliseOut>(`/submissions/${submissionId}:finalise`, {
+    method: "POST",
+  });
+}
+
+export async function reopenSubmission(
+  submissionId: string,
+): Promise<SubmissionOut> {
+  return apiFetch<SubmissionOut>(`/submissions/${submissionId}:reopen`, {
     method: "POST",
   });
 }
@@ -3102,6 +3188,33 @@ export function isInstitutionRole(role: string): boolean {
   return role === "INSTITUTION";
 }
 
+export type SystemSettingsOut = {
+  institutionRegistrationEnabled: boolean;
+  allowMultipleActiveCompetitions: boolean;
+};
+
+export type SystemSettingsUpdate = {
+  institutionRegistrationEnabled?: boolean;
+  allowMultipleActiveCompetitions?: boolean;
+};
+
+export async function getPublicSettings(): Promise<SystemSettingsOut> {
+  return apiFetch<SystemSettingsOut>("/settings");
+}
+
+export async function getAdminSettings(): Promise<SystemSettingsOut> {
+  return apiFetch<SystemSettingsOut>("/admin/settings");
+}
+
+export async function updateAdminSettings(
+  payload: SystemSettingsUpdate,
+): Promise<SystemSettingsOut> {
+  return apiFetch<SystemSettingsOut>("/admin/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function isCompetitorRole(role: string): boolean {
   return role === "COMPETITOR";
 }
@@ -3140,4 +3253,41 @@ export function homeForRole(role: string, mustChangePassword?: boolean): string 
   if (isCompetitorRole(role)) return "/competitor";
   if (isExpertRole(role)) return "/expert";
   return "/";
+}
+
+export function isDraftRegistrationStatus(status?: string | null): boolean {
+  return (status ?? "").toUpperCase() === "DRAFT";
+}
+
+export function competitionRegisterHref(competitionId: string): string {
+  return `/competitor/competitions/${competitionId}/register`;
+}
+
+/** Prefer resuming an incomplete registration over the competitor dashboard. */
+export async function resolvePostAuthPath(
+  role: string,
+  options?: {
+    nextPath?: string | null;
+    mustChangePassword?: boolean;
+  },
+): Promise<string> {
+  const nextPath = options?.nextPath;
+  if (nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//")) {
+    return nextPath;
+  }
+  if (options?.mustChangePassword) {
+    return homeForRole(role, true);
+  }
+  if (isCompetitorRole(role)) {
+    try {
+      const regs = await listMyRegistrations();
+      const draft = regs.find((r) => isDraftRegistrationStatus(r.status));
+      if (draft) {
+        return competitionRegisterHref(draft.competitionId);
+      }
+    } catch {
+      /* Fall through to role home */
+    }
+  }
+  return homeForRole(role, false);
 }
