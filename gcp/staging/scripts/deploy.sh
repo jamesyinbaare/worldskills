@@ -47,48 +47,94 @@ dc down || true
 echo "Starting services..."
 dc up -d
 
-echo "Waiting for backend to become healthy..."
-sleep 15
+echo "Waiting for backend container healthcheck..."
+MAX_RETRIES=36
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if dc ps world-skills-backend 2>/dev/null | grep -qiE '\(healthy\)'; then
+        echo "Backend container is healthy."
+        break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    echo "Waiting for backend container... ($RETRY_COUNT/$MAX_RETRIES)"
+    sleep 5
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+    echo "Warning: Backend container did not become healthy in time"
+    echo "Check logs with: docker compose --env-file $ENV_FILE -f $COMPOSE_FILE logs world-skills-backend"
+fi
 
 echo "Checking service status..."
 dc ps
 
-echo "Verifying backend health..."
-MAX_RETRIES=30
-RETRY_COUNT=0
 API_DOMAIN="${STAGING_API_DOMAIN:-worldskills-api.jamesyin.com}"
 FRONTEND_DOMAIN="${STAGING_FRONTEND_DOMAIN:-worldskills.jamesyin.com}"
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if curl -fsS "https://${API_DOMAIN}/health" > /dev/null 2>&1; then
-        echo "Backend is healthy!"
-        break
-    fi
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "Waiting for backend... ($RETRY_COUNT/$MAX_RETRIES)"
-    sleep 5
-done
-
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "Warning: Backend health check failed after $MAX_RETRIES retries"
-    echo "Check logs with: dc logs world-skills-backend"
+echo "Verifying backend /health inside the container..."
+if dc exec -T world-skills-backend curl -fsS "http://127.0.0.1:80/health" > /dev/null; then
+    echo "Backend /health OK (in-container)."
+else
+    echo "Warning: in-container /health failed"
+    dc logs --tail 80 world-skills-backend || true
 fi
 
-echo "Verifying frontend..."
+echo "Verifying backend via Traefik on localhost (Host header; avoids VM hairpin to public IP)..."
+if curl -fsS -o /dev/null \
+    --connect-timeout 5 \
+    -H "Host: ${API_DOMAIN}" \
+    "http://127.0.0.1/health"; then
+    echo "Backend reachable via Traefik HTTP on :80."
+elif curl -fkSs -o /dev/null \
+    --connect-timeout 5 \
+    -H "Host: ${API_DOMAIN}" \
+    "https://127.0.0.1/health"; then
+    echo "Backend reachable via Traefik HTTPS on :443."
+else
+    echo "Warning: Traefik local Host-header check failed (routing/TLS may still be warming up)."
+    echo "  Try: curl -v -H 'Host: ${API_DOMAIN}' http://127.0.0.1/health"
+fi
+
+echo "Verifying public HTTPS (best-effort; may fail from the VM due to hairpin NAT)..."
+MAX_RETRIES=6
 RETRY_COUNT=0
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if curl -fsS "https://${FRONTEND_DOMAIN}/" > /dev/null 2>&1; then
-        echo "Frontend is reachable!"
+    if curl -fsS --connect-timeout 5 "https://${API_DOMAIN}/health" > /dev/null 2>&1; then
+        echo "Backend is reachable at https://${API_DOMAIN}/health"
         break
     fi
     RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "Waiting for frontend... ($RETRY_COUNT/$MAX_RETRIES)"
+    echo "Waiting for public backend HTTPS... ($RETRY_COUNT/$MAX_RETRIES)"
     sleep 5
 done
 
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "Warning: Frontend check failed after $MAX_RETRIES retries"
-    echo "Check logs with: dc logs world-skills-frontend"
+    echo "Warning: public https://${API_DOMAIN}/health failed from this host."
+    echo "  Containers may still be fine — check from your laptop or: curl -v https://${API_DOMAIN}/health"
+fi
+
+echo "Verifying frontend via Traefik on localhost..."
+if curl -fsS -o /dev/null --connect-timeout 5 -H "Host: ${FRONTEND_DOMAIN}" "http://127.0.0.1/" \
+    || curl -fkSs -o /dev/null --connect-timeout 5 -H "Host: ${FRONTEND_DOMAIN}" "https://127.0.0.1/"; then
+    echo "Frontend reachable via Traefik on localhost."
+else
+    echo "Warning: Traefik local frontend check failed"
+fi
+
+echo "Verifying public frontend HTTPS (best-effort)..."
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if curl -fsS --connect-timeout 5 "https://${FRONTEND_DOMAIN}/" > /dev/null 2>&1; then
+        echo "Frontend is reachable at https://${FRONTEND_DOMAIN}/"
+        break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    echo "Waiting for public frontend HTTPS... ($RETRY_COUNT/$MAX_RETRIES)"
+    sleep 5
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+    echo "Warning: public https://${FRONTEND_DOMAIN}/ failed from this host (often hairpin NAT)."
 fi
 
 echo ""
