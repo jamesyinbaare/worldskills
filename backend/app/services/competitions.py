@@ -1,4 +1,4 @@
-"""Competition create / clone / validate / activate service."""
+"""Competition create / clone / validate / activate / deactivate service."""
 
 from __future__ import annotations
 
@@ -686,6 +686,49 @@ async def activate_competition(
     await write_audit_event(
         session,
         action="COMPETITION_ACTIVATE",
+        entity_type="Competition",
+        entity_id=str(cycle.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=cycle.id,
+        before=before,
+        after=competition_to_dict(cycle),
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(cycle)
+    return cycle
+
+
+async def deactivate_competition(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> Competition:
+    """Manually close an ACTIVE or LOCKED competition (sets status to CLOSED)."""
+    cycle = await get_competition(session, competition_id)
+
+    if cycle.status == CompetitionStatus.CLOSED:
+        return cycle  # idempotent
+
+    if cycle.status not in (CompetitionStatus.ACTIVE, CompetitionStatus.LOCKED):
+        raise AppError(
+            "INVALID_STATUS",
+            f"Only ACTIVE or LOCKED competitions can be deactivated (current: {cycle.status.value})",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("status", "INVALID_STATUS")],
+        )
+
+    before = competition_to_dict(cycle)
+    cycle.status = CompetitionStatus.CLOSED
+    await session.flush()
+    await write_audit_event(
+        session,
+        action="COMPETITION_DEACTIVATE",
         entity_type="Competition",
         entity_id=str(cycle.id),
         actor_id=actor.id,

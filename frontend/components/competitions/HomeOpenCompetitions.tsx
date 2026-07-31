@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  ApiError,
+  formatApiNetworkError,
   getPublicCompetition,
   getPublicSettings,
   listOpenCompetitions,
@@ -49,9 +49,7 @@ export function HomeOpenCompetitions() {
       } catch (err) {
         if (!cancelled) {
           setError(
-            err instanceof ApiError
-              ? err.message
-              : "Could not load open competitions.",
+            formatApiNetworkError(err, "Could not load open competitions."),
           );
         }
       } finally {

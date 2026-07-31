@@ -215,7 +215,7 @@ function PublicProfilePanel({
 function feedbackAlertTitle(message: string): string {
   if (message.startsWith("Validation passed")) return "Validation passed";
   if (message.startsWith("Validation found")) return "Validation found issues";
-  if (message.startsWith("Competition is")) return "Competition activated";
+  if (message.startsWith("Competition is")) return "Competition updated";
   return "Update";
 }
 
@@ -291,6 +291,8 @@ function CompetitionWorkspacePageInner() {
 
   const canActivate = validation?.ok === true;
   const activateBlocked = !canActivate;
+  const canDeactivate =
+    cycle?.status === "ACTIVE" || cycle?.status === "LOCKED";
 
   async function runValidate() {
     setBusy(true);
@@ -345,6 +347,42 @@ function CompetitionWorkspacePageInner() {
             error: {
               code: "HTTP_ERROR",
               message: "Activate failed",
+              fields: [],
+              traceId: "",
+            },
+          }),
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runDeactivate() {
+    if (!canDeactivate) return;
+    const confirmed = window.confirm(
+      "Deactivate this competition? It will be marked CLOSED and will no longer appear as active.",
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await apiFetch<{ status: string }>(
+        `/competitions/${competitionId}:deactivate`,
+        { method: "POST" },
+      );
+      setMessage(`Competition is ${result.status}.`);
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err);
+      } else {
+        setError(
+          new ApiError(0, {
+            error: {
+              code: "HTTP_ERROR",
+              message: "Deactivate failed",
               fields: [],
               traceId: "",
             },
@@ -487,7 +525,7 @@ function CompetitionWorkspacePageInner() {
                 Readiness
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Validate, activate, or clone this competition.
+                Validate, activate, deactivate, or clone this competition.
               </p>
             </div>
 
@@ -507,6 +545,16 @@ function CompetitionWorkspacePageInner() {
               >
                 Activate
               </Button>
+              {canDeactivate ? (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={runDeactivate}
+                  data-testid="competition-deactivate"
+                >
+                  Deactivate
+                </Button>
+              ) : null}
               <Button variant="accent" disabled={busy} onClick={runClone}>
                 Clone
               </Button>

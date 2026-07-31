@@ -56,15 +56,15 @@ Root files:
 
 7. **DNS**: Point `A`/`AAAA` records for these hosts at the VM’s external IP:
 
-   | Role | Host |
-   |------|------|
-   | SPA | `worldskills.jamesyin.com` |
-   | SPA | `worldskills.ctvet.gov.gh` |
-   | API | `worldskills-api.jamesyin.com` |
-   | API | `worldskills-api.ctvet.gov.gh` |
-   | Traefik dashboard | `traefik-worldskills-staging.jamesyin.com` |
+   | Role | Host | Notes |
+   |------|------|-------|
+   | SPA | `worldskills.jamesyin.com` | Required |
+   | API | `worldskills-api.jamesyin.com` | Required |
+   | SPA | `worldskills.ctvet.gov.gh` | Optional — enable routers in `traefik/dynamic.staging.ctvet.snippet.yml` after DNS exists |
+   | API | `worldskills-api.ctvet.gov.gh` | Optional — same as above |
+   | Traefik dashboard | `traefik-worldskills-staging.jamesyin.com` | Optional |
 
-   Host rules live in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml); the dashboard Host is a Traefik label in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml).
+   Host rules live in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml); the dashboard Host is a Traefik label in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml). **Do not** put undeployed DNS names on the same Traefik router as live hosts — ACME will fail for the whole bundle and browsers will reject API calls.
 
 8. **Secrets** (optional): `./gcp/staging/scripts/setup-secrets.sh` — or place values only in `.env.staging.gcp`.
 
@@ -87,7 +87,13 @@ Root files:
 
 ## Frontend API URL
 
-Staging does **not** bake `NEXT_PUBLIC_API_BASE_URL`. The browser derives `worldskills-api.<parent>` from the SPA host in `frontend/lib/api.ts`. SSR inside the container uses `INTERNAL_API_BASE_URL`.
+Staging bakes `NEXT_PUBLIC_API_BASE_URL` (default `https://worldskills-api.jamesyin.com`) at frontend image build via compose build args. When unset, the browser still derives `worldskills-api.<parent>` from the SPA host in `frontend/lib/api.ts`. SSR inside the container uses `INTERNAL_API_BASE_URL`.
+
+## TLS / Let's Encrypt
+
+Traefik routers are **one Host per router** in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml). Bundling `jamesyin.com` and `ctvet.gov.gh` in a single `Host() || Host()` rule makes ACME request a SAN certificate for both; if either domain is NXDOMAIN, **neither** gets a cert and Traefik serves `TRAEFIK DEFAULT CERT` (browsers then block API `fetch` → competitions/login fail).
+
+Active staging routes cover `worldskills(.|-api).jamesyin.com` only. After ctvet DNS exists, merge routers from [`traefik/dynamic.staging.ctvet.snippet.yml`](../../traefik/dynamic.staging.ctvet.snippet.yml) and recreate Traefik.
 
 ## Frontend build note
 

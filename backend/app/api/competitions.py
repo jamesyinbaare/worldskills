@@ -162,6 +162,20 @@ async def activate_competition(
     return ActivateOut(status=cycle.status.value)
 
 
+@router.post("/{competition_id}:deactivate", response_model=ActivateOut)
+async def deactivate_competition(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    admin: AdminUserDep,
+    request: Request,
+) -> ActivateOut:
+    ip, ua = client_meta(request)
+    cycle = await competition_service.deactivate_competition(
+        session, competition_id, actor=admin, ip=ip, user_agent=ua
+    )
+    return ActivateOut(status=cycle.status.value)
+
+
 @router.patch("/{competition_id}", response_model=CompetitionOut)
 async def update_cycle(
     competition_id: uuid.UUID,

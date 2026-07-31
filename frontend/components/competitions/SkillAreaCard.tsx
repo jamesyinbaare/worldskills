@@ -1,12 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { FileTextIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  ArrowUpRightIcon,
+  FileTextIcon,
+} from "lucide-react";
 import type { PublicSkillOut } from "@/lib/api";
 import {
   skillCoverPalette,
   skillDetailHref,
 } from "@/components/competitions/SkillAreasCarousel";
+import { previewText } from "@/components/competitions/format";
 import { cn } from "@/lib/utils";
 
 type SkillAreaCardProps = {
@@ -14,6 +19,13 @@ type SkillAreaCardProps = {
   skill: PublicSkillOut;
   index?: number;
 };
+
+function skillMonogram(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "S";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
 
 export function SkillAreaCard({
   competitionId,
@@ -23,12 +35,10 @@ export function SkillAreaCard({
   const href = skillDetailHref(competitionId, skill.skillId);
   const palette = skillCoverPalette(skill.skillId, index);
   const hasCriteria = Boolean(skill.hasCriteriaDocument);
-  const meta = [
-    skill.number ? `Skill ${skill.number}` : null,
-    skill.familyName?.trim() || null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const family = skill.familyName?.trim() || null;
+  const number = skill.number ? `Skill ${skill.number}` : null;
+  const monogram = skillMonogram(skill.name);
+  const blurb = previewText(skill.description, 90);
 
   return (
     <Link
@@ -36,55 +46,107 @@ export function SkillAreaCard({
       data-testid="skill-area-card"
       aria-label={`${skill.name} — view skill area details`}
       className={cn(
-        "animate-comp-fade group flex h-full flex-col overflow-hidden rounded-2xl",
-        "border border-border/70 bg-card shadow-[0_14px_36px_-28px_rgba(0,55,100,0.45)]",
-        "outline-none transition-[transform,box-shadow,border-color] duration-300 ease-out",
-        "hover:-translate-y-1 hover:border-brand-blue/30 hover:shadow-[0_24px_44px_-24px_rgba(0,55,100,0.55)]",
-        "focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-offset-2",
+        "animate-comp-fade group relative flex h-full min-h-[22rem] flex-col overflow-hidden rounded-[1.5rem] sm:min-h-[24rem]",
+        "outline-none ring-offset-2",
+        "shadow-[0_22px_48px_-28px_rgba(0,30,70,0.72)]",
+        "transition-[transform,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        "hover:-translate-y-1.5 hover:shadow-[0_32px_58px_-24px_rgba(0,30,70,0.78)]",
+        "focus-visible:ring-2 focus-visible:ring-[#003764]",
       )}
       style={{ animationDelay: `${0.04 * index}s` }}
     >
       <div
         className={cn(
-          "relative aspect-16/10 overflow-hidden bg-linear-to-br sm:aspect-4/3",
+          "absolute inset-0 bg-linear-to-br transition-transform duration-700 ease-out group-hover:scale-[1.04]",
           palette.panel,
         )}
         aria-hidden
-      >
-        <div
-          className="absolute inset-0 opacity-45"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 18% 18%, rgba(255,255,255,0.28), transparent 42%), radial-gradient(circle at 82% 78%, rgba(0,0,0,0.28), transparent 48%)",
-          }}
-        />
-        <div
-          className={cn(
-            "absolute -top-8 right-[-8%] size-28 rounded-full blur-2xl opacity-70 transition-opacity duration-300 group-hover:opacity-100",
-            palette.glow,
-          )}
-        />
-      </div>
-
-      <div className="flex flex-1 flex-col gap-2 p-4 sm:p-5">
-        {meta ? (
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {meta}
-          </p>
-        ) : null}
-        <h2 className="text-lg font-bold leading-snug tracking-tight text-foreground sm:text-xl">
-          {skill.name}
-        </h2>
-        {hasCriteria ? (
-          <p className="mt-auto inline-flex max-w-full items-center gap-1.5 pt-1 text-sm text-muted-foreground">
-            <FileTextIcon className="size-3.5 shrink-0 text-brand-blue" aria-hidden />
-            <span>Criteria available</span>
-          </p>
-        ) : (
-          <p className="mt-auto pt-1 text-sm text-muted-foreground/80">
-            View details
-          </p>
+      />
+      <div
+        className="absolute inset-0 opacity-50"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.34), transparent 38%), radial-gradient(circle at 86% 78%, rgba(0,0,0,0.32), transparent 48%)",
+        }}
+        aria-hidden
+      />
+      <div
+        className={cn("absolute inset-0 bg-linear-to-b opacity-95", palette.wash)}
+        aria-hidden
+      />
+      <div
+        className={cn(
+          "absolute -top-14 right-[-14%] size-48 rounded-full blur-3xl opacity-70 transition-opacity duration-500 group-hover:opacity-100",
+          palette.glow,
         )}
+        aria-hidden
+      />
+
+      <span
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-[42%] -translate-y-1/2 text-center text-[6.5rem] font-bold leading-none tracking-tight select-none",
+          palette.monogram,
+          "transition-transform duration-700 ease-out group-hover:scale-105",
+        )}
+        aria-hidden
+      >
+        {monogram}
+      </span>
+
+      <div className="relative flex h-full flex-1 flex-col p-5 text-white sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-2.5">
+            <p
+              className={cn(
+                "text-[0.68rem] font-semibold tracking-[0.16em] uppercase",
+                palette.accent,
+              )}
+            >
+              {[number, family].filter(Boolean).join(" · ") || "Skill area"}
+            </p>
+            <h2 className="text-[1.45rem] font-bold leading-[1.12] tracking-tight sm:text-[1.6rem]">
+              {skill.name}
+            </h2>
+            {blurb ? (
+              <p className="line-clamp-2 max-w-[18rem] text-sm leading-relaxed text-white/75">
+                {blurb}
+              </p>
+            ) : null}
+          </div>
+          <span
+            className={cn(
+              "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border border-white/35 bg-white/12",
+              "transition-[transform,background-color] duration-300",
+              "group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:bg-white/20",
+            )}
+            aria-hidden
+          >
+            <ArrowUpRightIcon className="size-4" />
+          </span>
+        </div>
+
+        <div className="mt-auto space-y-4 pt-8">
+          {hasCriteria ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[0.7rem] font-medium text-white/90 backdrop-blur-sm">
+              <FileTextIcon className="size-3.5 shrink-0" aria-hidden />
+              Criteria available
+            </span>
+          ) : (
+            <span className="inline-flex items-center rounded-full border border-white/20 bg-white/8 px-2.5 py-1 text-[0.7rem] font-medium text-white/75 backdrop-blur-sm">
+              Open for registration
+            </span>
+          )}
+
+          <div className="flex items-center justify-between gap-3 border-t border-white/20 pt-4">
+            <p className="text-sm font-semibold tracking-tight text-white">
+              Explore skill area
+            </p>
+            <ArrowRightIcon
+              className="size-4 shrink-0 text-white/85 transition-transform duration-300 group-hover:translate-x-1"
+              aria-hidden
+            />
+          </div>
+        </div>
       </div>
     </Link>
   );

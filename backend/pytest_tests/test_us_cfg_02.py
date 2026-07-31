@@ -164,6 +164,56 @@ async def test_US_CFG_02_AC4_successful_activation(
 
 
 @pytest.mark.asyncio
+async def test_US_CFG_02_AC4b_manual_deactivate(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    create = await client.post("/competitions", json=competition_payload(), headers=auth_headers)
+    competition_id = uuid.UUID(create.json()["competitionId"])
+
+    async with session_manager.session() as session:
+        cycle = await session.get(Competition, competition_id)
+        assert cycle is not None
+        await seed_complete_config(session, cycle)
+        cycle.status = CompetitionStatus.ACTIVE
+        await session.commit()
+
+    deactivate = await client.post(
+        f"/competitions/{competition_id}:deactivate", headers=auth_headers
+    )
+    assert deactivate.status_code == 200, deactivate.text
+    assert deactivate.json()["status"] == "CLOSED"
+
+    # Idempotent
+    again = await client.post(
+        f"/competitions/{competition_id}:deactivate", headers=auth_headers
+    )
+    assert again.status_code == 200
+    assert again.json()["status"] == "CLOSED"
+
+    # Draft cannot be deactivated
+    create_draft = await client.post(
+        "/competitions", json=competition_payload(), headers=auth_headers
+    )
+    draft_id = create_draft.json()["competitionId"]
+    blocked = await client.post(
+        f"/competitions/{draft_id}:deactivate", headers=auth_headers
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "INVALID_STATUS"
+
+    async with session_manager.session() as session:
+        result = await session.execute(
+            select(AuditEvent).where(
+                AuditEvent.entity_id == str(competition_id),
+                AuditEvent.action == "COMPETITION_DEACTIVATE",
+            )
+        )
+        assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
 async def test_US_CFG_02_AC5_post_activate_structural_edit_allowed(
     client: AsyncClient,
     auth_headers: dict[str, str],

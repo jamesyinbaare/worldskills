@@ -44,11 +44,11 @@ docker exec "$TRAEFIK_CONTAINER" sh -c "grep -nE 'jamesyin\\.com|ctvet\\.gov\\.g
 
 echo ""
 echo "== 6) Verify live routers from Traefik API =="
-if ! curl -fsS "http://127.0.0.1:8080/api/http/routers" | grep -q "worldskills-frontend-staging"; then
-  echo "WARNING: worldskills frontend router not present in live Traefik API output."
+if ! curl -fsS "http://127.0.0.1:8080/api/http/routers" | grep -q "worldskills-frontend-jamesyin"; then
+  echo "WARNING: worldskills frontend jamesyin router not present in live Traefik API output."
 fi
-if ! curl -fsS "http://127.0.0.1:8080/api/http/routers" | grep -q "worldskills-backend-staging"; then
-  echo "WARNING: worldskills backend router not present in live Traefik API output."
+if ! curl -fsS "http://127.0.0.1:8080/api/http/routers" | grep -q "worldskills-backend-jamesyin"; then
+  echo "WARNING: worldskills backend jamesyin router not present in live Traefik API output."
 fi
 
 echo ""
