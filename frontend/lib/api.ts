@@ -352,8 +352,15 @@ export type CompetitionOut = {
 };
 
 export type ValidateOut = {
+  /** True when there are no blocking issues (advisory warnings allowed). */
   ok: boolean;
-  issues: { code: string; entity: string; message: string; link: string }[];
+  issues: {
+    code: string;
+    entity: string;
+    message: string;
+    link: string;
+    severity?: "blocking" | "advisory" | string;
+  }[];
 };
 
 export type SkillOut = {
@@ -495,6 +502,17 @@ export type ExerciseOut = {
   hasRubricCriteria?: boolean;
   blindMode?: boolean | null;
   criteriaCount?: number;
+  availabilityNotifiedAt?: string | null;
+};
+
+export type ExerciseNotifyOut = {
+  competitorsConsidered: number;
+  competitorSent: number;
+  coachSent: number;
+  failed: number;
+  skippedNotReady?: boolean;
+  skippedAlreadyNotified?: boolean;
+  availabilityNotifiedAt?: string | null;
 };
 
 export type RubricCriterion = {
@@ -858,6 +876,16 @@ export async function unpublishExercise(
 ): Promise<ExerciseOut> {
   return apiFetch<ExerciseOut>(
     `/competitions/${competitionId}/stages/${stageId}/exercise:unpublish`,
+    { method: "POST" },
+  );
+}
+
+export async function notifyExerciseAvailable(
+  competitionId: string,
+  stageId: string,
+): Promise<ExerciseNotifyOut> {
+  return apiFetch<ExerciseNotifyOut>(
+    `/competitions/${competitionId}/stages/${stageId}/exercise:notify`,
     { method: "POST" },
   );
 }
@@ -1750,6 +1778,33 @@ export type AdminCompetitorItem = {
   zoneName?: string | null;
   consentFormUploadedAt?: string | null;
   consentVerificationStatus?: string | null;
+  hasMobile?: boolean;
+  hasCoachPhone?: boolean;
+};
+
+export type SkillSmsRecipients = "competitors" | "coaches" | "both";
+
+export type SkillSmsTemplateKey =
+  | "custom"
+  | "exercise_reminder"
+  | "schedule_update"
+  | "general_notice";
+
+export type SkillSmsSendIn = {
+  competitorIds?: string[] | null;
+  recipients: SkillSmsRecipients;
+  templateKey: SkillSmsTemplateKey | string;
+  message?: string | null;
+};
+
+export type SkillSmsSendOut = {
+  competitorsConsidered: number;
+  competitorSent: number;
+  coachSent: number;
+  failed: number;
+  skippedNoPhone?: number;
+  recipients: string;
+  templateKey: string;
 };
 
 export type ConsentVerifyOut = {
@@ -1770,6 +1825,38 @@ export async function listAdminCompetitors(
   const qs = params.toString();
   return apiFetch<AdminCompetitorItem[]>(
     `/competitions/${competitionId}/competitors${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function exportAdminCompetitorsExcel(
+  competitionId: string,
+  options?: { skillId?: string | null; q?: string | null; status?: string | null },
+): Promise<{ blob: Blob; filename: string }> {
+  const params = new URLSearchParams();
+  if (options?.skillId) params.set("skillId", options.skillId);
+  if (options?.q) params.set("q", options.q);
+  if (options?.status) params.set("status", options.status);
+  const qs = params.toString();
+  const { blob, filename } = await apiFetchBlob(
+    `/competitions/${competitionId}/competitors:export${qs ? `?${qs}` : ""}`,
+  );
+  return {
+    blob,
+    filename: filename || "competitors.xlsx",
+  };
+}
+
+export async function sendSkillSms(
+  competitionId: string,
+  skillId: string,
+  payload: SkillSmsSendIn,
+): Promise<SkillSmsSendOut> {
+  return apiFetch<SkillSmsSendOut>(
+    `/competitions/${competitionId}/skills/${skillId}:sms`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
   );
 }
 

@@ -214,6 +214,7 @@ function PublicProfilePanel({
 
 function feedbackAlertTitle(message: string): string {
   if (message.startsWith("Validation passed")) return "Validation passed";
+  if (message.startsWith("Validation ready")) return "Ready to activate";
   if (message.startsWith("Validation found")) return "Validation found issues";
   if (message.startsWith("Competition is")) return "Competition updated";
   return "Update";
@@ -291,6 +292,10 @@ function CompetitionWorkspacePageInner() {
 
   const canActivate = validation?.ok === true;
   const activateBlocked = !canActivate;
+  const advisoryIssues =
+    validation?.issues.filter((i) => i.severity === "advisory") ?? [];
+  const blockingIssues =
+    validation?.issues.filter((i) => i.severity !== "advisory") ?? [];
   const canDeactivate =
     cycle?.status === "ACTIVE" || cycle?.status === "LOCKED";
 
@@ -303,8 +308,13 @@ function CompetitionWorkspacePageInner() {
         method: "POST",
       });
       setValidation(result);
+      const advisories = result.issues.filter((i) => i.severity === "advisory");
       setMessage(
-        result.ok ? "Validation passed." : "Validation found issues.",
+        result.ok
+          ? advisories.length > 0
+            ? `Validation ready to activate with ${advisories.length} advisory warning(s).`
+            : "Validation passed."
+          : "Validation found issues.",
       );
     } catch (err) {
       if (err instanceof ApiError) {
@@ -538,7 +548,7 @@ function CompetitionWorkspacePageInner() {
                 onClick={runActivate}
                 title={
                   activateBlocked
-                    ? "Run validation and resolve all issues before activating."
+                    ? "Run validation and resolve blocking issues before activating."
                     : undefined
                 }
                 aria-disabled={activateBlocked}
@@ -564,7 +574,7 @@ function CompetitionWorkspacePageInner() {
               <p className="text-sm text-muted-foreground" role="status">
                 {validation === null
                   ? "Run Validate before you can activate this competition."
-                  : "Resolve validation issues before activating."}
+                  : "Resolve blocking validation issues before activating. Pending exercises are warnings only."}
               </p>
             )}
 
@@ -588,34 +598,63 @@ function CompetitionWorkspacePageInner() {
                   </p>
                   <p className="text-sm text-muted-foreground">
                     {validation.ok
-                      ? "Configuration is complete."
-                      : "Fix the issues below before activation."}
+                      ? advisoryIssues.length > 0
+                        ? "Ready to activate. Advisory items below do not block activation."
+                        : "Configuration is complete."
+                      : "Fix the blocking issues below before activation."}
                   </p>
                 </div>
-                {validation.ok ? (
+                {validation.issues.length === 0 ? (
                   <p className="px-4 py-3 text-sm text-muted-foreground">
                     No issues.
                   </p>
                 ) : (
-                  validation.issues.map((issue, idx) => (
-                    <div key={`${issue.entity}-${idx}`}>
-                      {idx > 0 && <Separator />}
-                      <div className="border-l-2 border-brand-gold px-4 py-3">
-                        <p className="text-sm font-medium">
-                          {issue.code}: {issue.message}
-                        </p>
-                        {issue.link ? (
-                          <Button
-                            variant="link"
-                            className="h-auto px-0 text-sm"
-                            asChild
-                          >
-                            <Link href={issue.link}>Fix</Link>
-                          </Button>
-                        ) : null}
+                  <>
+                    {blockingIssues.map((issue, idx) => (
+                      <div key={`blocking-${issue.entity}-${idx}`}>
+                        {idx > 0 && <Separator />}
+                        <div className="border-l-2 border-destructive px-4 py-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-destructive">
+                            Blocking
+                          </p>
+                          <p className="text-sm font-medium">
+                            {issue.code}: {issue.message}
+                          </p>
+                          {issue.link ? (
+                            <Button
+                              variant="link"
+                              className="h-auto px-0 text-sm"
+                              asChild
+                            >
+                              <Link href={issue.link}>Fix</Link>
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                    {advisoryIssues.map((issue, idx) => (
+                      <div key={`advisory-${issue.entity}-${idx}`}>
+                        {(blockingIssues.length > 0 || idx > 0) && <Separator />}
+                        <div className="border-l-2 border-brand-gold px-4 py-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Advisory
+                          </p>
+                          <p className="text-sm font-medium">
+                            {issue.code}: {issue.message}
+                          </p>
+                          {issue.link ? (
+                            <Button
+                              variant="link"
+                              className="h-auto px-0 text-sm"
+                              asChild
+                            >
+                              <Link href={issue.link}>Configure</Link>
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </>
                 )}
               </div>
             )}

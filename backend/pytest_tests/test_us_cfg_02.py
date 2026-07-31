@@ -60,7 +60,6 @@ async def test_US_CFG_02_AC2_validation_blocks_activation(
                 name="Bare Stage",
                 order=1,
                 quota=None,
-                scheme_id=None,
             )
         )
         await session.commit()

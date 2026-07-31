@@ -771,11 +771,50 @@ class Exercise(Base):
     pack_file_name = Column(String(255), nullable=True)
     pack_content_type = Column(String(120), nullable=True)
     pack_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
+    # When EXERCISE_AVAILABLE SMS fan-out last completed successfully (or was skipped as empty)
+    availability_notified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     stage = relationship("Stage", back_populates="exercise")
     competition = relationship("Competition", back_populates="exercises")
+
+
+class SmsDelivery(Base):
+    """SMS delivery attempt log (Nalo) for competitors and coaches."""
+
+    __tablename__ = "sms_deliveries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    competitor_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    competition_id = Column(
+        UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    stage_id = Column(UUID(as_uuid=True), ForeignKey("stages.id", ondelete="SET NULL"), nullable=True, index=True)
+    submission_id = Column(
+        UUID(as_uuid=True), ForeignKey("submissions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # competitor | coach
+    recipient_role = Column(String(32), nullable=False)
+    phone_number = Column(String(64), nullable=False, default="")
+    msisdn = Column(String(32), nullable=False, default="")
+    message_type = Column(String(64), nullable=False, index=True)
+    trigger = Column(String(64), nullable=False, default="")
+    # pending | sent | failed
+    status = Column(String(32), nullable=False, default="pending", index=True)
+    error_message = Column(Text, nullable=True)
+    provider = Column(String(32), nullable=False, default="nalo")
+    provider_response = Column(Text, nullable=True)
+    dedupe_key = Column(String(128), nullable=True, index=True)
+    retried_from_id = Column(UUID(as_uuid=True), ForeignKey("sms_deliveries.id", ondelete="SET NULL"), nullable=True)
+    triggered_by_user_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Shortlist(Base):

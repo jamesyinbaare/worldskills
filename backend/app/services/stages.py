@@ -329,6 +329,28 @@ async def put_skill_pathway(
     await session.commit()
     for stage in created:
         await session.refresh(stage)
+
+    # If pathway windows opened a published exercise, fan-out availability SMS
+    try:
+        from app.services import competition_sms
+
+        for stage in created:
+            await competition_sms.notify_exercise_available(
+                session,
+                competition_id=competition_id,
+                stage_id=stage.id,
+                trigger="pathway_window_update",
+                actor=actor,
+                commit=True,
+            )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "EXERCISE_AVAILABLE SMS failed after pathway update competition=%s",
+            competition_id,
+        )
+
     return created, finalists
 
 

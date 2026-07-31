@@ -11,8 +11,9 @@ from fastapi.responses import Response
 from app.core.rbac import Capability
 from app.dependencies.auth import AdminUserDep, CurrentUserDep, client_meta, require_capability
 from app.dependencies.database import DBSessionDep
-from app.schemas.exercises import DeliverableItem, ExerciseOut, ExercisePut
+from app.schemas.exercises import DeliverableItem, ExerciseNotifyOut, ExerciseOut, ExercisePut
 from app.schemas.competition_config import ExerciseRubricOut, ExerciseRubricPut
+from app.services import competition_sms
 from app.services import exercises as exercise_service
 
 PublishUserDep = Annotated[object, Depends(require_capability(Capability.PUBLISH_TEST_PROJECT))]
@@ -40,6 +41,9 @@ async def _out(session, ex) -> ExerciseOut:
         hasRubricCriteria=has,
         blindMode=blind,
         criteriaCount=count,
+        availabilityNotifiedAt=(
+            ex.availability_notified_at.isoformat() if ex.availability_notified_at else None
+        ),
     )
 
 
@@ -147,6 +151,40 @@ async def unpublish_exercise(
         session, competition_id, stage_id, actor=user, ip=ip, user_agent=ua
     )
     return await _out(session, ex)
+
+
+@router.post(
+    "/{competition_id}/stages/{stage_id}/exercise:notify",
+    response_model=ExerciseNotifyOut,
+)
+async def notify_exercise_available(
+    competition_id: uuid.UUID,
+    stage_id: uuid.UUID,
+    session: DBSessionDep,
+    admin: AdminUserDep,
+) -> ExerciseNotifyOut:
+    """Manually notify competitors and coaches that the exercise is available."""
+    summary = await competition_sms.notify_exercise_available(
+        session,
+        competition_id=competition_id,
+        stage_id=stage_id,
+        trigger="admin_notify",
+        actor=admin,
+        force=True,
+        commit=True,
+    )
+    ex = await exercise_service.get_exercise(session, competition_id, stage_id)
+    return ExerciseNotifyOut(
+        competitorsConsidered=summary.competitors_considered,
+        competitorSent=summary.competitor_sent,
+        coachSent=summary.coach_sent,
+        failed=summary.failed,
+        skippedNotReady=summary.skipped_not_ready,
+        skippedAlreadyNotified=summary.skipped_already_notified,
+        availabilityNotifiedAt=(
+            ex.availability_notified_at.isoformat() if ex.availability_notified_at else None
+        ),
+    )
 
 
 @router.post("/{competition_id}/stages/{stage_id}/exercise/pack", response_model=ExerciseOut)
