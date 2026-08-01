@@ -37,17 +37,18 @@ class CoachBioIn(BaseModel):
     otherName: str | None = Field(default=None, max_length=120)
     contactNumber: str = Field(min_length=1, max_length=32)
     email: str = Field(min_length=3, max_length=255)
-    whatsapp: str = Field(min_length=1, max_length=32)
+    # Optional; when omitted, contactNumber is used (single phone / WhatsApp field in UI).
+    whatsapp: str | None = Field(default=None, max_length=32)
     dateOfBirth: date
 
-    @field_validator("surname", "firstName", "contactNumber", "email", "whatsapp", mode="before")
+    @field_validator("surname", "firstName", "contactNumber", "email", mode="before")
     @classmethod
     def strip_required(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.strip()
         return value
 
-    @field_validator("otherName", mode="before")
+    @field_validator("otherName", "whatsapp", mode="before")
     @classmethod
     def strip_optional(cls, value: Any) -> Any:
         if value is None:
@@ -56,6 +57,9 @@ class CoachBioIn(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
+
+    def resolved_whatsapp(self) -> str:
+        return (self.whatsapp or self.contactNumber).strip()
 
     @field_validator("email")
     @classmethod

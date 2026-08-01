@@ -37,6 +37,7 @@ class RegisterInstitutionRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=200, alias="fullName")
     password: str = Field(min_length=1)
     password_confirm: str = Field(alias="passwordConfirm")
+    phone_number: str = Field(min_length=1, max_length=50, alias="phoneNumber")
     school_code: str = Field(min_length=1, max_length=64, alias="schoolCode")
     captcha_token: str | None = Field(default=None, alias="captchaToken")
 
@@ -56,6 +57,7 @@ class RegisterRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=200, alias="fullName")
     password: str = Field(min_length=1)
     password_confirm: str = Field(alias="passwordConfirm")
+    phone_number: str = Field(min_length=1, max_length=50, alias="phoneNumber")
     captcha_token: str | None = Field(default=None, alias="captchaToken")
     role: str | None = None  # ignored / rejected if not COMPETITOR
 
@@ -74,3 +76,18 @@ class ChangePasswordRequest(BaseModel):
     new_password_confirm: str = Field(alias="newPasswordConfirm")
 
     model_config = {"populate_by_name": True}
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Provide exactly one of email or phoneNumber."""
+
+    email: str | None = None
+    phone_number: str | None = Field(default=None, alias="phoneNumber")
+    captcha_token: str | None = Field(default=None, alias="captchaToken")
+
+    model_config = {"populate_by_name": True}
+
+
+class ForgotPasswordResponse(BaseModel):
+    ok: bool = True
+    message: str

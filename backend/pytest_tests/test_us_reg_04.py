@@ -173,7 +173,7 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "affiliationType": "school",
         "organizationPhone": "+233302123456",
         "organizationEmail": "school@example.com",
-        "heardAbout": "FRIEND",
+        "heardAbout": "Friend",
         "guardianName": "Kofi Mensah",
         "guardianPhone": "+233241000111",
         "hasPassport": False,
@@ -205,6 +205,7 @@ async def _claim_institution(
         json={
             "email": email,
             "fullName": "School Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school_code,

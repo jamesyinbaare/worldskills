@@ -33,9 +33,9 @@ const FIELD_LABELS: Record<string, string> = {
   "coach.surname": "Coach surname",
   "coach.firstName": "Coach first name",
   "coach.otherName": "Coach other name",
-  "coach.contactNumber": "Coach contact number",
+  "coach.contactNumber": "Coach phone / WhatsApp",
   "coach.email": "Coach email",
-  "coach.whatsapp": "Coach WhatsApp",
+  "coach.whatsapp": "Coach phone / WhatsApp",
   "coach.dateOfBirth": "Coach date of birth",
 };
 
@@ -49,7 +49,7 @@ const REASON_MESSAGES: Record<string, string> = {
   VALUE_ERROR: "This value is not valid.",
   TYPE_ERROR: "This value is not the right type.",
   EMAIL_INVALID: "Enter a valid email address.",
-  PHONE_INVALID: "Enter a valid phone number.",
+  PHONE_INVALID: "Enter a valid Ghana phone number (e.g. 024XXXXXXX or +233…).",
   ID_INVALID: "Enter a valid national ID.",
   INVALID_CHARS: "Only letters, spaces, hyphens, and apostrophes are allowed.",
   DECLARATION_REQUIRED: "Please accept the declaration to continue.",
@@ -100,6 +100,12 @@ export function humanizeFieldError(name: string, reason: string): string {
   const key = reason.trim().toUpperCase();
   if (name === "dateOfBirth" && (key.includes("DATE") || key.includes("PARSING"))) {
     return "Enter a valid date of birth.";
+  }
+  if ((name === "phoneNumber" || name === "phone") && key === "DUPLICATE") {
+    return "This phone number is already registered.";
+  }
+  if (name === "email" && key === "DUPLICATE") {
+    return "This email is already registered.";
   }
   if (REASON_MESSAGES[key]) return REASON_MESSAGES[key];
   // Fallback: soften SCREAMING_SNAKE without inventing meaning
@@ -179,19 +185,6 @@ export function ApiErrorAlert({
               </li>
             ))}
           </ul>
-        ) : null}
-        {error.traceId ? (
-          <details className="mt-2 text-xs opacity-90">
-            <summary className="cursor-pointer">Technical details</summary>
-            <p className="mt-1 break-all">
-              Code: {error.code}
-              {error.fields.length === 1
-                ? ` · ${error.fields[0].name}: ${error.fields[0].reason}`
-                : null}
-              <br />
-              Trace ID: {error.traceId}
-            </p>
-          </details>
         ) : null}
       </AlertDescription>
     </Alert>

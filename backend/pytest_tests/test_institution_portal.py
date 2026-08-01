@@ -192,6 +192,7 @@ async def _claim_institution(
         json={
             "email": email,
             "fullName": "School Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school_code,

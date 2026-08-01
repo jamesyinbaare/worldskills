@@ -65,6 +65,7 @@ async def test_institution_signup_blocked_when_disabled(
         json={
             "email": f"blocked-{uuid.uuid4().hex[:8]}@school.edu",
             "fullName": "Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school.code,

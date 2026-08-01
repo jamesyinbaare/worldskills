@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Body, Query, Request, status
 
 from app.dependencies.auth import AdminUserDep, client_meta
 from app.dependencies.database import DBSessionDep
@@ -10,6 +10,8 @@ from app.schemas.users import (
     CreateUserRequest,
     CreateUserResponse,
     PatchUserRequest,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
     UserOut,
 )
 from app.services import users as users_service
@@ -65,4 +67,27 @@ async def resend_invite(
     ip, ua = client_meta(request)
     return await users_service.resend_invite(
         session, actor=admin, user_id=user_id, ip=ip, user_agent=ua
+    )
+
+
+@router.post(
+    "/users/{user_id}/reset-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def reset_password(
+    user_id: uuid.UUID,
+    session: DBSessionDep,
+    admin: AdminUserDep,
+    request: Request,
+    body: ResetPasswordRequest = Body(default_factory=ResetPasswordRequest),
+) -> dict:
+    ip, ua = client_meta(request)
+    return await users_service.reset_password(
+        session,
+        actor=admin,
+        user_id=user_id,
+        payload=body,
+        ip=ip,
+        user_agent=ua,
     )

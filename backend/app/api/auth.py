@@ -10,7 +10,6 @@ from app.core.security import (
     create_refresh_token,
     get_password_hash,
     hash_refresh_token,
-    verify_password,
     verify_refresh_token_hash,
 )
 from app.dependencies.auth import CurrentUserDep, access_token_for_user, client_meta
@@ -19,6 +18,8 @@ from app.models import RefreshToken, User, UserRole
 from app.schemas.auth import (
     AcceptInviteRequest,
     ChangePasswordRequest,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     MeResponse,
     RefreshRequest,
@@ -40,7 +41,9 @@ async def login(payload: LoginRequest, session: DBSessionDep, request: Request) 
     email = payload.email.strip().lower()
     result = await session.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
-    if user is None or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
+    if user is None or not await users_service.authenticate_user_password(
+        session, user, payload.password
+    ):
         raise AppError("INVALID_CREDENTIALS", "Invalid email or password", status_code=401)
     if not user.is_active:
         raise AppError("UNAUTHORIZED", "User is inactive", status_code=401)
@@ -147,6 +150,24 @@ async def change_password(
     )
 
 
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    session: DBSessionDep,
+    request: Request,
+) -> dict:
+    """Self-service password reset via SMS (lookup by email or phone)."""
+    ip, ua = client_meta(request)
+    _check_abuse(body.captcha_token)
+    return await users_service.request_password_reset(
+        session,
+        email=body.email,
+        phone_number=body.phone_number,
+        ip=ip,
+        user_agent=ua,
+    )
+
+
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     payload: RegisterRequest,
@@ -192,6 +213,8 @@ async def register(
         )
 
     users_service.validate_password_policy(payload.password)
+    phone_number = users_service.require_ghana_phone(payload.phone_number)
+    await users_service.assert_phone_available(session, phone_number)
 
     existing = (
         await session.execute(select(User).where(User.email == email))
@@ -207,6 +230,7 @@ async def register(
     user = User(
         email=email,
         full_name=full_name,
+        phone_number=phone_number,
         role=UserRole.COMPETITOR,
         hashed_password=get_password_hash(payload.password),
         is_active=True,
@@ -301,6 +325,8 @@ async def register_institution(
         )
 
     users_service.validate_password_policy(payload.password)
+    phone_number = users_service.require_ghana_phone(payload.phone_number)
+    await users_service.assert_phone_available(session, phone_number)
 
     institution = await institutions_service.get_active_by_code(
         session, payload.school_code
@@ -336,6 +362,7 @@ async def register_institution(
     user = User(
         email=email,
         full_name=full_name,
+        phone_number=phone_number,
         role=UserRole.INSTITUTION,
         institution_id=institution.id,
         hashed_password=get_password_hash(payload.password),

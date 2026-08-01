@@ -36,6 +36,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  GHANA_PHONE_FIELD_HINT,
+  ghanaPhoneFieldError,
+  requiredGhanaPhoneError,
+} from "@/lib/phone";
 
 const BASE_ROLES = [
   { value: "EXPERT", label: "Expert" },
@@ -59,6 +64,7 @@ export default function NewUserPage() {
 
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [role, setRole] = useState("EXPERT");
   const [institutionId, setInstitutionId] = useState(NO_INSTITUTION);
   const [credentialMode, setCredentialMode] = useState<"TEMP_PASSWORD" | "INVITE">(
@@ -82,6 +88,11 @@ export default function NewUserPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const phoneErr = requiredGhanaPhoneError(phoneNumber);
+    if (phoneErr) {
+      setFieldErrors({ phoneNumber: phoneErr });
+      return;
+    }
     setFieldErrors({});
     setCreated(null);
     setPending(true);
@@ -89,6 +100,7 @@ export default function NewUserPage() {
       const out = await createUser({
         email: email.trim(),
         fullName: fullName.trim(),
+        phoneNumber: phoneNumber.trim(),
         role,
         institutionId:
           expertRole && institutionId !== NO_INSTITUTION
@@ -175,6 +187,45 @@ export default function NewUserPage() {
                 <FieldMessage message={fieldErrors.email} />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="phoneNumber">Phone number</Label>
+                <Input
+                  id="phoneNumber"
+                  type="tel"
+                  inputMode="tel"
+                  required
+                  className="min-h-11"
+                  placeholder="e.g. 0551234567"
+                  value={phoneNumber}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPhoneNumber(next);
+                    setFieldErrors((prev) => {
+                      const phoneErr = ghanaPhoneFieldError(next);
+                      if (!phoneErr && !prev.phoneNumber) return prev;
+                      const copy = { ...prev };
+                      if (phoneErr) copy.phoneNumber = phoneErr;
+                      else delete copy.phoneNumber;
+                      return copy;
+                    });
+                  }}
+                  onBlur={() => {
+                    const phoneErr = ghanaPhoneFieldError(phoneNumber);
+                    setFieldErrors((prev) => {
+                      if (!phoneErr && !prev.phoneNumber) return prev;
+                      const copy = { ...prev };
+                      if (phoneErr) copy.phoneNumber = phoneErr;
+                      else delete copy.phoneNumber;
+                      return copy;
+                    });
+                  }}
+                  aria-invalid={Boolean(fieldErrors.phoneNumber)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {GHANA_PHONE_FIELD_HINT}
+                </p>
+                <FieldMessage message={fieldErrors.phoneNumber} />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="role">Role</Label>
                 <Select value={role} onValueChange={setRole}>
                   <SelectTrigger id="role" className="min-h-11 w-full">
@@ -232,7 +283,7 @@ export default function NewUserPage() {
                     id="temporaryPassword"
                     type="password"
                     required
-                    minLength={10}
+                    minLength={8}
                     className="min-h-11"
                     value={temporaryPassword}
                     onChange={(e) => setTemporaryPassword(e.target.value)}

@@ -287,6 +287,7 @@ export type UserOut = {
   institutionId?: string | null;
   isActive: boolean;
   mustChangePassword: boolean;
+  phoneNumber?: string | null;
 };
 
 export type CreateUserResponse = UserOut & {
@@ -1122,11 +1123,13 @@ export type AffiliationType = "school" | "company" | "workshop";
 export type IdDocumentKind = "GHANA_CARD" | "OTHER";
 export type OtherIdType = "Passport" | "Driver's License" | "Student ID";
 export type HeardAbout =
-  | "Facebook"
+  | "Social media"
   | "Newspaper"
-  | "Internet"
-  | "FRIEND"
-  | "Other";
+  | "Friend"
+  | "Radio"
+  | "Television"
+  | "Website (CTVET/WorldSkills)"
+  | "Other means";
 
 export type RegistrationCreateInput = {
   givenNames?: string | null;
@@ -1167,7 +1170,8 @@ export type CoachBioInput = {
   otherName?: string | null;
   contactNumber: string;
   email: string;
-  whatsapp: string;
+  /** Optional; when omitted the API uses contactNumber. */
+  whatsapp?: string | null;
   dateOfBirth: string;
 };
 
@@ -3105,6 +3109,7 @@ export type RegisterAccountInput = {
   fullName: string;
   password: string;
   passwordConfirm: string;
+  phoneNumber: string;
   captchaToken?: string | null;
 };
 
@@ -3120,6 +3125,7 @@ export async function registerAccount(
         fullName: payload.fullName,
         password: payload.password,
         passwordConfirm: payload.passwordConfirm,
+        phoneNumber: payload.phoneNumber,
         captchaToken: payload.captchaToken ?? "ok",
       }),
       skipAuthRetry: true,
@@ -3151,6 +3157,7 @@ export async function registerInstitution(
         fullName: payload.fullName,
         password: payload.password,
         passwordConfirm: payload.passwordConfirm,
+        phoneNumber: payload.phoneNumber,
         schoolCode: payload.schoolCode,
         captchaToken: payload.captchaToken ?? "ok",
       }),
@@ -3198,6 +3205,27 @@ export async function changePassword(payload: {
   });
 }
 
+export type ForgotPasswordResponse = {
+  ok: boolean;
+  message: string;
+};
+
+export async function forgotPassword(payload: {
+  email?: string;
+  phoneNumber?: string;
+  captchaToken?: string | null;
+}): Promise<ForgotPasswordResponse> {
+  return apiFetch<ForgotPasswordResponse>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({
+      email: payload.email,
+      phoneNumber: payload.phoneNumber,
+      captchaToken: payload.captchaToken ?? "ok",
+    }),
+    skipAuthRetry: true,
+  });
+}
+
 export async function listUsers(params?: {
   role?: string;
   active?: boolean;
@@ -3215,6 +3243,7 @@ export async function createUser(payload: {
   email: string;
   fullName: string;
   role: string;
+  phoneNumber: string;
   institutionId?: string;
   credentialMode: "TEMP_PASSWORD" | "INVITE";
   temporaryPassword?: string;
@@ -3236,6 +3265,26 @@ export async function patchUser(
   return apiFetch<UserOut>(`/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export type ResetPasswordResponse = UserOut & {
+  temporaryPassword: string;
+  smsSent?: boolean;
+  smsError?: string | null;
+};
+
+export async function resetUserPassword(
+  userId: string,
+  payload?: {
+    temporaryPassword?: string;
+    sendViaSms?: boolean;
+    phoneNumber?: string;
+  },
+): Promise<ResetPasswordResponse> {
+  return apiFetch<ResetPasswordResponse>(`/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
   });
 }
 

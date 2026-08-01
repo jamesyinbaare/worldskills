@@ -151,7 +151,7 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "affiliationType": "school",
         "organizationPhone": "+233302123456",
         "organizationEmail": "school@example.com",
-        "heardAbout": "Facebook",
+        "heardAbout": "Social media",
         "guardianName": "Kofi Mensah",
         "guardianPhone": "+233241000111",
         "hasPassport": False,
@@ -264,12 +264,12 @@ async def test_US_REG_01_AC1_successful_registration(
 
 
 @pytest.mark.asyncio
-async def test_registration_confirmation_sms_failure_does_not_block_registration(
+async def test_registration_rejects_non_ghana_phone(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
-    """Registration still succeeds when competitor phone is not a Ghana MSISDN."""
+    """Competitor mobile/WhatsApp must be Ghana numbers."""
     competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed_reg(session_manager, competition_id)
     comp = await _comp_headers(client, session_manager)
@@ -283,20 +283,10 @@ async def test_registration_confirmation_sms_failure_does_not_block_registration
         ),
         headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
     )
-    assert resp.status_code == 201, resp.text
-    body = resp.json()
-    assert body["competitorRef"].startswith("WSGH-")
-    async with session_manager.session() as session:
-        sms_rows = (
-            await session.execute(
-                select(SmsDelivery).where(
-                    SmsDelivery.competitor_id == uuid.UUID(body["competitorId"]),
-                    SmsDelivery.message_type == "REGISTRATION_CONFIRMATION",
-                )
-            )
-        ).scalars().all()
-        assert len(sms_rows) == 1
-        assert sms_rows[0].status == "failed"
+    assert resp.status_code == 422, resp.text
+    fields = {f["name"]: f["reason"] for f in resp.json()["error"]["fields"]}
+    assert fields.get("mobile") == "PHONE_INVALID"
+    assert fields.get("whatsapp") == "PHONE_INVALID"
 
 
 @pytest.mark.asyncio
@@ -551,7 +541,7 @@ async def test_registration_company_affiliation_and_other_id(
             idDocumentKind="OTHER",
             otherIdType="Passport",
             nationalId="P99887766",
-            heardAbout="Other",
+            heardAbout="Other means",
         ),
         headers=comp,
     )
@@ -565,7 +555,7 @@ async def test_registration_company_affiliation_and_other_id(
         assert row.id_document_kind == "OTHER"
         assert row.other_id_type == "Passport"
         assert row.national_id == "P99887766"
-        assert row.heard_about == "Other"
+        assert row.heard_about == "Other means"
         assert row.institution_id is None
 
 
@@ -712,11 +702,13 @@ async def test_registration_form_injects_profile_fields_for_legacy_config(
     heard = next(f for f in form.json()["fields"] if f["name"] == "heardAbout")
     assert heard["required"] is True
     assert heard["allowedValues"] == [
-        "Facebook",
+        "Social media",
         "Newspaper",
-        "Internet",
-        "FRIEND",
-        "Other",
+        "Friend",
+        "Radio",
+        "Television",
+        "Website (CTVET/WorldSkills)",
+        "Other means",
     ]
     assert form.json().get("minorAgeUnder") == 18
 

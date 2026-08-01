@@ -41,6 +41,7 @@ from app.services.audit import write_audit_event
 from app.services.eligibility import screen_competitor
 from app.services.geography import resolve_zone_for_registration
 from app.services.nominations import enqueue_notification
+from app.services.sms.phone import is_valid_ghana_phone
 from app.services.storage import ObjectStorage, get_object_storage
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,6 @@ logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r"^[\w\s\-'.À-ȕ]+$", re.UNICODE)
 _PASSPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-\s]{4,62}$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_PHONE_RE = re.compile(r"^\+?[0-9][0-9\-\s]{6,20}$")
 
 # Testable abuse tokens (real CAPTCHA provider later)
 _CAPTCHA_OK = {"ok", "valid", "pass"}
@@ -58,7 +58,26 @@ ALLOWED_GENDERS = frozenset({"Male", "Female"})
 ALLOWED_AFFILIATION_TYPES = frozenset({"school", "company", "workshop"})
 ALLOWED_ID_DOCUMENT_KINDS = frozenset({"GHANA_CARD", "OTHER"})
 ALLOWED_OTHER_ID_TYPES = frozenset({"Passport", "Driver's License", "Student ID"})
-ALLOWED_HEARD_ABOUT = frozenset({"Facebook", "Newspaper", "Internet", "FRIEND", "Other"})
+ALLOWED_HEARD_ABOUT = frozenset(
+    {
+        "Social media",
+        "Newspaper",
+        "Friend",
+        "Radio",
+        "Television",
+        "Website (CTVET/WorldSkills)",
+        "Other means",
+    }
+)
+_HEARD_ABOUT_VALUES = [
+    "Social media",
+    "Newspaper",
+    "Friend",
+    "Radio",
+    "Television",
+    "Website (CTVET/WorldSkills)",
+    "Other means",
+]
 _QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN", "DRAFT"})
 _DRAFT_STATUS = "DRAFT"
 _GENDER_FIELD = {
@@ -78,7 +97,7 @@ _PROFILE_ENSURE_FIELDS: list[dict[str, Any]] = [
         "name": "heardAbout",
         "type": "enum",
         "required": True,
-        "allowedValues": ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+        "allowedValues": list(_HEARD_ABOUT_VALUES),
     },
 ]
 
@@ -101,17 +120,25 @@ def _ensure_profile_fields_on_form(form: RegistrationFormDefinition) -> None:
     fields = list(form.fields or [])
     existing = {str(f.get("name")) for f in fields}
     missing = [dict(spec) for spec in _PROFILE_ENSURE_FIELDS if str(spec["name"]) not in existing]
-    if not missing:
-        return
-    insert_at = next(
-        (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "mobile"),
-        next(
-            (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "email"),
-            len(fields),
-        ),
-    )
-    for offset, spec in enumerate(missing):
-        fields.insert(insert_at + offset, spec)
+    if missing:
+        insert_at = next(
+            (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "mobile"),
+            next(
+                (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "email"),
+                len(fields),
+            ),
+        )
+        for offset, spec in enumerate(missing):
+            fields.insert(insert_at + offset, spec)
+
+    # Keep heard-about options current for competitions that already have the field.
+    for field in fields:
+        if str(field.get("name")) == "heardAbout":
+            field["type"] = "enum"
+            field["required"] = True
+            field["allowedValues"] = list(_HEARD_ABOUT_VALUES)
+            break
+
     form.fields = fields
 
 
@@ -316,7 +343,7 @@ def _validate_against_form(form: RegistrationFormDefinition, payload: Registrati
                 errors.append(FieldError(name, "EMAIL_INVALID"))
 
         elif name in {"mobile", "whatsapp"}:
-            if not _PHONE_RE.match(str(value).replace(" ", "")):
+            if not is_valid_ghana_phone(str(value)):
                 errors.append(FieldError(name, "PHONE_INVALID"))
 
         elif name == "nationalId":
@@ -398,7 +425,7 @@ def _validate_affiliation(payload: RegistrationCreate) -> list[FieldError]:
     org_email = (payload.organizationEmail or "").strip()
     if not org_phone:
         errors.append(FieldError("organizationPhone", "REQUIRED"))
-    elif not _PHONE_RE.match(org_phone.replace(" ", "")):
+    elif not is_valid_ghana_phone(org_phone):
         errors.append(FieldError("organizationPhone", "PHONE_INVALID"))
     if not org_email:
         errors.append(FieldError("organizationEmail", "REQUIRED"))
@@ -444,7 +471,7 @@ def _validate_guardian_contacts(payload: RegistrationCreate) -> list[FieldError]
     """Guardian name/phone are optional informational fields; validate format if present."""
     errors: list[FieldError] = []
     phone = (payload.guardianPhone or "").strip() or None
-    if phone and not _PHONE_RE.match(phone.replace(" ", "")):
+    if phone and not is_valid_ghana_phone(phone):
         errors.append(FieldError("guardianPhone", "PHONE_INVALID"))
     return errors
 
@@ -489,19 +516,20 @@ def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("coach.dateOfBirth", "INVALID_DATE")],
         )
-    if not _PHONE_RE.match(coach.contactNumber.replace(" ", "")):
+    if not is_valid_ghana_phone(coach.contactNumber):
         raise AppError(
             "VALIDATION_ERROR",
             "Coach contact number is invalid",
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("coach.contactNumber", "PHONE_INVALID")],
         )
-    if not _PHONE_RE.match(coach.whatsapp.replace(" ", "")):
+    whatsapp = coach.resolved_whatsapp()
+    if not is_valid_ghana_phone(whatsapp):
         raise AppError(
             "VALIDATION_ERROR",
             "Coach WhatsApp number is invalid",
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            fields=[FieldError("coach.whatsapp", "PHONE_INVALID")],
+            fields=[FieldError("coach.contactNumber", "PHONE_INVALID")],
         )
     if not _EMAIL_RE.match(coach.email):
         raise AppError(
@@ -510,7 +538,9 @@ def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             fields=[FieldError("coach.email", "EMAIL_INVALID")],
         )
-    return coach.model_dump(mode="json")
+    data = coach.model_dump(mode="json")
+    data["whatsapp"] = whatsapp
+    return data
 
 
 def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreate) -> tuple[bytes, str] | None:
@@ -1588,7 +1618,7 @@ DEFAULT_REGISTRATION_FIELDS: list[dict[str, Any]] = [
         "name": "heardAbout",
         "type": "enum",
         "required": True,
-        "allowedValues": ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+        "allowedValues": list(_HEARD_ABOUT_VALUES),
     },
     {"name": "hasPassport", "type": "boolean", "required": True},
     {"name": "passportNumber", "type": "string", "required": False, "maxLength": 64},

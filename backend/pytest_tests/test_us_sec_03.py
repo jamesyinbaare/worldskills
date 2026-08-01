@@ -17,11 +17,13 @@ async def test_US_SEC_03_AC1_successful_signup(
     client: AsyncClient, session_manager: DBManager
 ) -> None:
     email = f"signup-{uuid.uuid4().hex[:8]}@example.com"
+    phone = f"055{uuid.uuid4().int % 10**7:07d}"
     resp = await client.post(
         "/auth/register",
         json={
             "email": email,
             "fullName": "New Competitor",
+            "phoneNumber": phone,
             "password": "Competitor1!",
             "passwordConfirm": "Competitor1!",
             "captchaToken": "ok",
@@ -40,6 +42,7 @@ async def test_US_SEC_03_AC1_successful_signup(
         ).scalar_one()
         assert user.role == UserRole.COMPETITOR
         assert user.is_active is True
+        assert user.phone_number == phone
         audit = (
             await session.execute(
                 select(AuditEvent).where(
@@ -57,6 +60,7 @@ async def test_US_SEC_03_AC2_duplicate_email(client: AsyncClient) -> None:
     payload = {
         "email": email,
         "fullName": "First",
+        "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
         "password": "Competitor1!",
         "passwordConfirm": "Competitor1!",
         "captchaToken": "ok",
@@ -78,6 +82,7 @@ async def test_US_SEC_03_AC3_password_mismatch_or_weak(client: AsyncClient) -> N
         json={
             "email": f"mm-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Weak",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Competitor1!",
             "passwordConfirm": "Different1!",
             "captchaToken": "ok",
@@ -90,6 +95,7 @@ async def test_US_SEC_03_AC3_password_mismatch_or_weak(client: AsyncClient) -> N
         json={
             "email": f"wk-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Weak",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "short",
             "passwordConfirm": "short",
             "captchaToken": "ok",
@@ -105,6 +111,7 @@ async def test_US_SEC_03_AC4_abuse_blocked(client: AsyncClient) -> None:
         json={
             "email": f"abuse-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Abuse",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Competitor1!",
             "passwordConfirm": "Competitor1!",
             "captchaToken": "invalid",
@@ -122,6 +129,7 @@ async def test_US_SEC_03_AC5_staff_roles_forbidden(client: AsyncClient) -> None:
         json={
             "email": email,
             "fullName": "Would Be Admin",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Competitor1!",
             "passwordConfirm": "Competitor1!",
             "captchaToken": "ok",
@@ -135,6 +143,7 @@ async def test_US_SEC_03_AC5_staff_roles_forbidden(client: AsyncClient) -> None:
         json={
             "email": f"ok-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Ok Comp",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Competitor1!",
             "passwordConfirm": "Competitor1!",
             "captchaToken": "ok",
@@ -143,3 +152,64 @@ async def test_US_SEC_03_AC5_staff_roles_forbidden(client: AsyncClient) -> None:
     )
     assert ok.status_code == 201
     assert ok.json()["user"]["role"] == "COMPETITOR"
+
+
+@pytest.mark.asyncio
+async def test_US_SEC_03_phone_required_and_valid(client: AsyncClient) -> None:
+    missing = await client.post(
+        "/auth/register",
+        json={
+            "email": f"nophone-{uuid.uuid4().hex[:8]}@example.com",
+            "fullName": "No Phone",
+            "password": "Competitor1!",
+            "passwordConfirm": "Competitor1!",
+            "captchaToken": "ok",
+        },
+    )
+    assert missing.status_code == 422
+
+    invalid = await client.post(
+        "/auth/register",
+        json={
+            "email": f"badphone-{uuid.uuid4().hex[:8]}@example.com",
+            "fullName": "Bad Phone",
+            "phoneNumber": "123",
+            "password": "Competitor1!",
+            "passwordConfirm": "Competitor1!",
+            "captchaToken": "ok",
+        },
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "INVALID_PHONE"
+
+
+@pytest.mark.asyncio
+async def test_US_SEC_03_duplicate_phone_rejected(client: AsyncClient) -> None:
+    phone = "0559988776"
+    first = await client.post(
+        "/auth/register",
+        json={
+            "email": f"phone-a-{uuid.uuid4().hex[:8]}@example.com",
+            "fullName": "First Phone",
+            "phoneNumber": phone,
+            "password": "Competitor1!",
+            "passwordConfirm": "Competitor1!",
+            "captchaToken": "ok",
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        "/auth/register",
+        json={
+            "email": f"phone-b-{uuid.uuid4().hex[:8]}@example.com",
+            "fullName": "Second Phone",
+            "phoneNumber": "+233559988776",
+            "password": "Competitor1!",
+            "passwordConfirm": "Competitor1!",
+            "captchaToken": "ok",
+        },
+    )
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "DUPLICATE"
+    assert second.json()["error"]["fields"][0]["name"] == "phoneNumber"

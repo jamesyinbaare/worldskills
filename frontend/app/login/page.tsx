@@ -116,9 +116,6 @@ function LoginContent() {
             <CrestLogo className="h-12 w-auto object-contain" />
             <WorldSkillsLogo className="h-10 w-auto max-w-[10rem] object-contain" />
           </div>
-          <p className="text-sm text-muted-foreground">
-            Skills Competition Management System
-          </p>
         </div>
 
         <Card className="w-full shadow-sm ring-primary/10">
@@ -159,6 +156,14 @@ function LoginContent() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <p className="text-sm">
+                  <Link
+                    href="/forgot-password"
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    Forgot password?
+                  </Link>
+                </p>
               </div>
               <ApiErrorAlert error={error} title="Sign-in failed" />
               <Button

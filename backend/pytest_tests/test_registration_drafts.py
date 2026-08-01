@@ -30,7 +30,7 @@ def _adult_payload(skill_id: uuid.UUID, institution_id: uuid.UUID, region_id: uu
         "affiliationType": "school",
         "organizationPhone": "+233302123456",
         "organizationEmail": "school@example.com",
-        "heardAbout": "Facebook",
+        "heardAbout": "Social media",
         "guardianName": "Kofi Mensah",
         "guardianPhone": "+233241000111",
         "institutionId": str(institution_id),
