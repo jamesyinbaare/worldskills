@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.core.security import get_password_hash
 from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import AuditEvent, Institution, NotificationTemplate, User, UserRole
+from pytest_tests.conftest import region_id_by_name
 
 
 async def _ensure_invite_template(session_manager: DBManager) -> None:
@@ -39,8 +40,13 @@ async def _ensure_invite_template(session_manager: DBManager) -> None:
 
 
 async def _seed_institution(session_manager: DBManager) -> uuid.UUID:
+    region_id = await region_id_by_name(session_manager, "Greater Accra")
     async with session_manager.session() as session:
-        inst = Institution(name=f"Inst {uuid.uuid4().hex[:8]}", active=True)
+        inst = Institution(
+            name=f"Inst {uuid.uuid4().hex[:8]}",
+            region_id=region_id,
+            active=True,
+        )
         session.add(inst)
         await session.commit()
         return inst.id
@@ -53,12 +59,14 @@ async def test_US_SEC_02_AC1_create_with_temp_password(
     session_manager: DBManager,
 ) -> None:
     inst_id = await _seed_institution(session_manager)
+    phone = f"055{uuid.uuid4().int % 10**7:07d}"
     resp = await client.post(
         "/users",
         headers=auth_headers,
         json={
             "email": f"expert-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Temp Expert",
+            "phoneNumber": phone,
             "role": "EXPERT",
             "institutionId": str(inst_id),
             "credentialMode": "TEMP_PASSWORD",
@@ -70,6 +78,7 @@ async def test_US_SEC_02_AC1_create_with_temp_password(
     assert body["temporaryPassword"] == "temp-pass-1234"
     assert body["mustChangePassword"] is True
     assert body["role"] == "EXPERT"
+    assert body["phoneNumber"] == phone
 
     async with session_manager.session() as session:
         audits = (
@@ -78,6 +87,10 @@ async def test_US_SEC_02_AC1_create_with_temp_password(
             )
         ).scalars().all()
         assert any(a.entity_id == body["userId"] for a in audits)
+        user = (
+            await session.execute(select(User).where(User.id == uuid.UUID(body["userId"])))
+        ).scalar_one()
+        assert user.phone_number == phone
 
 
 @pytest.mark.asyncio
@@ -95,6 +108,7 @@ async def test_US_SEC_02_AC2_create_with_invite(
         json={
             "email": email,
             "fullName": "Invited Moderator",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "MODERATOR",
             "credentialMode": "INVITE",
         },
@@ -125,6 +139,7 @@ async def test_US_SEC_02_AC3_admin_may_create_expert(
         json={
             "email": f"admin-expert-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Admin Created Expert",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "CHIEF_EXPERT",
             "institutionId": str(inst_id),
             "credentialMode": "TEMP_PASSWORD",
@@ -146,6 +161,7 @@ async def test_US_SEC_02_AC3b_admin_cannot_create_admin(
         json={
             "email": f"new-admin-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Blocked Admin",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "ADMIN",
             "credentialMode": "TEMP_PASSWORD",
             "temporaryPassword": "admin-pass-1234",
@@ -166,6 +182,7 @@ async def test_US_SEC_02_AC4_expert_requires_institution(
         json={
             "email": f"no-inst-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "No Inst Expert",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "EXPERT",
             "credentialMode": "TEMP_PASSWORD",
             "temporaryPassword": "temp-pass-1234",
@@ -188,6 +205,7 @@ async def test_US_SEC_02_AC8_expert_without_institution(
         json={
             "email": f"no-inst-ok-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Independent Expert",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "EXPERT",
             "credentialMode": "TEMP_PASSWORD",
             "temporaryPassword": "temp-pass-1234",
@@ -212,6 +230,7 @@ async def test_US_SEC_02_AC5_accept_invite(
         json={
             "email": email,
             "fullName": "Accept Invite",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "EXPERT",
             "institutionId": str(inst_id),
             "credentialMode": "INVITE",
@@ -258,6 +277,7 @@ async def test_US_SEC_02_AC6_list_and_deactivate(
         json={
             "email": email,
             "fullName": "Deactivate Me",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "MODERATOR",
             "credentialMode": "TEMP_PASSWORD",
             "temporaryPassword": "mod-pass-1234",
@@ -295,6 +315,7 @@ async def test_US_SEC_02_AC7_duplicate_email(
     payload = {
         "email": email,
         "fullName": "First",
+        "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
         "role": "MODERATOR",
         "credentialMode": "TEMP_PASSWORD",
         "temporaryPassword": "mod-pass-1234",
@@ -334,6 +355,7 @@ async def test_US_SEC_02_super_admin_creates_admin(
         json={
             "email": f"child-admin-{uuid.uuid4().hex[:8]}@example.com",
             "fullName": "Child Admin",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "role": "ADMIN",
             "credentialMode": "TEMP_PASSWORD",
             "temporaryPassword": "admin-pass-1234",

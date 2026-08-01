@@ -28,6 +28,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  GHANA_PHONE_FIELD_HINT,
+  ghanaPhoneFieldError,
+  requiredGhanaPhoneError,
+} from "@/lib/phone";
 
 function safeNextPath(raw: string | null): string | null {
   if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return null;
@@ -61,6 +66,7 @@ function InstitutionSignupContent() {
   const [schoolName, setSchoolName] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
@@ -118,12 +124,18 @@ function InstitutionSignupContent() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const phoneErr = requiredGhanaPhoneError(phoneNumber);
+    if (phoneErr) {
+      setFieldErrors({ phoneNumber: phoneErr });
+      return;
+    }
     setFieldErrors({});
     setPending(true);
     try {
       const me = await registerInstitution({
         email: email.trim(),
         fullName: fullName.trim(),
+        phoneNumber: phoneNumber.trim(),
         password,
         passwordConfirm,
         schoolCode: schoolCode.trim(),
@@ -162,9 +174,6 @@ function InstitutionSignupContent() {
             <CrestLogo className="h-12 w-auto object-contain" />
             <WorldSkillsLogo className="h-10 w-auto max-w-[10rem] object-contain" />
           </div>
-          <p className="text-sm text-muted-foreground">
-            Skills Competition Management System
-          </p>
         </div>
 
         {enabled === null ? (
@@ -282,6 +291,47 @@ function InstitutionSignupContent() {
                   aria-invalid={Boolean(fieldErrors.email)}
                 />
                 <FieldMessage message={fieldErrors.email} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="phoneNumber">Phone number</Label>
+                <Input
+                  id="phoneNumber"
+                  name="phoneNumber"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  required
+                  className="min-h-11"
+                  placeholder="e.g. 0551234567"
+                  value={phoneNumber}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPhoneNumber(next);
+                    setFieldErrors((prev) => {
+                      const phoneErr = ghanaPhoneFieldError(next);
+                      if (!phoneErr && !prev.phoneNumber) return prev;
+                      const copy = { ...prev };
+                      if (phoneErr) copy.phoneNumber = phoneErr;
+                      else delete copy.phoneNumber;
+                      return copy;
+                    });
+                  }}
+                  onBlur={() => {
+                    const phoneErr = ghanaPhoneFieldError(phoneNumber);
+                    setFieldErrors((prev) => {
+                      if (!phoneErr && !prev.phoneNumber) return prev;
+                      const copy = { ...prev };
+                      if (phoneErr) copy.phoneNumber = phoneErr;
+                      else delete copy.phoneNumber;
+                      return copy;
+                    });
+                  }}
+                  aria-invalid={Boolean(fieldErrors.phoneNumber)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {GHANA_PHONE_FIELD_HINT}
+                </p>
+                <FieldMessage message={fieldErrors.phoneNumber} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>

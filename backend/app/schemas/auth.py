@@ -37,6 +37,7 @@ class RegisterInstitutionRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=200, alias="fullName")
     password: str = Field(min_length=1)
     password_confirm: str = Field(alias="passwordConfirm")
+    phone_number: str = Field(min_length=1, max_length=50, alias="phoneNumber")
     school_code: str = Field(min_length=1, max_length=64, alias="schoolCode")
     captcha_token: str | None = Field(default=None, alias="captchaToken")
 
@@ -56,6 +57,7 @@ class RegisterRequest(BaseModel):
     full_name: str = Field(min_length=1, max_length=200, alias="fullName")
     password: str = Field(min_length=1)
     password_confirm: str = Field(alias="passwordConfirm")
+    phone_number: str = Field(min_length=1, max_length=50, alias="phoneNumber")
     captcha_token: str | None = Field(default=None, alias="captchaToken")
     role: str | None = None  # ignored / rejected if not COMPETITOR
 

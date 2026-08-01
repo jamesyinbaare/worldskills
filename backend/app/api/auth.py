@@ -192,6 +192,8 @@ async def register(
         )
 
     users_service.validate_password_policy(payload.password)
+    phone_number = users_service.require_ghana_phone(payload.phone_number)
+    await users_service.assert_phone_available(session, phone_number)
 
     existing = (
         await session.execute(select(User).where(User.email == email))
@@ -207,6 +209,7 @@ async def register(
     user = User(
         email=email,
         full_name=full_name,
+        phone_number=phone_number,
         role=UserRole.COMPETITOR,
         hashed_password=get_password_hash(payload.password),
         is_active=True,
@@ -301,6 +304,8 @@ async def register_institution(
         )
 
     users_service.validate_password_policy(payload.password)
+    phone_number = users_service.require_ghana_phone(payload.phone_number)
+    await users_service.assert_phone_available(session, phone_number)
 
     institution = await institutions_service.get_active_by_code(
         session, payload.school_code
@@ -336,6 +341,7 @@ async def register_institution(
     user = User(
         email=email,
         full_name=full_name,
+        phone_number=phone_number,
         role=UserRole.INSTITUTION,
         institution_id=institution.id,
         hashed_password=get_password_hash(payload.password),

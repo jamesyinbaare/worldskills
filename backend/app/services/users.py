@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import string
 import uuid
 from datetime import datetime, timedelta
 
@@ -18,10 +19,17 @@ from app.core.security import (
     hash_refresh_token,
     verify_refresh_token_hash,
 )
-from app.models import Institution, NotificationPreference, User, UserRole
-from app.schemas.users import CredentialMode, CreateUserRequest, PatchUserRequest
+from app.models import Institution, NotificationPreference, RefreshToken, User, UserRole
+from app.schemas.users import (
+    CredentialMode,
+    CreateUserRequest,
+    PatchUserRequest,
+    ResetPasswordRequest,
+)
 from app.services.audit import write_audit_event
 from app.services.notifications import emit
+from app.services.sms.delivery_log import send_and_log_sms
+from app.services.sms.phone import is_valid_ghana_phone, normalize_msisdn, to_local_ghana_phone
 
 
 PROVISIONABLE_ROLES = {
@@ -33,6 +41,21 @@ PROVISIONABLE_ROLES = {
 }
 
 _EXPERT_ROLES = {UserRole.EXPERT, UserRole.CHIEF_EXPERT}
+_PRIVILEGED_ADMIN_ROLES = {UserRole.SUPER_ADMIN, UserRole.ADMIN}
+_TEMP_PASSWORD_ALPHABET = string.ascii_letters + string.digits
+MESSAGE_TYPE_PASSWORD_RESET = "PASSWORD_RESET"
+RECIPIENT_USER = "user"
+
+PROVISIONABLE_ROLES = {
+    UserRole.ADMIN,
+    UserRole.CHIEF_EXPERT,
+    UserRole.EXPERT,
+    UserRole.MODERATOR,
+    UserRole.APPEALS_OFFICER,
+}
+
+_EXPERT_ROLES = {UserRole.EXPERT, UserRole.CHIEF_EXPERT}
+_PRIVILEGED_ADMIN_ROLES = {UserRole.SUPER_ADMIN, UserRole.ADMIN}
 
 
 def _normalize_email(email: str) -> str:
@@ -58,6 +81,19 @@ def assert_can_create_role(actor: User, target_role: UserRole) -> None:
         raise AppError("FORBIDDEN", "Insufficient role", status_code=403)
 
 
+def assert_can_manage_user(actor: User, target: User) -> None:
+    """Admins may manage users; only SUPER_ADMIN may manage ADMIN/SUPER_ADMIN."""
+    if not is_admin_role(actor.role):
+        raise AppError("FORBIDDEN", "Insufficient role", status_code=403)
+    if target.role in _PRIVILEGED_ADMIN_ROLES and actor.role != UserRole.SUPER_ADMIN:
+        raise AppError(
+            "USER_MANAGE_DENIED",
+            "Only a super administrator can manage administrator accounts",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("userId", "USER_MANAGE_DENIED")],
+        )
+
+
 def validate_password_policy(password: str) -> None:
     min_len = settings.password_min_length
     if len(password) < min_len:
@@ -69,6 +105,60 @@ def validate_password_policy(password: str) -> None:
         )
 
 
+def require_ghana_phone(raw: str | None, *, field: str = "phoneNumber") -> str:
+    phone = (raw or "").strip()
+    if not phone:
+        raise AppError(
+            "PHONE_REQUIRED",
+            "A phone number is required",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError(field, "PHONE_REQUIRED")],
+        )
+    if not is_valid_ghana_phone(phone):
+        raise AppError(
+            "INVALID_PHONE",
+            "Phone number must be a valid Ghana mobile number",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError(field, "INVALID_PHONE")],
+        )
+    return to_local_ghana_phone(phone)
+
+
+async def assert_phone_available(
+    session: AsyncSession,
+    phone: str,
+    *,
+    exclude_user_id: uuid.UUID | None = None,
+) -> None:
+    """Reject if another user already owns this Ghana number (any stored format)."""
+    target = normalize_msisdn(phone)
+    rows = (
+        await session.execute(
+            select(User.id, User.phone_number).where(User.phone_number.is_not(None))
+        )
+    ).all()
+    for user_id, stored in rows:
+        if exclude_user_id is not None and user_id == exclude_user_id:
+            continue
+        if not stored or not str(stored).strip():
+            continue
+        try:
+            if normalize_msisdn(str(stored)) == target:
+                raise AppError(
+                    "DUPLICATE",
+                    "Phone number already registered",
+                    status_code=status.HTTP_409_CONFLICT,
+                    fields=[FieldError("phoneNumber", "DUPLICATE")],
+                )
+        except ValueError:
+            continue
+
+
+def generate_temporary_password() -> str:
+    length = max(1, settings.temporary_password_length)
+    return "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))
+
+
 def _user_out(user: User) -> dict:
     return {
         "userId": str(user.id),
@@ -78,6 +168,7 @@ def _user_out(user: User) -> dict:
         "institutionId": str(user.institution_id) if user.institution_id else None,
         "isActive": user.is_active,
         "mustChangePassword": user.must_change_password,
+        "phoneNumber": user.phone_number,
     }
 
 
@@ -140,6 +231,8 @@ async def create_user(
     assert_can_create_role(actor, target_role)
 
     email = _normalize_email(payload.email)
+    phone_number = require_ghana_phone(payload.phone_number)
+    await assert_phone_available(session, phone_number)
 
     institution_id: uuid.UUID | None = None
     if payload.institution_id:
@@ -161,6 +254,7 @@ async def create_user(
         email=email,
         full_name=payload.full_name.strip(),
         role=target_role,
+        phone_number=phone_number,
         is_active=True,
         institution_id=institution_id,
         created_by_id=actor.id,
@@ -173,7 +267,7 @@ async def create_user(
     invite_sent = False
 
     if payload.credential_mode == CredentialMode.TEMP_PASSWORD:
-        temp = payload.temporary_password or secrets.token_urlsafe(12)
+        temp = payload.temporary_password or generate_temporary_password()
         validate_password_policy(temp)
         user.hashed_password = get_password_hash(temp)
         user.must_change_password = True
@@ -190,7 +284,7 @@ async def create_user(
                 fallback_channel=None,
                 language="en",
                 email=email,
-                phone=None,
+                phone=phone_number,
                 whatsapp=None,
                 opt_out_non_essential=False,
                 updated_at=datetime.utcnow(),
@@ -468,6 +562,113 @@ async def accept_invite(
         user_agent=user_agent,
     )
     await session.commit()
+
+
+async def _revoke_refresh_tokens(session: AsyncSession, user_id: uuid.UUID) -> None:
+    rows = (
+        await session.execute(
+            select(RefreshToken).where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    now = datetime.utcnow()
+    for row in rows:
+        row.revoked_at = now
+
+
+async def reset_password(
+    session: AsyncSession,
+    *,
+    actor: User,
+    user_id: uuid.UUID,
+    payload: ResetPasswordRequest,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict:
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise AppError("USER_NOT_FOUND", "User not found", status_code=404)
+
+    assert_can_manage_user(actor, user)
+
+    phone_for_sms: str | None = None
+    if payload.send_via_sms:
+        if not settings.sms_enabled:
+            raise AppError(
+                "SMS_DISABLED",
+                "SMS delivery is not enabled",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                fields=[FieldError("sendViaSms", "SMS_DISABLED")],
+            )
+        raw_phone = (payload.phone_number or user.phone_number or "").strip() or None
+        if not raw_phone:
+            raise AppError(
+                "PHONE_REQUIRED",
+                "A phone number is required to send the temporary password by SMS",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                fields=[FieldError("phoneNumber", "PHONE_REQUIRED")],
+            )
+        phone_for_sms = require_ghana_phone(raw_phone)
+        await assert_phone_available(session, phone_for_sms, exclude_user_id=user.id)
+
+    temp = payload.temporary_password or generate_temporary_password()
+    validate_password_policy(temp)
+
+    user.hashed_password = get_password_hash(temp)
+    user.must_change_password = True
+    user.invite_token_hash = None
+    user.invite_expires_at = None
+    if phone_for_sms:
+        user.phone_number = phone_for_sms
+
+    await _revoke_refresh_tokens(session, user.id)
+
+    sms_sent = False
+    sms_error: str | None = None
+    if payload.send_via_sms and phone_for_sms:
+        message = (
+            f"Your WorldSkills account temporary password is: {temp}. "
+            "You must change it after signing in."
+        )
+        result, _ = await send_and_log_sms(
+            session,
+            phone=phone_for_sms,
+            message=message,
+            message_type=MESSAGE_TYPE_PASSWORD_RESET,
+            trigger="admin_password_reset",
+            recipient_role=RECIPIENT_USER,
+            user_id=user.id,
+            triggered_by_user_id=actor.id,
+        )
+        sms_sent = bool(result.sent)
+        if not sms_sent:
+            sms_error = result.error or "SMS delivery failed"
+
+    await write_audit_event(
+        session,
+        action="USER_PASSWORD_RESET",
+        entity_type="User",
+        entity_id=str(user.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        after={
+            "email": user.email,
+            "mustChangePassword": True,
+            "sendViaSms": payload.send_via_sms,
+            "smsSent": sms_sent,
+        },
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(user)
+    out = _user_out(user)
+    out["temporaryPassword"] = temp
+    out["smsSent"] = sms_sent
+    out["smsError"] = sms_error
+    return out
 
 
 async def change_password(

@@ -101,6 +101,12 @@ export function humanizeFieldError(name: string, reason: string): string {
   if (name === "dateOfBirth" && (key.includes("DATE") || key.includes("PARSING"))) {
     return "Enter a valid date of birth.";
   }
+  if ((name === "phoneNumber" || name === "phone") && key === "DUPLICATE") {
+    return "This phone number is already registered.";
+  }
+  if (name === "email" && key === "DUPLICATE") {
+    return "This email is already registered.";
+  }
   if (REASON_MESSAGES[key]) return REASON_MESSAGES[key];
   // Fallback: soften SCREAMING_SNAKE without inventing meaning
   return reason
@@ -179,19 +185,6 @@ export function ApiErrorAlert({
               </li>
             ))}
           </ul>
-        ) : null}
-        {error.traceId ? (
-          <details className="mt-2 text-xs opacity-90">
-            <summary className="cursor-pointer">Technical details</summary>
-            <p className="mt-1 break-all">
-              Code: {error.code}
-              {error.fields.length === 1
-                ? ` · ${error.fields[0].name}: ${error.fields[0].reason}`
-                : null}
-              <br />
-              Trace ID: {error.traceId}
-            </p>
-          </details>
         ) : null}
       </AlertDescription>
     </Alert>

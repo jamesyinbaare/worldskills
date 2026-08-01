@@ -116,9 +116,6 @@ function LoginContent() {
             <CrestLogo className="h-12 w-auto object-contain" />
             <WorldSkillsLogo className="h-10 w-auto max-w-[10rem] object-contain" />
           </div>
-          <p className="text-sm text-muted-foreground">
-            Skills Competition Management System
-          </p>
         </div>
 
         <Card className="w-full shadow-sm ring-primary/10">

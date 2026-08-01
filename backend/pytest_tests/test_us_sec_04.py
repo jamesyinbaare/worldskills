@@ -45,6 +45,7 @@ async def test_US_SEC_04_AC1_successful_claim(
         json={
             "email": email,
             "fullName": "School Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school.code,
@@ -91,6 +92,7 @@ async def test_US_SEC_04_AC2_unknown_code(
         json={
             "email": f"x-{uuid.uuid4().hex[:8]}@school.edu",
             "fullName": "Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": "DOES-NOT-EXIST",
@@ -112,6 +114,7 @@ async def test_US_SEC_04_AC3_inactive_school(
         json={
             "email": f"x-{uuid.uuid4().hex[:8]}@school.edu",
             "fullName": "Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school.code,
@@ -131,6 +134,7 @@ async def test_US_SEC_04_AC4_already_claimed(
     payload = {
         "email": f"first-{uuid.uuid4().hex[:8]}@school.edu",
         "fullName": "First Head",
+        "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
         "password": "Institution1!",
         "passwordConfirm": "Institution1!",
         "schoolCode": school.code,
@@ -145,6 +149,7 @@ async def test_US_SEC_04_AC4_already_claimed(
             **payload,
             "email": f"second-{uuid.uuid4().hex[:8]}@school.edu",
             "fullName": "Second Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
         },
     )
     assert second.status_code == 409
@@ -164,6 +169,7 @@ async def test_US_SEC_04_AC5_duplicate_email(
         json={
             "email": email,
             "fullName": "Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school_a.code,
@@ -176,6 +182,7 @@ async def test_US_SEC_04_AC5_duplicate_email(
         json={
             "email": email,
             "fullName": "Head",
+            "phoneNumber": f"055{uuid.uuid4().int % 10**7:07d}",
             "password": "Institution1!",
             "passwordConfirm": "Institution1!",
             "schoolCode": school_b.code,

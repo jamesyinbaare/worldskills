@@ -287,6 +287,7 @@ export type UserOut = {
   institutionId?: string | null;
   isActive: boolean;
   mustChangePassword: boolean;
+  phoneNumber?: string | null;
 };
 
 export type CreateUserResponse = UserOut & {
@@ -3108,6 +3109,7 @@ export type RegisterAccountInput = {
   fullName: string;
   password: string;
   passwordConfirm: string;
+  phoneNumber: string;
   captchaToken?: string | null;
 };
 
@@ -3123,6 +3125,7 @@ export async function registerAccount(
         fullName: payload.fullName,
         password: payload.password,
         passwordConfirm: payload.passwordConfirm,
+        phoneNumber: payload.phoneNumber,
         captchaToken: payload.captchaToken ?? "ok",
       }),
       skipAuthRetry: true,
@@ -3154,6 +3157,7 @@ export async function registerInstitution(
         fullName: payload.fullName,
         password: payload.password,
         passwordConfirm: payload.passwordConfirm,
+        phoneNumber: payload.phoneNumber,
         schoolCode: payload.schoolCode,
         captchaToken: payload.captchaToken ?? "ok",
       }),
@@ -3218,6 +3222,7 @@ export async function createUser(payload: {
   email: string;
   fullName: string;
   role: string;
+  phoneNumber: string;
   institutionId?: string;
   credentialMode: "TEMP_PASSWORD" | "INVITE";
   temporaryPassword?: string;
@@ -3239,6 +3244,26 @@ export async function patchUser(
   return apiFetch<UserOut>(`/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export type ResetPasswordResponse = UserOut & {
+  temporaryPassword: string;
+  smsSent?: boolean;
+  smsError?: string | null;
+};
+
+export async function resetUserPassword(
+  userId: string,
+  payload?: {
+    temporaryPassword?: string;
+    sendViaSms?: boolean;
+    phoneNumber?: string;
+  },
+): Promise<ResetPasswordResponse> {
+  return apiFetch<ResetPasswordResponse>(`/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
   });
 }
 
