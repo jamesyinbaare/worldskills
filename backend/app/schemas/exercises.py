@@ -59,3 +59,18 @@ class ExerciseOut(BaseModel):
     hasRubricCriteria: bool = False
     blindMode: bool | None = None
     criteriaCount: int = 0
+    availabilityNotifiedAt: str | None = None
+
+
+class ExerciseNotifyOut(BaseModel):
+    competitorsConsidered: int
+    competitorSent: int
+    coachSent: int
+    failed: int
+    skippedNotReady: bool = False
+    skippedAlreadyNotified: bool = False
+    availabilityNotifiedAt: str | None = None
+
+
+class ExerciseNotifyPollOut(BaseModel):
+    results: list[dict]

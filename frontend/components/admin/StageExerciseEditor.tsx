@@ -4,10 +4,12 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   DeliverableItem,
+  ExerciseNotifyOut,
   ExerciseOut,
   deleteExercisePack,
   downloadExercisePack,
   getExercise,
+  notifyExerciseAvailable,
   publishExercise,
   putExercise,
   triggerBrowserDownload,
@@ -110,6 +112,10 @@ export function StageExerciseEditor({
   const [pending, setPending] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [packPending, setPackPending] = useState(false);
+  const [notifyPending, setNotifyPending] = useState(false);
+  const [notifySummary, setNotifySummary] = useState<ExerciseNotifyOut | null>(
+    null,
+  );
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const packInputRef = useRef<HTMLInputElement>(null);
 
@@ -226,10 +232,40 @@ export function StageExerciseEditor({
       const out = await unpublishExercise(competitionId, stageId);
       applyExercise(out);
       setSavedMessage("Exercise unpublished (draft).");
+      setNotifySummary(null);
     } catch (err) {
       if (err instanceof ApiError) setError(err);
     } finally {
       setActionPending(false);
+    }
+  }
+
+  async function onNotify() {
+    setNotifyPending(true);
+    setError(null);
+    setNotifySummary(null);
+    try {
+      const summary = await notifyExerciseAvailable(competitionId, stageId);
+      setNotifySummary(summary);
+      if (summary.skippedNotReady) {
+        setSavedMessage(
+          "Exercise is not ready to notify yet (must be published and stage window open).",
+        );
+      } else if (summary.skippedAlreadyNotified) {
+        setSavedMessage(
+          "Competitors and coaches were already notified for this exercise.",
+        );
+      } else {
+        setSavedMessage(
+          `Notified ${summary.competitorSent} competitor(s) and ${summary.coachSent} coach(es).`,
+        );
+        const refreshed = await getExercise(competitionId, stageId);
+        applyExercise(refreshed);
+      }
+    } catch (err) {
+      if (err instanceof ApiError) setError(err);
+    } finally {
+      setNotifyPending(false);
     }
   }
 
@@ -284,6 +320,7 @@ export function StageExerciseEditor({
   const status = exercise?.status ?? "—";
   const isPublished = status === "PUBLISHED";
   const hasPack = Boolean(exercise?.packFileName);
+  const notifiedAt = exercise?.availabilityNotifiedAt ?? null;
 
   if (loading) {
     return <Skeleton className="h-48 w-full" />;
@@ -479,7 +516,36 @@ export function StageExerciseEditor({
             >
               Unpublish
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={notifyPending || !isPublished}
+              onClick={() => void onNotify()}
+              data-testid="exercise-notify"
+            >
+              {notifyPending ? "Notifying…" : "Notify competitors & coaches"}
+            </Button>
           </div>
+
+          {notifiedAt ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Availability SMS last sent: {new Date(notifiedAt).toLocaleString()}.
+              You can notify again with the button above.
+            </p>
+          ) : isPublished ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Availability SMS pending — sends when the stage window is open, or
+              use Notify above.
+            </p>
+          ) : null}
+
+          {notifySummary && !notifySummary.skippedNotReady && !notifySummary.skippedAlreadyNotified ? (
+            <p className="text-sm text-muted-foreground">
+              Considered {notifySummary.competitorsConsidered} competitor(s);
+              failed deliveries: {notifySummary.failed}.
+            </p>
+          ) : null}
 
           {savedMessage ? (
             <Alert>

@@ -24,7 +24,7 @@ from app.models import (
     Skill,
     Zone,
 )
-from app.services.consent import can_progress_past_pending_review, is_public_profile_visible
+from app.services.consent import can_progress_past_pending_review
 from pytest_tests.conftest import (
     create_competitor_account,
     competition_payload,
@@ -154,7 +154,15 @@ def _reg_payload(ctx: dict[str, uuid.UUID], *, dob: str, **overrides: object) ->
         "dateOfBirth": dob,
         "email": f"kofi-{uuid.uuid4().hex[:6]}@example.com",
         "mobile": "+233241111111",
+        "whatsapp": "+233241111111",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        "idDocumentKind": "GHANA_CARD",
+        "affiliationType": "school",
+        "organizationPhone": "+233302123456",
+        "organizationEmail": "school@example.com",
+        "heardAbout": "Internet",
+        "guardianName": "Ama Guardian",
+        "guardianPhone": "+233241000111",
         "hasPassport": False,
         "institutionId": str(ctx["institution_id"]),
         "skillIds": [str(ctx["skill_id"])],
@@ -180,11 +188,12 @@ async def _comp(client: AsyncClient, session_manager: DBManager) -> dict[str, st
 
 
 @pytest.mark.asyncio
-async def test_US_REG_02_AC1_consent_required_for_minor(
+async def test_US_REG_02_AC1_consent_not_enforced_on_registration(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
+    """Minors register without CONSENT_PENDING; guardian details are informational."""
     competition_id = await _create_competition(client, auth_headers)
     ctx = await _seed(session_manager, competition_id)
     comp = await _comp(client, session_manager)
@@ -198,15 +207,15 @@ async def test_US_REG_02_AC1_consent_required_for_minor(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "PENDING_REVIEW"
-    assert "CONSENT_PENDING" in body["flags"]
+    assert "CONSENT_PENDING" not in body["flags"]
 
     async with session_manager.session() as session:
         competitor = await session.get(Competitor, uuid.UUID(body["competitorId"]))
         assert competitor is not None
         assert competitor.status == "PENDING_REVIEW"
-        assert "CONSENT_PENDING" in (competitor.flags or [])
+        assert "CONSENT_PENDING" not in (competitor.flags or [])
+        assert competitor.guardian_name == "Ama Guardian"
         assert can_progress_past_pending_review(competitor)
-        assert is_public_profile_visible(competitor) is False
 
 
 @pytest.mark.asyncio
@@ -321,7 +330,8 @@ async def test_US_REG_02_AC2_participation_consent_lifts_block(
         assert competitor is not None
         assert competitor.consent_verification_status == "VERIFIED"
         assert competitor.consent_verified_at is not None
-        assert competitor.status == "REGISTERED"
+        # Consent verification does not advance registration status.
+        assert competitor.status == "PENDING_REVIEW"
 
 
 @pytest.mark.asyncio
@@ -389,7 +399,7 @@ async def test_US_REG_02_AC4_withdrawal(
     body = withdrawn.json()
     assert body["publicProfileVisible"] is False
     assert "CONSENT_WITHDRAWN" in body["flags"]
-    assert "CONSENT_PENDING" in body["flags"]
+    assert "CONSENT_PENDING" not in body["flags"]
 
     assert (await client.get(f"/public/competitors/{ref}")).status_code == 404
 
@@ -400,7 +410,7 @@ async def test_US_REG_02_AC4_withdrawal(
         assert competitor.consent_public_at is None
         assert competitor.consent_form_key is None
         assert can_progress_past_pending_review(competitor)
-        assert "CONSENT_PENDING" in (competitor.flags or [])
+        assert "CONSENT_PENDING" not in (competitor.flags or [])
         # Status must not be forced back to a blocking CONSENT_PENDING state.
         assert competitor.status != "CONSENT_PENDING"
 

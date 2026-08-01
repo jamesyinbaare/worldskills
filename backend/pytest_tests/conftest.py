@@ -325,15 +325,45 @@ async def seed_ghana_regions(session_manager: TestingDatabaseSessionManager) -> 
         await session.commit()
 
 
-async def seed_complete_config(session: AsyncSession, cycle: Competition) -> None:
-    """Minimal complete skill/stage graph so activation can succeed."""
-    from app.models import Exercise
+async def seed_complete_config(
+    session: AsyncSession,
+    cycle: Competition,
+    *,
+    with_exercises: bool = True,
+) -> None:
+    """Minimal complete skill/stage graph so activation can succeed.
+
+    Exercises are optional for activation (advisory only). Pass with_exercises=False
+    to leave stages without published exercises.
+    """
+    from datetime import datetime, timedelta
+
+    from app.models import Exercise, RegistrationFormDefinition, RegistrationWindow
 
     age = AgeRule(competition_id=cycle.id, name="U25", max_age=25, reference_date=date.today())
     path = Pathway(competition_id=cycle.id, name="National")
     scheme = MarkingScheme(competition_id=cycle.id, name="CIS")
     session.add_all([age, path, scheme])
     await session.flush()
+
+    now = datetime.utcnow()
+    session.add(
+        RegistrationWindow(
+            competition_id=cycle.id,
+            opens_at=now - timedelta(days=1),
+            closes_at=now + timedelta(days=60),
+        )
+    )
+    session.add(
+        RegistrationFormDefinition(
+            competition_id=cycle.id,
+            fields=[],
+            max_skills=1,
+            photo_max_mb=2,
+            photo_formats=["jpg", "png"],
+        )
+    )
+
     skill = Skill(
         competition_id=cycle.id,
         name="Web Development",
@@ -353,6 +383,7 @@ async def seed_complete_config(session: AsyncSession, cycle: Competition) -> Non
         name="Regional",
         order=1,
         stage_type="VIRTUAL",
+        selection_mode="NATIONAL_POOL",
         quota=20,
         submission_rules={
             "requiredDeliverables": [{"code": "main", "formats": ["pdf"], "maxMb": 20}],
@@ -365,6 +396,7 @@ async def seed_complete_config(session: AsyncSession, cycle: Competition) -> Non
         name="National",
         order=2,
         stage_type="PHYSICAL",
+        selection_mode="NATIONAL_POOL",
         quota=10,
         submission_rules={
             "requiredDeliverables": [{"code": "main", "formats": ["pdf"], "maxMb": 20}],
@@ -373,23 +405,25 @@ async def seed_complete_config(session: AsyncSession, cycle: Competition) -> Non
     )
     session.add_all([stage1, stage2])
     await session.flush()
-    for st in (stage1, stage2):
-        session.add(
-            Exercise(
-                stage_id=st.id,
-                competition_id=cycle.id,
-                title=f"{st.name} exercise",
-                deliverables=[
-                    {
-                        "code": "main",
-                        "label": "Main",
-                        "required": True,
-                        "allowedTypes": ["pdf"],
-                        "maxSizeBytes": None,
-                    }
-                ],
-                status="PUBLISHED",
-                late_policy="block",
+    if with_exercises:
+        for st in (stage1, stage2):
+            session.add(
+                Exercise(
+                    stage_id=st.id,
+                    competition_id=cycle.id,
+                    title=f"{st.name} exercise",
+                    deliverables=[
+                        {
+                            "code": "main",
+                            "label": "Main",
+                            "required": True,
+                            "allowedTypes": ["pdf"],
+                            "maxSizeBytes": None,
+                        }
+                    ],
+                    status="PUBLISHED",
+                    scheme_id=scheme.id,
+                    late_policy="block",
+                )
             )
-        )
     await session.commit()

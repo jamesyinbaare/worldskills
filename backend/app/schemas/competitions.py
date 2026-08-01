@@ -88,9 +88,13 @@ class ValidationIssue(BaseModel):
     entity: str
     message: str
     link: str
+    # blocking → prevents activation; advisory → warning only (e.g. pending exercises)
+    severity: str = "blocking"
 
 
 class ValidateOut(BaseModel):
+    """ok is True when there are no blocking issues (advisory warnings allowed)."""
+
     ok: bool
     issues: list[ValidationIssue]
 

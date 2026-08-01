@@ -197,20 +197,20 @@ async def test_US_SUB_01_AC5_publish_success(
 
 
 @pytest.mark.asyncio
-async def test_US_SUB_01_AC6_cycle_validate_fails_closed(
+async def test_US_SUB_01_AC6_cycle_validate_exercise_advisory(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
 ) -> None:
     competition_id = await _create_draft_cycle(client, auth_headers)
     stage_id, scheme_id = await _seed_stage(session_manager, competition_id)
-    # Stage exists but no published exercise
+    # Stage exists but no published exercise — advisory, not blocking by itself if other config incomplete
     validate = await client.post(f"/competitions/{competition_id}:validate", headers=auth_headers)
     assert validate.status_code == 200
     body = validate.json()
-    assert body["ok"] is False
     codes = {i["code"] for i in body["issues"]}
-    assert "CONFIG_INCOMPLETE" in codes or "EXERCISE_NOT_PUBLISHED" in codes
+    assert "EXERCISE_PENDING" in codes
+    assert any(i.get("severity") == "advisory" and i["code"] == "EXERCISE_PENDING" for i in body["issues"])
 
     await client.put(
         f"/competitions/{competition_id}/stages/{stage_id}/exercise",
@@ -221,13 +221,14 @@ async def test_US_SUB_01_AC6_cycle_validate_fails_closed(
         f"/competitions/{competition_id}/stages/{stage_id}/exercise:publish",
         headers=auth_headers,
     )
-    # Still may fail for other reasons (age etc.) but exercise issue should be gone
+    # Still may fail for other reasons (registration window etc.) but exercise issue should be gone
     validate2 = await client.post(f"/competitions/{competition_id}:validate", headers=auth_headers)
     assert validate2.status_code == 200
     exercise_issues = [
         i
         for i in validate2.json()["issues"]
-        if "Exercise" in i.get("message", "") or i.get("code") == "EXERCISE_NOT_PUBLISHED"
+        if i.get("code") in {"EXERCISE_PENDING", "EXERCISE_NOT_PUBLISHED"}
+        or "Exercise" in i.get("message", "")
     ]
     assert exercise_issues == []
 

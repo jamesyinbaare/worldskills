@@ -22,6 +22,7 @@ from app.models import (
     RegistrationFormDefinition,
     RegistrationWindow,
     Skill,
+    SmsDelivery,
     Zone,
 )
 from pytest_tests.conftest import (
@@ -145,6 +146,14 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "mobile": "+233241234567",
         "whatsapp": "+233241234567",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        "idDocumentKind": "GHANA_CARD",
+        "otherIdType": None,
+        "affiliationType": "school",
+        "organizationPhone": "+233302123456",
+        "organizationEmail": "school@example.com",
+        "heardAbout": "Facebook",
+        "guardianName": "Kofi Mensah",
+        "guardianPhone": "+233241000111",
         "hasPassport": False,
         "passportNumber": None,
         "passportExpiresOn": None,
@@ -215,7 +224,7 @@ async def test_US_REG_01_AC1_successful_registration(
         assert row.eligibility_status == "ELIGIBLE"
         assert row.enrolment_attested is True
 
-        note = (
+        notes = (
             await session.execute(
                 select(NotificationOutbox).where(
                     NotificationOutbox.template == "REGISTRATION_CONFIRMATION",
@@ -223,8 +232,11 @@ async def test_US_REG_01_AC1_successful_registration(
                     NotificationOutbox.recipient_id == uuid.UUID(body["competitorId"]),
                 )
             )
-        ).scalar_one_or_none()
-        assert note is not None
+        ).scalars().all()
+        assert len(notes) >= 1
+        assert any((n.channel or "").upper() == "SMS" for n in notes) or any(
+            n.status == "QUEUED" for n in notes
+        )
 
         audit = (
             await session.execute(
@@ -236,6 +248,55 @@ async def test_US_REG_01_AC1_successful_registration(
         ).scalar_one_or_none()
         assert audit is not None
         assert audit.after.get("userId") is not None
+
+        sms_rows = (
+            await session.execute(
+                select(SmsDelivery).where(
+                    SmsDelivery.competitor_id == uuid.UUID(body["competitorId"]),
+                    SmsDelivery.message_type == "REGISTRATION_CONFIRMATION",
+                )
+            )
+        ).scalars().all()
+        assert len(sms_rows) == 1
+        assert sms_rows[0].recipient_role == "competitor"
+        assert sms_rows[0].status == "sent"
+        assert sms_rows[0].msisdn
+
+
+@pytest.mark.asyncio
+async def test_registration_confirmation_sms_failure_does_not_block_registration(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Registration still succeeds when competitor phone is not a Ghana MSISDN."""
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    resp = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            mobile="+15551234567",
+            whatsapp="+15551234567",
+        ),
+        headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["competitorRef"].startswith("WSG-")
+    async with session_manager.session() as session:
+        sms_rows = (
+            await session.execute(
+                select(SmsDelivery).where(
+                    SmsDelivery.competitor_id == uuid.UUID(body["competitorId"]),
+                    SmsDelivery.message_type == "REGISTRATION_CONFIRMATION",
+                )
+            )
+        ).scalars().all()
+        assert len(sms_rows) == 1
+        assert sms_rows[0].status == "failed"
 
 
 @pytest.mark.asyncio
@@ -466,3 +527,265 @@ async def test_US_REG_01_AC10_one_registration_per_user(
     )
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "DUPLICATE"
+
+
+@pytest.mark.asyncio
+async def test_registration_company_affiliation_and_other_id(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    resp = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            institutionId=None,
+            affiliationType="company",
+            organizationName="Acme Workshop Co",
+            organizationCity="Tema",
+            regionId=str(ctx["region_id"]),
+            idDocumentKind="OTHER",
+            otherIdType="Passport",
+            nationalId="P99887766",
+            heardAbout="Other",
+        ),
+        headers=comp,
+    )
+    assert resp.status_code == 201, resp.text
+    async with session_manager.session() as session:
+        row = await session.get(Competitor, uuid.UUID(resp.json()["competitorId"]))
+        assert row is not None
+        assert row.affiliation_type == "company"
+        assert row.organization_name == "Acme Workshop Co"
+        assert row.organization_city == "Tema"
+        assert row.id_document_kind == "OTHER"
+        assert row.other_id_type == "Passport"
+        assert row.national_id == "P99887766"
+        assert row.heard_about == "Other"
+        assert row.institution_id is None
+
+
+@pytest.mark.asyncio
+async def test_registration_manual_school_requires_region(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    missing_region = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            institutionId=None,
+            affiliationType="school",
+            organizationName="Unlisted SHS",
+            regionId=None,
+        ),
+        headers=comp,
+    )
+    assert missing_region.status_code == 422
+    reasons = {f["name"] for f in missing_region.json()["error"]["fields"]}
+    assert "regionId" in reasons
+
+    ok = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            institutionId=None,
+            affiliationType="school",
+            organizationName="Unlisted SHS",
+            regionId=str(ctx["region_id"]),
+            email=f"manual-{uuid.uuid4().hex[:6]}@example.com",
+            nationalId=f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        ),
+        headers=comp,
+    )
+    assert ok.status_code == 201, ok.text
+    async with session_manager.session() as session:
+        row = await session.get(Competitor, uuid.UUID(ok.json()["competitorId"]))
+        assert row is not None
+        assert row.organization_name == "Unlisted SHS"
+        assert row.region_id == ctx["region_id"]
+
+
+@pytest.mark.asyncio
+async def test_registration_ghana_card_pattern_skipped_for_other_id(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    bad_ghana = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            idDocumentKind="GHANA_CARD",
+            nationalId="NOT-A-Ghana-Card",
+        ),
+        headers=comp,
+    )
+    assert bad_ghana.status_code == 422
+    assert any(
+        f["name"] == "nationalId" and f["reason"] == "ID_INVALID"
+        for f in bad_ghana.json()["error"]["fields"]
+    )
+
+    missing_org_phone = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(ctx, organizationPhone=""),
+        headers=comp,
+    )
+    assert missing_org_phone.status_code == 422
+    assert any(
+        f["name"] == "organizationPhone"
+        for f in missing_org_phone.json()["error"]["fields"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_registration_without_id_document_allowed(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Competitors may submit without providing an ID document."""
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    resp = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            idDocumentKind=None,
+            otherIdType=None,
+            nationalId=None,
+        ),
+        headers={**comp, "Idempotency-Key": f"no-id-{uuid.uuid4()}"},
+    )
+    assert resp.status_code == 201, resp.text
+    async with session_manager.session() as session:
+        row = await session.get(Competitor, uuid.UUID(resp.json()["competitorId"]))
+        assert row is not None
+        assert row.national_id is None
+        assert row.id_document_kind is None
+
+
+@pytest.mark.asyncio
+async def test_registration_form_injects_profile_fields_for_legacy_config(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Older stored form JSON omits WhatsApp/guardian/heardAbout; GET still returns them."""
+    competition_id = await _create_competition(client, auth_headers)
+    await _seed_reg(session_manager, competition_id)
+    # Confirm seed still uses the legacy field list without profile fields.
+    assert not any(f["name"] == "whatsapp" for f in DEFAULT_FIELDS)
+    assert not any(f["name"] == "heardAbout" for f in DEFAULT_FIELDS)
+
+    comp = await _comp_headers(client, session_manager)
+    form = await client.get(
+        f"/competitions/{competition_id}/registration-form", headers=comp
+    )
+    assert form.status_code == 200, form.text
+    names = {f["name"] for f in form.json()["fields"]}
+    for required_name in (
+        "whatsapp",
+        "guardianName",
+        "guardianPhone",
+        "heardAbout",
+        "gender",
+    ):
+        assert required_name in names, f"missing injected field: {required_name}"
+
+    heard = next(f for f in form.json()["fields"] if f["name"] == "heardAbout")
+    assert heard["required"] is True
+    assert heard["allowedValues"] == [
+        "Facebook",
+        "Newspaper",
+        "Internet",
+        "FRIEND",
+        "Other",
+    ]
+    assert form.json().get("minorAgeUnder") == 18
+
+    guardian_name = next(f for f in form.json()["fields"] if f["name"] == "guardianName")
+    assert guardian_name["required"] is False
+
+
+@pytest.mark.asyncio
+async def test_guardian_contacts_optional_for_all_ages(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Guardian contacts are optional; consent is not enforced for minors or adults."""
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+
+    # Adult without guardian
+    adult_headers = await _comp_headers(client, session_manager)
+    adult = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            dateOfBirth="2005-03-15",
+            guardianName=None,
+            guardianPhone=None,
+            email=f"adult-{uuid.uuid4().hex[:6]}@example.com",
+            nationalId=f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        ),
+        headers={**adult_headers, "Idempotency-Key": f"adult-{uuid.uuid4()}"},
+    )
+    assert adult.status_code == 201, adult.text
+    assert "CONSENT_PENDING" not in (adult.json().get("flags") or [])
+
+    # Minor without guardian — still accepted; no consent flag
+    minor_headers = await _comp_headers(client, session_manager)
+    minor = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            dateOfBirth="2010-06-15",
+            guardianName=None,
+            guardianPhone=None,
+            email=f"minor-{uuid.uuid4().hex[:6]}@example.com",
+            nationalId=f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        ),
+        headers={**minor_headers, "Idempotency-Key": f"minor-{uuid.uuid4()}"},
+    )
+    assert minor.status_code == 201, minor.text
+    assert "CONSENT_PENDING" not in (minor.json().get("flags") or [])
+
+    # Minor with guardian — stored as informational only
+    with_g = await _comp_headers(client, session_manager)
+    ok = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            dateOfBirth="2010-06-15",
+            guardianName="Parent Mensah",
+            guardianPhone="+233241000222",
+            email=f"minor-g-{uuid.uuid4().hex[:6]}@example.com",
+            nationalId=f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        ),
+        headers={**with_g, "Idempotency-Key": f"minor-g-{uuid.uuid4()}"},
+    )
+    assert ok.status_code == 201, ok.text
+    assert "CONSENT_PENDING" not in (ok.json().get("flags") or [])
+    async with session_manager.session() as session:
+        row = await session.get(Competitor, uuid.UUID(ok.json()["competitorId"]))
+        assert row is not None
+        assert row.guardian_name == "Parent Mensah"
+        assert row.guardian_phone == "+233241000222"

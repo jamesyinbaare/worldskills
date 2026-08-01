@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from app.services.exercises import deliverables_to_submission_rules
 from app.services.stages import assert_stage_available
 from app.services.storage import ObjectStorage, ScanResult, get_object_storage
 
+logger = logging.getLogger(__name__)
 
 IMMUTABLE_STATES = {"ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN"}
 
@@ -651,6 +653,7 @@ async def finalise_submission(
         )
         await session.commit()
         await session.refresh(submission)
+        await _best_effort_submission_sms(session, submission)
         return submission
 
     if missing and (force_timer or timer_expired):
@@ -704,7 +707,25 @@ async def finalise_submission(
     )
     await session.commit()
     await session.refresh(submission)
+    await _best_effort_submission_sms(session, submission)
     return submission
+
+
+async def _best_effort_submission_sms(session: AsyncSession, submission: Submission) -> None:
+    try:
+        from app.services import competition_sms
+
+        await competition_sms.notify_submission_received(
+            session,
+            submission=submission,
+            trigger="submission_finalise",
+            commit=True,
+        )
+    except Exception:
+        logger.exception(
+            "SUBMISSION_RECEIVED SMS failed submission=%s",
+            submission.id,
+        )
 
 
 async def reopen_submission(

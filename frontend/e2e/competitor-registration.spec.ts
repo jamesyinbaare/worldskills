@@ -13,10 +13,25 @@ const INST_ID = "99999999-9999-4999-8999-999999999999";
 const DEFAULT_FIELDS = [
   { name: "givenNames", type: "string", required: true, maxLength: 100 },
   { name: "familyName", type: "string", required: true, maxLength: 100 },
+  {
+    name: "gender",
+    type: "enum",
+    required: true,
+    allowedValues: ["Male", "Female"],
+  },
   { name: "dateOfBirth", type: "date", required: true },
   { name: "email", type: "email", required: true },
   { name: "mobile", type: "phone", required: true },
-  { name: "nationalId", type: "string", required: true },
+  { name: "whatsapp", type: "phone", required: true },
+  { name: "guardianName", type: "string", required: false },
+  { name: "guardianPhone", type: "phone", required: false },
+  {
+    name: "heardAbout",
+    type: "enum",
+    required: true,
+    allowedValues: ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+  },
+  { name: "nationalId", type: "string", required: false },
   { name: "institutionId", type: "uuid", required: true },
   { name: "zoneId", type: "uuid", required: true },
   { name: "skillIds", type: "array", required: true },
@@ -61,6 +76,8 @@ function formOut(overrides: Record<string, unknown> = {}) {
     photoMaxMb: 2,
     photoFormats: ["image/jpeg", "image/png"],
     readOnly: false,
+    minorAgeUnder: 18,
+    minorReferenceDate: "2026-01-01",
     window: {
       opensAt: "2026-01-01T00:00:00",
       closesAt: "2026-12-31T23:59:59",
@@ -309,9 +326,15 @@ async function mockRegistrationDeps(page: Page): Promise<void> {
 async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
   await page.locator("#givenNames").fill("Ama");
   await page.locator("#familyName").fill("Mensah");
+  await page.locator("#gender").selectOption("Female");
   await page.locator("#dateOfBirth").fill("2005-03-15");
   await page.locator("#email").fill("ama@example.com");
   await page.locator("#mobile").fill("+233241234567");
+  await page.locator("#whatsapp").fill("+233241234567");
+  await page.locator("#guardianName").fill("Kofi Mensah");
+  await page.locator("#guardianPhone").fill("+233241000111");
+  await page.locator("#heardAbout").selectOption("Facebook");
+  await page.getByTestId("id-kind-GHANA_CARD").click();
   await page.locator("#nationalId").fill("GHA-123456789");
   await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
   await page.getByTestId("registration-continue").click();
@@ -320,6 +343,8 @@ async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
   await page.getByTestId("passport-no").check();
   await page.getByTestId("registration-continue").click();
 
+  await expect(page.getByTestId("affiliation-school")).toBeVisible();
+  await page.getByTestId("affiliation-school").check();
   await expect(page.getByTestId("school-search")).toBeVisible();
   await page.getByTestId("school-search").fill("Accra");
   await expect(page.getByTestId("school-search-results")).toBeVisible();
@@ -327,6 +352,8 @@ async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
     .getByRole("option", { name: /Accra Technical Institute/i })
     .click();
   await expect(page.getByTestId("school-selected")).toBeVisible();
+  await page.getByTestId("organization-phone").fill("+233302123456");
+  await page.getByTestId("organization-email").fill("school@example.com");
   await page.getByTestId("skill-id-0").selectOption(SKILL_A);
   await page.getByTestId("registration-continue").click();
 
@@ -479,14 +506,23 @@ test.describe("US-REG-01-UI competitor registration", () => {
     });
     await page.locator("#givenNames").fill("Ama");
     await page.locator("#familyName").fill("Mensah");
+    await page.locator("#gender").selectOption("Female");
     await page.locator("#dateOfBirth").fill("2005-03-15");
     await page.locator("#email").fill("ama@example.com");
     await page.locator("#mobile").fill("+233241234567");
+    await page.locator("#whatsapp").fill("+233241234567");
+    await page.locator("#guardianName").fill("Kofi Mensah");
+    await page.locator("#guardianPhone").fill("+233241000111");
+    await page.locator("#heardAbout").selectOption("Facebook");
+    await page.getByTestId("id-kind-GHANA_CARD").click();
     await page.locator("#nationalId").fill("GHA-123456789");
     await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
     await page.getByTestId("registration-continue").click();
     await page.getByTestId("passport-no").check();
     await page.getByTestId("registration-continue").click();
+    await page.getByTestId("affiliation-school").check();
+    await page.getByTestId("organization-phone").fill("+233302123456");
+    await page.getByTestId("organization-email").fill("school@example.com");
     await expect(page.getByTestId("registration-skills")).toBeVisible();
     await expect(page.getByTestId("skill-id-0")).toBeVisible();
     await expect(page.getByTestId("skill-add")).toHaveCount(0);
@@ -496,5 +532,93 @@ test.describe("US-REG-01-UI competitor registration", () => {
     // Sanity: selecting SKILL_B replaces rather than stacking.
     await page.getByTestId("skill-id-0").selectOption(SKILL_B);
     await expect(page.getByTestId("skill-id-0")).toHaveValue(SKILL_B);
+  });
+
+  test("affiliation company path requires city and region", async ({
+    page,
+  }) => {
+    await mockRegistrationForm(page);
+    await mockCreateRegistration(page, "ok");
+    await page.goto(`/competitor/competitions/${CYCLE_ID}/register`);
+    await expect(page.getByTestId("registration-form")).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator("#givenNames").fill("Ama");
+    await page.locator("#familyName").fill("Mensah");
+    await page.locator("#gender").selectOption("Female");
+    await page.locator("#dateOfBirth").fill("2005-03-15");
+    await page.locator("#email").fill("ama@example.com");
+    await page.locator("#mobile").fill("+233241234567");
+    await page.locator("#whatsapp").fill("+233241234567");
+    await page.locator("#guardianName").fill("Kofi Mensah");
+    await page.locator("#guardianPhone").fill("+233241000111");
+    await page.locator("#heardAbout").selectOption("Other");
+    await page.getByTestId("id-kind-OTHER").click();
+    await page.getByTestId("other-id-type").selectOption("Passport");
+    await page.locator("#nationalId").fill("P1234567");
+    await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
+    await page.getByTestId("registration-continue").click();
+    await page.getByTestId("passport-no").check();
+    await page.getByTestId("registration-continue").click();
+
+    await page.getByTestId("affiliation-company").check();
+    await page.getByTestId("organization-name").fill("Acme Skills Ltd");
+    await page.getByTestId("region-select").selectOption({ label: "Greater Accra" });
+    await page.getByTestId("organization-city").fill("Accra");
+    await page.getByTestId("organization-phone").fill("+233302123456");
+    await page.getByTestId("organization-email").fill("hr@acme.example");
+    await page.getByTestId("skill-id-0").selectOption(SKILL_A);
+    await page.getByTestId("registration-continue").click();
+
+    await page.getByTestId("coach-surname").fill("Asante");
+    await page.getByTestId("coach-firstName").fill("Kojo");
+    await page.getByTestId("coach-contactNumber").fill("+233201112233");
+    await page.getByTestId("coach-email").fill("coach@example.com");
+    await page.getByTestId("coach-whatsapp").fill("+233201112233");
+    await page.getByTestId("coach-dateOfBirth").fill("1985-04-12");
+    await page.getByTestId("registration-continue").click();
+    await page.getByTestId("registration-declaration").check();
+    await page.getByTestId("registration-submit").click();
+    await expect(page.getByTestId("competitor-ref")).toHaveText("WSG-REF-001", {
+      timeout: 15_000,
+    });
+  });
+
+  test("manual school path requires region", async ({ page }) => {
+    await mockRegistrationForm(page);
+    await page.goto(`/competitor/competitions/${CYCLE_ID}/register`);
+    await expect(page.getByTestId("registration-form")).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator("#givenNames").fill("Ama");
+    await page.locator("#familyName").fill("Mensah");
+    await page.locator("#gender").selectOption("Female");
+    await page.locator("#dateOfBirth").fill("2005-03-15");
+    await page.locator("#email").fill("ama@example.com");
+    await page.locator("#mobile").fill("+233241234567");
+    await page.locator("#whatsapp").fill("+233241234567");
+    await page.locator("#guardianName").fill("Kofi Mensah");
+    await page.locator("#guardianPhone").fill("+233241000111");
+    await page.locator("#heardAbout").selectOption("FRIEND");
+    await page.getByTestId("id-kind-GHANA_CARD").click();
+    await page.locator("#nationalId").fill("GHA-123456789");
+    await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
+    await page.getByTestId("registration-continue").click();
+    await page.getByTestId("passport-no").check();
+    await page.getByTestId("registration-continue").click();
+
+    await page.getByTestId("affiliation-school").check();
+    await page.getByTestId("school-not-listed").click();
+    await page.getByTestId("manual-school-name").fill("New Community SHS");
+    await page.getByTestId("organization-phone").fill("+233302123456");
+    await page.getByTestId("organization-email").fill("school@example.com");
+    await page.getByTestId("skill-id-0").selectOption(SKILL_A);
+    await page.getByTestId("registration-continue").click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: /region|highlighted/i }).first(),
+    ).toBeVisible();
+    await page.getByTestId("region-select").selectOption({ label: "Ashanti" });
+    await page.getByTestId("registration-continue").click();
+    await expect(page.getByTestId("coach-surname")).toBeVisible();
   });
 });

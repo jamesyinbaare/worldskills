@@ -20,6 +20,8 @@ from app.schemas.competitions import (
     PublicCompetitionOut,
     ValidateOut,
 )
+from app.schemas.exercises import ExerciseNotifyPollOut
+from app.services import competition_sms
 from app.services import competitions as competition_service
 from app.services import skills as skill_service
 
@@ -45,6 +47,18 @@ async def list_open_for_registration(
     """Public list of ACTIVE cycles with an open registration window."""
     items = await competition_service.list_open_for_registration(session)
     return [OpenCompetitionOut(**item) for item in items]
+
+
+@router.post(":poll-exercise-availability-notifications", response_model=ExerciseNotifyPollOut)
+async def poll_exercise_availability_notifications(
+    session: DBSessionDep,
+    admin: AdminUserDep,
+) -> ExerciseNotifyPollOut:
+    """Process deferred EXERCISE_AVAILABLE SMS for published exercises whose windows have opened."""
+    results = await competition_sms.poll_deferred_exercise_availability(
+        session, actor=admin, commit=True
+    )
+    return ExerciseNotifyPollOut(results=results)
 
 
 @router.get("", response_model=list[CompetitionListItem])

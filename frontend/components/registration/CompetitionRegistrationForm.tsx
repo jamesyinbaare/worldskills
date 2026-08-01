@@ -74,10 +74,18 @@ const DRAFT_VALUE_KEYS = [
   "mobile",
   "whatsapp",
   "nationalId",
+  "idDocumentKind",
+  "otherIdType",
   "nationality",
   "guardianName",
   "guardianEmail",
   "guardianPhone",
+  "heardAbout",
+  "affiliationType",
+  "organizationName",
+  "organizationCity",
+  "organizationPhone",
+  "organizationEmail",
 ] as const;
 
 function asDateInput(value: unknown): string {
@@ -109,6 +117,19 @@ const SPECIAL_FIELDS = new Set([
   "passportNumber",
   "passportExpiresOn",
   "coach",
+  "idDocumentKind",
+  "otherIdType",
+  "nationalId",
+  "whatsapp",
+  "guardianName",
+  "guardianPhone",
+  "guardianEmail",
+  "heardAbout",
+  "affiliationType",
+  "organizationName",
+  "organizationCity",
+  "organizationPhone",
+  "organizationEmail",
 ]);
 
 const INSTITUTION_HIDDEN_FIELDS = new Set([
@@ -117,6 +138,15 @@ const INSTITUTION_HIDDEN_FIELDS = new Set([
   "guardianPhone",
 ]);
 
+const OTHER_ID_TYPES = ["Passport", "Driver's License", "Student ID"] as const;
+const HEARD_ABOUT_OPTIONS = [
+  "Facebook",
+  "Newspaper",
+  "Internet",
+  "FRIEND",
+  "Other",
+] as const;
+
 function labelFor(name: string): string {
   const map: Record<string, string> = {
     givenNames: "Given names",
@@ -124,15 +154,23 @@ function labelFor(name: string): string {
     gender: "Gender",
     dateOfBirth: "Date of birth",
     email: "Email",
-    mobile: "Mobile",
-    whatsapp: "WhatsApp",
-    nationalId: "National ID",
+    mobile: "Mobile / phone",
+    whatsapp: "WhatsApp number",
+    nationalId: "ID number",
+    idDocumentKind: "ID document",
+    otherIdType: "Other ID type",
     guardianName: "Guardian name",
     guardianEmail: "Guardian email",
     guardianPhone: "Guardian phone",
+    heardAbout: "How did you hear about WSGH?",
     hasPassport: "Passport",
     passportNumber: "Passport number",
     passportExpiresOn: "Passport expiry date",
+    affiliationType: "Affiliation",
+    organizationName: "Organisation name",
+    organizationCity: "City / town",
+    organizationPhone: "Organisation phone",
+    organizationEmail: "Organisation email",
   };
   return map[name] ?? name;
 }
@@ -239,6 +277,7 @@ export function CompetitionRegistrationForm({
   const [values, setValues] = useState<Record<string, string>>({});
   const [skillIds, setSkillIds] = useState<string[]>([""]);
   const [school, setSchool] = useState<SchoolSelection>(null);
+  const [schoolManualMode, setSchoolManualMode] = useState(false);
   const [regionId, setRegionId] = useState("");
   const [hasPassport, setHasPassport] = useState<boolean | null>(null);
   const [passportNumber, setPassportNumber] = useState("");
@@ -399,6 +438,11 @@ export function CompetitionRegistrationForm({
             nextValues[key] =
               key === "dateOfBirth" ? asDateInput(raw) : String(raw);
           }
+          // Do not restore a lone ID kind without a number — it would force entry.
+          if (nextValues.idDocumentKind && !nextValues.nationalId?.trim()) {
+            delete nextValues.idDocumentKind;
+            delete nextValues.otherIdType;
+          }
           setValues(nextValues);
 
           if (draft.hasPassport != null) setHasPassport(draft.hasPassport);
@@ -426,10 +470,15 @@ export function CompetitionRegistrationForm({
                 draft.institutionCode?.trim() ||
                 "Selected school",
             });
+            setSchoolManualMode(false);
             setRegionId("");
           } else {
             setSchool(null);
             setRegionId(draft.regionId ? String(draft.regionId) : "");
+            const aff = String(draft.affiliationType ?? "school");
+            setSchoolManualMode(
+              aff === "school" && Boolean(draft.organizationName),
+            );
           }
 
           const draftSkills = (draft.skillIds ?? [])
@@ -544,15 +593,26 @@ export function CompetitionRegistrationForm({
 
   function onSchoolChange(next: SchoolSelection) {
     setSchool(next);
-    if (next) setRegionId("");
+    if (next) {
+      setRegionId("");
+      setSchoolManualMode(false);
+      setValue("organizationName", "");
+      setValue("affiliationType", "school");
+    }
     setFieldErrors((prev) => {
       const copy = { ...prev };
       delete copy.institutionId;
       delete copy.schoolCode;
       delete copy.code;
       delete copy.regionId;
+      delete copy.organizationName;
       return copy;
     });
+  }
+
+  function affiliationType(): string {
+    if (mode === "institution") return "school";
+    return values.affiliationType?.trim() || "school";
   }
 
   async function onPhotoChange(file: File | null) {
@@ -606,6 +666,13 @@ export function CompetitionRegistrationForm({
       }
     }
 
+    const aff = affiliationType();
+    payload.affiliationType = aff;
+    if (aff === "school" && school?.institutionId && mode !== "institution") {
+      payload.organizationName = null;
+      payload.organizationCity = null;
+    }
+
     const coachPayload: CoachBioInput = {
       surname: coach.surname.trim(),
       firstName: coach.firstName.trim(),
@@ -628,9 +695,14 @@ export function CompetitionRegistrationForm({
 
     if (mode === "institution") {
       payload.institutionId = sessionInstitutionId;
-    } else if (school?.institutionId) {
+      payload.affiliationType = "school";
+      payload.organizationName = null;
+      payload.organizationCity = null;
+    } else if (aff === "school" && school?.institutionId) {
       payload.institutionId = school.institutionId;
       payload.regionId = null;
+      payload.organizationName = null;
+      payload.organizationCity = null;
     } else {
       payload.institutionId = null;
       payload.regionId = regionId || null;
@@ -704,6 +776,22 @@ export function CompetitionRegistrationForm({
               : "This field is required.";
         }
       }
+      const idKind = values.idDocumentKind?.trim() || "";
+      if (idKind === "OTHER" && !values.otherIdType?.trim()) {
+        nextErrors.otherIdType = "Select the type of ID.";
+      }
+      if (idKind && !values.nationalId?.trim()) {
+        nextErrors.nationalId = "Enter your ID number.";
+      }
+      if (!idKind && values.nationalId?.trim()) {
+        nextErrors.idDocumentKind = "Select Ghana Card or Other ID.";
+      }
+      if (!values.heardAbout?.trim()) {
+        nextErrors.heardAbout = "Tell us how you heard about WSGH.";
+      }
+      if (!values.whatsapp?.trim()) {
+        nextErrors.whatsapp = "Enter your WhatsApp number.";
+      }
       const photoRequired = formDef.fields.some(
         (f) => f.name === "photo" && f.required,
       );
@@ -732,9 +820,46 @@ export function CompetitionRegistrationForm({
       if (trimmedSkills.length !== formDef.maxSkills) {
         nextErrors.skillIds = `Select exactly ${formDef.maxSkills} skill(s)`;
       }
-      if (mode === "competitor" && !school?.institutionId && !regionId) {
-        nextErrors.regionId =
-          "Select a region when registering without a school, or search for your school first.";
+      const aff = affiliationType();
+      if (mode === "competitor" && !aff) {
+        nextErrors.affiliationType = "Select school, company, or workshop.";
+      }
+      if (!values.organizationPhone?.trim()) {
+        nextErrors.organizationPhone = "Enter the organisation phone number.";
+      }
+      if (!values.organizationEmail?.trim()) {
+        nextErrors.organizationEmail = "Enter the organisation email address.";
+      }
+      if (mode === "competitor") {
+        if (aff === "school") {
+          if (!school?.institutionId && !schoolManualMode) {
+            nextErrors.institutionId =
+              "Search for your school, or choose “School not listed”.";
+          }
+          if (schoolManualMode) {
+            if (!values.organizationName?.trim()) {
+              nextErrors.organizationName = "Enter the name of your school.";
+            }
+            if (!regionId) {
+              nextErrors.regionId = "Select your region.";
+            }
+          }
+        } else {
+          if (!values.organizationName?.trim()) {
+            nextErrors.organizationName = `Enter the name of your ${aff}.`;
+          }
+          if (!regionId) {
+            nextErrors.regionId = "Select the location region.";
+          }
+          if (!values.organizationCity?.trim()) {
+            nextErrors.organizationCity = "Enter the city or town.";
+          }
+        }
+      } else {
+        // Institution mode still needs org contacts.
+        if (!values.organizationPhone?.trim()) {
+          nextErrors.organizationPhone = "Enter the organisation phone number.";
+        }
       }
     }
 
@@ -858,9 +983,40 @@ export function CompetitionRegistrationForm({
         (payload as Record<string, unknown>)[field.name] = raw;
       }
 
+      // Special / affiliation / ID fields stored in values
+      for (const key of [
+        "whatsapp",
+        "nationalId",
+        "idDocumentKind",
+        "otherIdType",
+        "guardianName",
+        "guardianEmail",
+        "guardianPhone",
+        "heardAbout",
+        "affiliationType",
+        "organizationName",
+        "organizationCity",
+        "organizationPhone",
+        "organizationEmail",
+      ] as const) {
+        const raw = values[key]?.trim() ?? "";
+        if (raw) {
+          (payload as Record<string, unknown>)[key] = raw;
+        }
+      }
+
+      const aff = affiliationType();
+      payload.affiliationType = aff;
+      if (values.idDocumentKind !== "OTHER") {
+        payload.otherIdType = null;
+      }
+
       // Client-side required checks with human messages (before API round-trip)
       for (const field of formDef.fields) {
         if (SPECIAL_FIELDS.has(field.name) || !field.required) continue;
+        if (mode === "institution" && INSTITUTION_HIDDEN_FIELDS.has(field.name)) {
+          continue;
+        }
         const raw = values[field.name]?.trim() ?? "";
         if (!raw) {
           throw new ApiError(422, {
@@ -948,25 +1104,19 @@ export function CompetitionRegistrationForm({
 
       if (mode === "institution") {
         payload.institutionId = sessionInstitutionId;
-      } else if (school?.institutionId) {
+        payload.affiliationType = "school";
+        payload.organizationName = null;
+        payload.organizationCity = null;
+      } else if (aff === "school" && school?.institutionId) {
         payload.institutionId = school.institutionId;
+        payload.regionId = null;
+        payload.organizationName = null;
+        payload.organizationCity = null;
       } else {
         payload.institutionId = null;
         if (regionId) {
           payload.regionId = regionId;
         }
-      }
-
-      if (mode === "competitor" && !school?.institutionId && !regionId) {
-        throw new ApiError(422, {
-          error: {
-            code: "REGION_REQUIRED",
-            message:
-              "Select a region when registering without a school, or search for your school first.",
-            fields: [{ name: "regionId", reason: "REGION_REQUIRED" }],
-            traceId: "",
-          },
-        });
       }
 
       const photoRequired = formDef.fields.some(
@@ -1036,13 +1186,35 @@ export function CompetitionRegistrationForm({
   const summarySchool =
     mode === "institution"
       ? "Your claimed school"
-      : school?.name
-        ? school.code
-          ? `${school.name} (${school.code})`
-          : school.name
-        : regionId
-          ? (regions.find((r) => r.regionId === regionId)?.name ?? "Region selected")
-          : "—";
+      : (() => {
+          const aff = affiliationType();
+          if (aff === "school" && school?.name) {
+            return school.code
+              ? `${school.name} (${school.code})`
+              : school.name;
+          }
+          const orgName = values.organizationName?.trim();
+          const regionName = regionId
+            ? (regions.find((r) => r.regionId === regionId)?.name ?? null)
+            : null;
+          const city = values.organizationCity?.trim();
+          if (orgName) {
+            const bits = [
+              `${aff.charAt(0).toUpperCase()}${aff.slice(1)}: ${orgName}`,
+              city,
+              regionName,
+            ].filter(Boolean);
+            return bits.join(" · ");
+          }
+          return regionName ?? "—";
+        })();
+  const summaryId = !values.idDocumentKind && !values.nationalId
+    ? "—"
+    : values.idDocumentKind === "OTHER"
+      ? `${values.otherIdType || "Other ID"} · ${values.nationalId || "—"}`
+      : values.idDocumentKind === "GHANA_CARD"
+        ? `Ghana Card · ${values.nationalId || "—"}`
+        : values.nationalId || "—";
   const authLoading = status === "loading" || status === "anonymous";
   const wrongRole =
     status === "authenticated" &&
@@ -1199,69 +1371,257 @@ export function CompetitionRegistrationForm({
               description="Use the same details as on your national ID where possible."
             >
               <div className="grid gap-4 sm:grid-cols-2">
-                {standardFields.map((field) => {
-                  const err = fieldErrors[field.name];
-                  const errId = `${field.name}-error`;
-                  const wide =
-                    field.name === "email" ||
-                    field.name === "nationalId" ||
-                    field.name === "guardianEmail";
-                  const enumValues =
-                    field.type === "enum" || field.name === "gender"
-                      ? field.allowedValues?.length
-                        ? field.allowedValues
-                        : ["Male", "Female"]
-                      : null;
-                  return (
-                    <div
-                      key={field.name}
-                      className={cn("space-y-2", wide && "sm:col-span-2")}
-                    >
-                      <Label htmlFor={field.name}>
-                        {labelFor(field.name)}
-                        {field.required ? " *" : ""}
-                      </Label>
-                      {enumValues ? (
-                        <select
-                          id={field.name}
-                          name={field.name}
-                          className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          required={field.required}
-                          value={values[field.name] ?? ""}
-                          disabled={readOnly || pending || draftPending}
-                          aria-invalid={Boolean(err)}
-                          aria-describedby={err ? errId : undefined}
-                          onChange={(e) => setValue(field.name, e.target.value)}
-                          data-testid={`registration-field-${field.name}`}
-                        >
-                          <option value="">Select {labelFor(field.name).toLowerCase()}</option>
-                          {enumValues.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
+                {(() => {
+                  let injectedWhatsapp = false;
+                  const nodes = standardFields.map((field) => {
+                    const err = fieldErrors[field.name];
+                    const errId = `${field.name}-error`;
+                    const wide =
+                      field.name === "email" ||
+                      field.name === "nationalId" ||
+                      field.name === "guardianEmail";
+                    const enumValues =
+                      field.type === "enum" || field.name === "gender"
+                        ? field.allowedValues?.length
+                          ? field.allowedValues
+                          : ["Male", "Female"]
+                        : null;
+                    const fieldNode = (
+                      <div
+                        key={field.name}
+                        className={cn("space-y-2", wide && "sm:col-span-2")}
+                      >
+                        <Label htmlFor={field.name}>
+                          {labelFor(field.name)}
+                          {field.required ? " *" : ""}
+                        </Label>
+                        {enumValues ? (
+                          <select
+                            id={field.name}
+                            name={field.name}
+                            className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            required={field.required}
+                            value={values[field.name] ?? ""}
+                            disabled={readOnly || pending || draftPending}
+                            aria-invalid={Boolean(err)}
+                            aria-describedby={err ? errId : undefined}
+                            onChange={(e) => setValue(field.name, e.target.value)}
+                            data-testid={`registration-field-${field.name}`}
+                          >
+                            <option value="">
+                              Select {labelFor(field.name).toLowerCase()}
                             </option>
-                          ))}
-                        </select>
-                      ) : (
+                            {enumValues.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Input
+                            id={field.name}
+                            name={field.name}
+                            type={inputTypeFor(field)}
+                            className="min-h-11"
+                            required={field.required}
+                            maxLength={field.maxLength ?? undefined}
+                            pattern={field.pattern ?? undefined}
+                            value={values[field.name] ?? ""}
+                            disabled={readOnly || pending || draftPending}
+                            aria-invalid={Boolean(err)}
+                            aria-describedby={err ? errId : undefined}
+                            onChange={(e) => setValue(field.name, e.target.value)}
+                            autoComplete="off"
+                          />
+                        )}
+                        <FieldMessage id={errId} message={err} />
+                      </div>
+                    );
+                    if (field.name !== "mobile") {
+                      return fieldNode;
+                    }
+                    injectedWhatsapp = true;
+                    return (
+                      <div key="mobile-whatsapp" className="contents">
+                        {fieldNode}
+                        <div className="space-y-2">
+                          <Label htmlFor="whatsapp">WhatsApp number *</Label>
+                          <Input
+                            id="whatsapp"
+                            name="whatsapp"
+                            type="tel"
+                            className="min-h-11"
+                            value={values.whatsapp ?? ""}
+                            disabled={readOnly || pending || draftPending}
+                            aria-invalid={Boolean(fieldErrors.whatsapp)}
+                            onChange={(e) => setValue("whatsapp", e.target.value)}
+                            autoComplete="off"
+                            data-testid="registration-field-whatsapp"
+                          />
+                          <FieldMessage message={fieldErrors.whatsapp} />
+                        </div>
+                      </div>
+                    );
+                  });
+                  if (!injectedWhatsapp) {
+                    nodes.push(
+                      <div key="whatsapp" className="space-y-2">
+                        <Label htmlFor="whatsapp">WhatsApp number *</Label>
                         <Input
-                          id={field.name}
-                          name={field.name}
-                          type={inputTypeFor(field)}
+                          id="whatsapp"
+                          name="whatsapp"
+                          type="tel"
                           className="min-h-11"
-                          required={field.required}
-                          maxLength={field.maxLength ?? undefined}
-                          pattern={field.pattern ?? undefined}
-                          value={values[field.name] ?? ""}
+                          value={values.whatsapp ?? ""}
                           disabled={readOnly || pending || draftPending}
-                          aria-invalid={Boolean(err)}
-                          aria-describedby={err ? errId : undefined}
-                          onChange={(e) => setValue(field.name, e.target.value)}
+                          aria-invalid={Boolean(fieldErrors.whatsapp)}
+                          onChange={(e) => setValue("whatsapp", e.target.value)}
                           autoComplete="off"
+                          data-testid="registration-field-whatsapp"
                         />
-                      )}
-                      <FieldMessage id={errId} message={err} />
-                    </div>
-                  );
-                })}
+                        <FieldMessage message={fieldErrors.whatsapp} />
+                      </div>,
+                    );
+                  }
+                  return nodes;
+                })()}
+              </div>
+            </FormSection>
+
+            {mode === "competitor" ? (
+              <FormSection
+                icon={UserRound}
+                title="Guardian"
+                description="Parent or guardian contact details."
+              >
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="guardianName">Guardian name</Label>
+                    <Input
+                      id="guardianName"
+                      name="guardianName"
+                      className="min-h-11"
+                      value={values.guardianName ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      aria-invalid={Boolean(fieldErrors.guardianName)}
+                      onChange={(e) => setValue("guardianName", e.target.value)}
+                      autoComplete="off"
+                      data-testid="registration-field-guardianName"
+                    />
+                    <FieldMessage message={fieldErrors.guardianName} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="guardianPhone">Guardian phone</Label>
+                    <Input
+                      id="guardianPhone"
+                      name="guardianPhone"
+                      type="tel"
+                      className="min-h-11"
+                      value={values.guardianPhone ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      aria-invalid={Boolean(fieldErrors.guardianPhone)}
+                      onChange={(e) => setValue("guardianPhone", e.target.value)}
+                      autoComplete="off"
+                      data-testid="registration-field-guardianPhone"
+                    />
+                    <FieldMessage message={fieldErrors.guardianPhone} />
+                  </div>
+                </div>
+              </FormSection>
+            ) : null}
+
+            <FormSection
+              icon={BookUser}
+              title="Identification"
+              description="Optionally enter your Ghana Card number, or choose another accepted ID."
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>ID document (optional)</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {(
+                      [
+                        { value: "GHANA_CARD", label: "Ghana Card" },
+                        { value: "OTHER", label: "Other ID" },
+                      ] as const
+                    ).map((opt) => {
+                      const selected = values.idDocumentKind === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          className={cn(
+                            "flex min-h-11 items-center gap-2 rounded-lg border px-4 py-2 text-sm transition-colors",
+                            selected
+                              ? "border-brand-blue bg-brand-blue/10 text-foreground"
+                              : "border-input bg-background hover:bg-muted/50",
+                          )}
+                          disabled={readOnly || pending || draftPending}
+                          aria-pressed={selected}
+                          data-testid={`id-kind-${opt.value}`}
+                          onClick={() => {
+                            if (selected) {
+                              setValue("idDocumentKind", "");
+                              setValue("otherIdType", "");
+                              return;
+                            }
+                            setValue("idDocumentKind", opt.value);
+                            if (opt.value !== "OTHER") {
+                              setValue("otherIdType", "");
+                            }
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <FieldMessage message={fieldErrors.idDocumentKind} />
+                </div>
+
+                {values.idDocumentKind === "OTHER" ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="otherIdType">Other ID type *</Label>
+                    <select
+                      id="otherIdType"
+                      className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={values.otherIdType ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) => setValue("otherIdType", e.target.value)}
+                      data-testid="other-id-type"
+                    >
+                      <option value="">Select ID type</option>
+                      {OTHER_ID_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <FieldMessage message={fieldErrors.otherIdType} />
+                  </div>
+                ) : null}
+
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="nationalId">
+                    {values.idDocumentKind === "OTHER"
+                      ? "ID number *"
+                      : values.idDocumentKind === "GHANA_CARD"
+                        ? "Ghana Card number *"
+                        : "ID number (optional)"}
+                  </Label>
+                  <Input
+                    id="nationalId"
+                    name="nationalId"
+                    className="min-h-11 font-mono"
+                    value={values.nationalId ?? ""}
+                    disabled={readOnly || pending || draftPending}
+                    aria-invalid={Boolean(fieldErrors.nationalId)}
+                    onChange={(e) => setValue("nationalId", e.target.value)}
+                    autoComplete="off"
+                    data-testid="registration-field-nationalId"
+                  />
+                  <FieldMessage message={fieldErrors.nationalId} />
+                </div>
               </div>
             </FormSection>
 
@@ -1343,6 +1703,34 @@ export function CompetitionRegistrationForm({
                 </div>
               </FormSection>
             ) : null}
+
+            <FormSection
+              icon={UserRound}
+              title="How did you hear about WSGH?"
+              description="Tell us how you found WorldSkills Ghana."
+            >
+              <div className="space-y-2">
+                <Label htmlFor="heardAbout">Source *</Label>
+                <select
+                  id="heardAbout"
+                  name="heardAbout"
+                  className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={values.heardAbout ?? ""}
+                  disabled={readOnly || pending || draftPending}
+                  aria-invalid={Boolean(fieldErrors.heardAbout)}
+                  onChange={(e) => setValue("heardAbout", e.target.value)}
+                  data-testid="registration-field-heardAbout"
+                >
+                  <option value="">Select an option</option>
+                  {HEARD_ABOUT_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+                <FieldMessage message={fieldErrors.heardAbout} />
+              </div>
+            </FormSection>
               </>
             )}
 
@@ -1487,60 +1875,264 @@ export function CompetitionRegistrationForm({
                 <p className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-3 text-sm">
                   Linked to your claimed school account
                 </p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="organizationPhone">Organisation phone *</Label>
+                    <Input
+                      id="organizationPhone"
+                      type="tel"
+                      className="min-h-11"
+                      value={values.organizationPhone ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) =>
+                        setValue("organizationPhone", e.target.value)
+                      }
+                      data-testid="organization-phone"
+                    />
+                    <FieldMessage message={fieldErrors.organizationPhone} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="organizationEmail">Organisation email *</Label>
+                    <Input
+                      id="organizationEmail"
+                      type="email"
+                      className="min-h-11"
+                      value={values.organizationEmail ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) =>
+                        setValue("organizationEmail", e.target.value)
+                      }
+                      data-testid="organization-email"
+                    />
+                    <FieldMessage message={fieldErrors.organizationEmail} />
+                  </div>
+                </div>
               </FormSection>
             ) : (
               <FormSection
                 icon={MapPin}
-                title="School & region"
-                description="Search your school by name or code. If you are not affiliated with a school, pick your region instead."
+                title="Affiliation"
+                description="Link your registration to a school, company, or workshop."
               >
                 <div className="space-y-2">
-                  <Label>School (optional)</Label>
-                  <SchoolSearchSelect
-                    value={school}
-                    onChange={onSchoolChange}
-                    disabled={readOnly || pending || draftPending}
-                    error={
-                      fieldErrors.institutionId ||
-                      fieldErrors.schoolCode ||
-                      fieldErrors.code
-                    }
-                  />
-                  <FieldMessage
-                    message={
-                      fieldErrors.institutionId ||
-                      fieldErrors.schoolCode ||
-                      fieldErrors.code
-                    }
-                  />
+                  <Label>Affiliation type *</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {(
+                      [
+                        { value: "school", label: "School" },
+                        { value: "company", label: "Company" },
+                        { value: "workshop", label: "Workshop" },
+                      ] as const
+                    ).map((opt) => (
+                      <label
+                        key={opt.value}
+                        className={cn(
+                          "flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm transition-colors",
+                          affiliationType() === opt.value
+                            ? "border-brand-blue bg-brand-blue/10 text-foreground"
+                            : "border-input bg-background hover:bg-muted/50",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="affiliationType"
+                          className="size-4 accent-brand-blue"
+                          checked={affiliationType() === opt.value}
+                          disabled={readOnly || pending || draftPending}
+                          onChange={() => {
+                            setValue("affiliationType", opt.value);
+                            setSchool(null);
+                            setSchoolManualMode(false);
+                            setRegionId("");
+                            setValue("organizationName", "");
+                            setValue("organizationCity", "");
+                          }}
+                          data-testid={`affiliation-${opt.value}`}
+                        />
+                        {opt.label}
+                      </label>
+                    ))}
+                  </div>
+                  <FieldMessage message={fieldErrors.affiliationType} />
                 </div>
 
-                {!school ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="regionId">Region *</Label>
-                    <select
-                      id="regionId"
-                      className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={regionId}
-                      disabled={readOnly || pending || draftPending}
-                      onChange={(e) => setRegionId(e.target.value)}
-                      aria-invalid={Boolean(fieldErrors.regionId)}
-                      required={!school}
-                      data-testid="region-select"
-                    >
-                      <option value="">Select region</option>
-                      {regions.map((r) => (
-                        <option key={r.regionId} value={r.regionId}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground">
-                      Required when registering without a school.
-                    </p>
-                    <FieldMessage message={fieldErrors.regionId} />
+                {affiliationType() === "school" ? (
+                  <div className="space-y-4">
+                    {!schoolManualMode ? (
+                      <div className="space-y-2">
+                        <Label>School</Label>
+                        <SchoolSearchSelect
+                          value={school}
+                          onChange={onSchoolChange}
+                          disabled={readOnly || pending || draftPending}
+                          error={
+                            fieldErrors.institutionId ||
+                            fieldErrors.schoolCode ||
+                            fieldErrors.code
+                          }
+                        />
+                        <FieldMessage
+                          message={
+                            fieldErrors.institutionId ||
+                            fieldErrors.schoolCode ||
+                            fieldErrors.code
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-brand-blue underline-offset-2 hover:underline"
+                          disabled={readOnly || pending || draftPending}
+                          onClick={() => {
+                            setSchoolManualMode(true);
+                            setSchool(null);
+                            setValue("affiliationType", "school");
+                          }}
+                          data-testid="school-not-listed"
+                        >
+                          School not listed?
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="organizationName">School name *</Label>
+                          <Input
+                            id="organizationName"
+                            className="min-h-11"
+                            value={values.organizationName ?? ""}
+                            disabled={readOnly || pending || draftPending}
+                            onChange={(e) =>
+                              setValue("organizationName", e.target.value)
+                            }
+                            data-testid="manual-school-name"
+                          />
+                          <FieldMessage message={fieldErrors.organizationName} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="regionId">Region *</Label>
+                          <select
+                            id="regionId"
+                            className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={regionId}
+                            disabled={readOnly || pending || draftPending}
+                            onChange={(e) => setRegionId(e.target.value)}
+                            aria-invalid={Boolean(fieldErrors.regionId)}
+                            data-testid="region-select"
+                          >
+                            <option value="">Select region</option>
+                            {regions.map((r) => (
+                              <option key={r.regionId} value={r.regionId}>
+                                {r.name}
+                              </option>
+                            ))}
+                          </select>
+                          <FieldMessage message={fieldErrors.regionId} />
+                        </div>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-brand-blue underline-offset-2 hover:underline"
+                          disabled={readOnly || pending || draftPending}
+                          onClick={() => {
+                            setSchoolManualMode(false);
+                            setValue("organizationName", "");
+                            setRegionId("");
+                          }}
+                          data-testid="school-search-again"
+                        >
+                          Search school catalog instead
+                        </button>
+                      </div>
+                    )}
                   </div>
-                ) : null}
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="organizationName">
+                        {affiliationType() === "company"
+                          ? "Company name *"
+                          : "Workshop name *"}
+                      </Label>
+                      <Input
+                        id="organizationName"
+                        className="min-h-11"
+                        value={values.organizationName ?? ""}
+                        disabled={readOnly || pending || draftPending}
+                        onChange={(e) =>
+                          setValue("organizationName", e.target.value)
+                        }
+                        data-testid="organization-name"
+                      />
+                      <FieldMessage message={fieldErrors.organizationName} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="regionId">Region *</Label>
+                      <select
+                        id="regionId"
+                        className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={regionId}
+                        disabled={readOnly || pending || draftPending}
+                        onChange={(e) => setRegionId(e.target.value)}
+                        aria-invalid={Boolean(fieldErrors.regionId)}
+                        data-testid="region-select"
+                      >
+                        <option value="">Select region</option>
+                        {regions.map((r) => (
+                          <option key={r.regionId} value={r.regionId}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                      <FieldMessage message={fieldErrors.regionId} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="organizationCity">City / town *</Label>
+                      <Input
+                        id="organizationCity"
+                        className="min-h-11"
+                        value={values.organizationCity ?? ""}
+                        disabled={readOnly || pending || draftPending}
+                        onChange={(e) =>
+                          setValue("organizationCity", e.target.value)
+                        }
+                        data-testid="organization-city"
+                      />
+                      <FieldMessage message={fieldErrors.organizationCity} />
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="organizationPhone">Organisation phone *</Label>
+                    <Input
+                      id="organizationPhone"
+                      type="tel"
+                      className="min-h-11"
+                      value={values.organizationPhone ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) =>
+                        setValue("organizationPhone", e.target.value)
+                      }
+                      data-testid="organization-phone"
+                    />
+                    <FieldMessage message={fieldErrors.organizationPhone} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="organizationEmail">Organisation email *</Label>
+                    <Input
+                      id="organizationEmail"
+                      type="email"
+                      className="min-h-11"
+                      value={values.organizationEmail ?? ""}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) =>
+                        setValue("organizationEmail", e.target.value)
+                      }
+                      data-testid="organization-email"
+                    />
+                    <FieldMessage message={fieldErrors.organizationEmail} />
+                  </div>
+                </div>
               </FormSection>
             )}
 
@@ -1762,11 +2354,36 @@ export function CompetitionRegistrationForm({
                   </dd>
                 </div>
                 <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                  <dt className="text-muted-foreground">School / region</dt>
+                  <dt className="text-muted-foreground">Affiliation</dt>
                   <dd className="font-medium text-foreground sm:text-right">
                     {summarySchool}
                   </dd>
                 </div>
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                  <dt className="text-muted-foreground">ID</dt>
+                  <dd className="font-medium text-foreground sm:text-right">
+                    {summaryId}
+                  </dd>
+                </div>
+                {values.heardAbout ? (
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                    <dt className="text-muted-foreground">Heard about WSGH</dt>
+                    <dd className="font-medium text-foreground sm:text-right">
+                      {values.heardAbout}
+                    </dd>
+                  </div>
+                ) : null}
+                {mode === "competitor" && values.guardianName ? (
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
+                    <dt className="text-muted-foreground">Guardian</dt>
+                    <dd className="font-medium text-foreground sm:text-right">
+                      {values.guardianName}
+                      {values.guardianPhone
+                        ? ` · ${values.guardianPhone}`
+                        : ""}
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
 
               {hasDeclaration ? (

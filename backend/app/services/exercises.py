@@ -32,6 +32,9 @@ def exercise_to_dict(ex: Exercise) -> dict[str, Any]:
         "packFileName": ex.pack_file_name,
         "packContentType": ex.pack_content_type,
         "packScanStatus": ex.pack_scan_status,
+        "availabilityNotifiedAt": (
+            ex.availability_notified_at.isoformat() if ex.availability_notified_at else None
+        ),
     }
 
 
@@ -318,6 +321,28 @@ async def publish_exercise(
     )
     await session.commit()
     await session.refresh(ex)
+
+    # Best-effort SMS when exercise is immediately available
+    try:
+        from app.services import competition_sms
+
+        await competition_sms.notify_exercise_available(
+            session,
+            competition_id=competition_id,
+            stage_id=stage_id,
+            trigger="exercise_publish",
+            actor=actor,
+            commit=True,
+        )
+        await session.refresh(ex)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "EXERCISE_AVAILABLE SMS failed after publish competition=%s stage=%s",
+            competition_id,
+            stage_id,
+        )
     return ex
 
 
@@ -334,6 +359,7 @@ async def unpublish_exercise(
     ex = await get_exercise(session, competition_id, stage_id)
     before = exercise_to_dict(ex)
     ex.status = "DRAFT"
+    ex.availability_notified_at = None
     await session.flush()
     await write_audit_event(
         session,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 import uuid
 from datetime import date, datetime
@@ -37,11 +38,12 @@ from app.schemas.registrations import (
     RegistrationWindowUpdate,
 )
 from app.services.audit import write_audit_event
-from app.services.consent import apply_minor_gate_on_registration
 from app.services.eligibility import screen_competitor
 from app.services.geography import resolve_zone_for_registration
 from app.services.nominations import enqueue_notification
 from app.services.storage import ObjectStorage, get_object_storage
+
+logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[\w\s\-'.À-ȕ]+$", re.UNICODE)
 _PASSPORT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-\s]{4,62}$")
@@ -53,6 +55,10 @@ _CAPTCHA_OK = {"ok", "valid", "pass"}
 _CAPTCHA_RATE = {"rate-limited", "rate_limit"}
 
 ALLOWED_GENDERS = frozenset({"Male", "Female"})
+ALLOWED_AFFILIATION_TYPES = frozenset({"school", "company", "workshop"})
+ALLOWED_ID_DOCUMENT_KINDS = frozenset({"GHANA_CARD", "OTHER"})
+ALLOWED_OTHER_ID_TYPES = frozenset({"Passport", "Driver's License", "Student ID"})
+ALLOWED_HEARD_ABOUT = frozenset({"Facebook", "Newspaper", "Internet", "FRIEND", "Other"})
 _QUOTA_EXCLUDED_STATUSES = frozenset({"REJECTED", "WITHDRAWN", "DRAFT"})
 _DRAFT_STATUS = "DRAFT"
 _GENDER_FIELD = {
@@ -61,6 +67,20 @@ _GENDER_FIELD = {
     "required": True,
     "allowedValues": ["Male", "Female"],
 }
+
+# Injected when older competition form configs omit newer profile fields.
+# Guardian contacts are optional informational fields for all ages.
+_PROFILE_ENSURE_FIELDS: list[dict[str, Any]] = [
+    {"name": "whatsapp", "type": "phone", "required": True},
+    {"name": "guardianName", "type": "string", "required": False, "maxLength": 200},
+    {"name": "guardianPhone", "type": "phone", "required": False},
+    {
+        "name": "heardAbout",
+        "type": "enum",
+        "required": True,
+        "allowedValues": ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+    },
+]
 
 
 def _ensure_gender_on_form(form: RegistrationFormDefinition) -> None:
@@ -73,6 +93,25 @@ def _ensure_gender_on_form(form: RegistrationFormDefinition) -> None:
         min(2, len(fields)),
     )
     fields.insert(insert_at, dict(_GENDER_FIELD))
+    form.fields = fields
+
+
+def _ensure_profile_fields_on_form(form: RegistrationFormDefinition) -> None:
+    """Guarantee WhatsApp, guardian, and how-heard even when older form configs omit them."""
+    fields = list(form.fields or [])
+    existing = {str(f.get("name")) for f in fields}
+    missing = [dict(spec) for spec in _PROFILE_ENSURE_FIELDS if str(spec["name"]) not in existing]
+    if not missing:
+        return
+    insert_at = next(
+        (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "mobile"),
+        next(
+            (i + 1 for i, f in enumerate(fields) if str(f.get("name")) == "email"),
+            len(fields),
+        ),
+    )
+    for offset, spec in enumerate(missing):
+        fields.insert(insert_at + offset, spec)
     form.fields = fields
 
 
@@ -119,6 +158,7 @@ async def get_registration_form(session: AsyncSession, competition_id: uuid.UUID
     form, window = await load_form_config(session, competition_id)
     open_now = _window_open(window)
     _ensure_gender_on_form(form)
+    _ensure_profile_fields_on_form(form)
     fields = [
         FormFieldOut(
             name=str(f.get("name")),
@@ -136,6 +176,8 @@ async def get_registration_form(session: AsyncSession, competition_id: uuid.UUID
         photoMaxMb=form.photo_max_mb,
         photoFormats=list(form.photo_formats or []),
         readOnly=not open_now,
+        minorAgeUnder=form.minor_age_under,
+        minorReferenceDate=form.minor_reference_date,
         window=(
             {"opensAt": window.opens_at.isoformat(), "closesAt": window.closes_at.isoformat()}
             if window
@@ -179,9 +221,17 @@ def _field_value(payload: RegistrationCreate, name: str) -> Any:
         "mobile": payload.mobile,
         "whatsapp": payload.whatsapp,
         "nationalId": payload.nationalId,
+        "idDocumentKind": payload.idDocumentKind,
+        "otherIdType": payload.otherIdType,
         "hasPassport": payload.hasPassport,
         "passportNumber": payload.passportNumber,
         "passportExpiresOn": payload.passportExpiresOn,
+        "affiliationType": payload.affiliationType,
+        "organizationName": payload.organizationName,
+        "organizationCity": payload.organizationCity,
+        "organizationPhone": payload.organizationPhone,
+        "organizationEmail": payload.organizationEmail,
+        "heardAbout": payload.heardAbout,
         "institutionId": payload.institutionId,
         "regionId": payload.regionId,
         "zoneId": payload.zoneId,
@@ -189,6 +239,9 @@ def _field_value(payload: RegistrationCreate, name: str) -> Any:
         "coach": payload.coach,
         "declarationAccepted": payload.declarationAccepted,
         "photo": payload.photo,
+        "guardianName": payload.guardianName,
+        "guardianEmail": payload.guardianEmail,
+        "guardianPhone": payload.guardianPhone,
     }
     return mapping.get(name)
 
@@ -209,9 +262,25 @@ def _validate_against_form(form: RegistrationFormDefinition, payload: Registrati
             continue
 
         if name == "regionId":
-            # Region is only required when registering without a school; school carries region.
-            if payload.institutionId is not None:
-                continue
+            # Region validated in affiliation rules (catalog school carries region).
+            continue
+
+        if name in {
+            "affiliationType",
+            "organizationName",
+            "organizationCity",
+            "organizationPhone",
+            "organizationEmail",
+            "idDocumentKind",
+            "otherIdType",
+            "nationalId",
+            "heardAbout",
+            "guardianName",
+            "guardianEmail",
+            "guardianPhone",
+        }:
+            # Validated after the form loop (conditional / cross-field rules).
+            continue
 
         if name in {"hasPassport", "passportNumber", "passportExpiresOn"}:
             # Validated after the form loop (conditional requirement).
@@ -250,9 +319,9 @@ def _validate_against_form(form: RegistrationFormDefinition, payload: Registrati
             if not _PHONE_RE.match(str(value).replace(" ", "")):
                 errors.append(FieldError(name, "PHONE_INVALID"))
 
-        elif name == "nationalId" and form.national_id_pattern:
-            if not re.fullmatch(form.national_id_pattern, str(value)):
-                errors.append(FieldError(name, "ID_INVALID"))
+        elif name == "nationalId":
+            # Ghana Card pattern applied only when idDocumentKind is GHANA_CARD (see below).
+            pass
 
         elif name == "declarationAccepted" and value is not True:
             errors.append(FieldError(name, "DECLARATION_REQUIRED"))
@@ -274,6 +343,109 @@ def _validate_against_form(form: RegistrationFormDefinition, payload: Registrati
         # Number supplied while answering No — ignore content, clear on persist.
         pass
 
+    errors.extend(_validate_id_document(form, payload))
+    errors.extend(_validate_affiliation(payload))
+    errors.extend(_validate_heard_about(payload))
+
+    return errors
+
+
+def _validate_id_document(
+    form: RegistrationFormDefinition, payload: RegistrationCreate
+) -> list[FieldError]:
+    """ID document is optional; validate format only when fields are provided."""
+    errors: list[FieldError] = []
+    kind = (payload.idDocumentKind or "").strip() or None
+    other = (payload.otherIdType or "").strip() or None
+    national_id = (payload.nationalId or "").strip() or None
+
+    if not kind and not national_id and not other:
+        return errors
+
+    if kind and kind not in ALLOWED_ID_DOCUMENT_KINDS:
+        errors.append(FieldError("idDocumentKind", "INVALID"))
+        return errors
+
+    if not kind:
+        errors.append(FieldError("idDocumentKind", "REQUIRED"))
+        return errors
+
+    if not national_id:
+        errors.append(FieldError("nationalId", "REQUIRED"))
+    elif kind == "GHANA_CARD" and form.national_id_pattern:
+        if not re.fullmatch(form.national_id_pattern, national_id):
+            errors.append(FieldError("nationalId", "ID_INVALID"))
+
+    if kind == "OTHER":
+        if not other:
+            errors.append(FieldError("otherIdType", "REQUIRED"))
+        elif other not in ALLOWED_OTHER_ID_TYPES:
+            errors.append(FieldError("otherIdType", "INVALID"))
+    return errors
+
+
+def _validate_affiliation(payload: RegistrationCreate) -> list[FieldError]:
+    errors: list[FieldError] = []
+    aff = (payload.affiliationType or "").strip() or None
+    if not aff:
+        errors.append(FieldError("affiliationType", "REQUIRED"))
+        return errors
+    if aff not in ALLOWED_AFFILIATION_TYPES:
+        errors.append(FieldError("affiliationType", "INVALID"))
+        return errors
+
+    org_phone = (payload.organizationPhone or "").strip()
+    org_email = (payload.organizationEmail or "").strip()
+    if not org_phone:
+        errors.append(FieldError("organizationPhone", "REQUIRED"))
+    elif not _PHONE_RE.match(org_phone.replace(" ", "")):
+        errors.append(FieldError("organizationPhone", "PHONE_INVALID"))
+    if not org_email:
+        errors.append(FieldError("organizationEmail", "REQUIRED"))
+    elif not _EMAIL_RE.match(org_email):
+        errors.append(FieldError("organizationEmail", "EMAIL_INVALID"))
+
+    org_name = (payload.organizationName or "").strip() or None
+    org_city = (payload.organizationCity or "").strip() or None
+
+    if aff == "school":
+        if payload.institutionId is not None:
+            # Catalog school supplies region; free-text org name/city not needed.
+            pass
+        else:
+            if not org_name:
+                errors.append(FieldError("organizationName", "REQUIRED"))
+            if payload.regionId is None:
+                errors.append(FieldError("regionId", "REQUIRED"))
+    else:
+        # company / workshop
+        if not org_name:
+            errors.append(FieldError("organizationName", "REQUIRED"))
+        if payload.regionId is None:
+            errors.append(FieldError("regionId", "REQUIRED"))
+        if not org_city:
+            errors.append(FieldError("organizationCity", "REQUIRED"))
+        if payload.institutionId is not None:
+            errors.append(FieldError("institutionId", "NOT_ALLOWED"))
+
+    return errors
+
+
+def _validate_heard_about(payload: RegistrationCreate) -> list[FieldError]:
+    heard = (payload.heardAbout or "").strip() or None
+    if not heard:
+        return [FieldError("heardAbout", "REQUIRED")]
+    if heard not in ALLOWED_HEARD_ABOUT:
+        return [FieldError("heardAbout", "INVALID")]
+    return []
+
+
+def _validate_guardian_contacts(payload: RegistrationCreate) -> list[FieldError]:
+    """Guardian name/phone are optional informational fields; validate format if present."""
+    errors: list[FieldError] = []
+    phone = (payload.guardianPhone or "").strip() or None
+    if phone and not _PHONE_RE.match(phone.replace(" ", "")):
+        errors.append(FieldError("guardianPhone", "PHONE_INVALID"))
     return errors
 
 
@@ -527,6 +699,9 @@ async def _draft_out(session: AsyncSession, competitor: Competitor) -> Registrat
         mobile=competitor.mobile or payload.get("mobile"),
         whatsapp=competitor.whatsapp or payload.get("whatsapp"),
         nationalId=competitor.national_id or payload.get("nationalId"),
+        idDocumentKind=getattr(competitor, "id_document_kind", None)
+        or payload.get("idDocumentKind"),
+        otherIdType=getattr(competitor, "other_id_type", None) or payload.get("otherIdType"),
         nationality=competitor.nationality or payload.get("nationality"),
         hasPassport=has_passport,
         passportNumber=competitor.passport_number or payload.get("passportNumber"),
@@ -536,6 +711,17 @@ async def _draft_out(session: AsyncSession, competitor: Competitor) -> Registrat
             if isinstance(payload.get("passportExpiresOn"), str)
             else payload.get("passportExpiresOn")
         ),
+        affiliationType=getattr(competitor, "affiliation_type", None)
+        or payload.get("affiliationType"),
+        organizationName=getattr(competitor, "organization_name", None)
+        or payload.get("organizationName"),
+        organizationCity=getattr(competitor, "organization_city", None)
+        or payload.get("organizationCity"),
+        organizationPhone=getattr(competitor, "organization_phone", None)
+        or payload.get("organizationPhone"),
+        organizationEmail=getattr(competitor, "organization_email", None)
+        or payload.get("organizationEmail"),
+        heardAbout=getattr(competitor, "heard_about", None) or payload.get("heardAbout"),
         institutionId=competitor.institution_id
         or (
             uuid.UUID(str(payload["institutionId"]))
@@ -663,6 +849,15 @@ async def upsert_registration_draft(
     if "nationalId" in data:
         draft.national_id = (data["nationalId"] or "").strip() or None
         payload_json["nationalId"] = draft.national_id
+    if "idDocumentKind" in data:
+        draft.id_document_kind = (data["idDocumentKind"] or "").strip() or None
+        payload_json["idDocumentKind"] = draft.id_document_kind
+        if draft.id_document_kind != "OTHER":
+            draft.other_id_type = None
+            payload_json["otherIdType"] = None
+    if "otherIdType" in data:
+        draft.other_id_type = (data["otherIdType"] or "").strip() or None
+        payload_json["otherIdType"] = draft.other_id_type
     if "nationality" in data:
         draft.nationality = (data["nationality"] or "").strip().upper() or None
         payload_json["nationality"] = draft.nationality
@@ -682,6 +877,26 @@ async def upsert_registration_draft(
         payload_json["passportExpiresOn"] = (
             data["passportExpiresOn"].isoformat() if data["passportExpiresOn"] else None
         )
+    if "affiliationType" in data:
+        draft.affiliation_type = (data["affiliationType"] or "").strip() or None
+        payload_json["affiliationType"] = draft.affiliation_type
+    if "organizationName" in data:
+        draft.organization_name = (data["organizationName"] or "").strip() or None
+        payload_json["organizationName"] = draft.organization_name
+    if "organizationCity" in data:
+        draft.organization_city = (data["organizationCity"] or "").strip() or None
+        payload_json["organizationCity"] = draft.organization_city
+    if "organizationPhone" in data:
+        draft.organization_phone = (data["organizationPhone"] or "").strip() or None
+        payload_json["organizationPhone"] = draft.organization_phone
+    if "organizationEmail" in data:
+        draft.organization_email = (
+            (data["organizationEmail"] or "").strip().lower() or None
+        )
+        payload_json["organizationEmail"] = draft.organization_email
+    if "heardAbout" in data:
+        draft.heard_about = (data["heardAbout"] or "").strip() or None
+        payload_json["heardAbout"] = draft.heard_about
     if "institutionId" in data:
         draft.institution_id = data["institutionId"]
         payload_json["institutionId"] = (
@@ -919,7 +1134,14 @@ async def create_registration(
                 fields=[FieldError("institutionId", "FORBIDDEN")],
             )
         effective_institution_id = actor.institution_id
-        payload = payload.model_copy(update={"institutionId": effective_institution_id})
+        payload = payload.model_copy(
+            update={
+                "institutionId": effective_institution_id,
+                "affiliationType": "school",
+                "organizationName": None,
+                "organizationCity": None,
+            }
+        )
 
     draft_to_finalize: Competitor | None = None
     if actor is not None and actor.role == UserRole.COMPETITOR:
@@ -985,7 +1207,9 @@ async def create_registration(
     _check_abuse(payload.captchaToken)
 
     _ensure_gender_on_form(form)
+    _ensure_profile_fields_on_form(form)
     field_errors = _validate_against_form(form, payload)
+    field_errors.extend(_validate_guardian_contacts(payload))
     # Draft may already hold a saved photo; omit photo REQUIRED in that case.
     if (
         draft_to_finalize is not None
@@ -1098,6 +1322,18 @@ async def create_registration(
             flags.append("DUPLICATE_SUSPECTED")
 
     ref = _issue_ref()
+    id_kind = (payload.idDocumentKind or "").strip() or None
+    other_id = (
+        (payload.otherIdType or "").strip() or None if id_kind == "OTHER" else None
+    )
+    aff = (payload.affiliationType or "").strip() or None
+    org_name = (payload.organizationName or "").strip() or None
+    org_city = (payload.organizationCity or "").strip() or None
+    if aff == "school" and payload.institutionId is not None:
+        org_name = None
+        org_city = None
+    elif aff == "school":
+        org_city = None
     registration_payload = {
         "skillIds": [str(s) for s in payload.skillIds],
         "gender": payload.gender,
@@ -1109,6 +1345,14 @@ async def create_registration(
         "passportExpiresOn": payload.passportExpiresOn.isoformat()
         if payload.hasPassport and payload.passportExpiresOn
         else None,
+        "affiliationType": aff,
+        "organizationName": org_name,
+        "organizationCity": org_city,
+        "organizationPhone": (payload.organizationPhone or "").strip() or None,
+        "organizationEmail": (payload.organizationEmail or "").strip().lower() or None,
+        "idDocumentKind": id_kind,
+        "otherIdType": other_id,
+        "heardAbout": (payload.heardAbout or "").strip() or None,
     }
 
     if draft_to_finalize is not None:
@@ -1127,6 +1371,16 @@ async def create_registration(
         competitor.mobile = payload.mobile
         competitor.whatsapp = payload.whatsapp
         competitor.national_id = payload.nationalId
+        competitor.id_document_kind = id_kind
+        competitor.other_id_type = other_id
+        competitor.affiliation_type = aff
+        competitor.organization_name = org_name
+        competitor.organization_city = org_city
+        competitor.organization_phone = (payload.organizationPhone or "").strip() or None
+        competitor.organization_email = (
+            (payload.organizationEmail or "").strip().lower() or None
+        )
+        competitor.heard_about = (payload.heardAbout or "").strip() or None
         competitor.nationality = (payload.nationality or "").strip().upper() or None
         competitor.enrolment_attested = bool(payload.declarationAccepted)
         competitor.has_passport = bool(payload.hasPassport)
@@ -1163,6 +1417,14 @@ async def create_registration(
             mobile=payload.mobile,
             whatsapp=payload.whatsapp,
             national_id=payload.nationalId,
+            id_document_kind=id_kind,
+            other_id_type=other_id,
+            affiliation_type=aff,
+            organization_name=org_name,
+            organization_city=org_city,
+            organization_phone=(payload.organizationPhone or "").strip() or None,
+            organization_email=(payload.organizationEmail or "").strip().lower() or None,
+            heard_about=(payload.heardAbout or "").strip() or None,
             nationality=(payload.nationality or "").strip().upper() or None,
             enrolment_attested=bool(payload.declarationAccepted),
             has_passport=bool(payload.hasPassport),
@@ -1215,29 +1477,11 @@ async def create_registration(
             or [FieldError("eligibility", "ELIGIBILITY_FAILED")],
         )
 
-    # Institution on-behalf registration: school acts as registering authority;
-    # guardian consent is not required for minors.
-    if actor is None or actor.role != UserRole.INSTITUTION:
-        await apply_minor_gate_on_registration(
-            session,
-            competitor,
-            form=form,
-            guardian_name=payload.guardianName,
-            guardian_email=payload.guardianEmail,
-            guardian_phone=payload.guardianPhone,
-        )
+    # Guardian contacts are informational only — consent is not enforced on registration.
 
     message = None
     if "DUPLICATE_SUSPECTED" in (competitor.flags or []):
         message = "Registration received; identity check is pending admin review"
-    if (
-        (actor is None or actor.role != UserRole.INSTITUTION)
-        and "CONSENT_PENDING" in (competitor.flags or [])
-    ):
-        message = (
-            (message + "; " if message else "")
-            + "Guardian consent form is available in your portal (optional for progression)"
-        )
 
     await enqueue_notification(
         session,
@@ -1284,7 +1528,32 @@ async def create_registration(
         )
 
     await session.commit()
+    await _best_effort_registration_sms(session, competitor, competition_id, ref)
     return out, 201
+
+
+async def _best_effort_registration_sms(
+    session: AsyncSession,
+    competitor: Competitor,
+    competition_id: uuid.UUID,
+    competitor_ref: str,
+) -> None:
+    try:
+        from app.services import competition_sms
+
+        await competition_sms.notify_registration_received(
+            session,
+            competitor=competitor,
+            competition_id=competition_id,
+            competitor_ref=competitor_ref,
+            trigger="registration_create",
+            commit=True,
+        )
+    except Exception:
+        logger.exception(
+            "REGISTRATION_CONFIRMATION SMS failed competitor=%s",
+            competitor.id,
+        )
 
 
 DEFAULT_REGISTRATION_FIELDS: list[dict[str, Any]] = [
@@ -1299,10 +1568,41 @@ DEFAULT_REGISTRATION_FIELDS: list[dict[str, Any]] = [
     {"name": "dateOfBirth", "type": "date", "required": True},
     {"name": "email", "type": "email", "required": True},
     {"name": "mobile", "type": "phone", "required": True},
-    {"name": "nationalId", "type": "string", "required": True},
+    {"name": "whatsapp", "type": "phone", "required": True},
+    {
+        "name": "idDocumentKind",
+        "type": "enum",
+        "required": False,
+        "allowedValues": ["GHANA_CARD", "OTHER"],
+    },
+    {
+        "name": "otherIdType",
+        "type": "enum",
+        "required": False,
+        "allowedValues": ["Passport", "Driver's License", "Student ID"],
+    },
+    {"name": "nationalId", "type": "string", "required": False},
+    {"name": "guardianName", "type": "string", "required": False, "maxLength": 200},
+    {"name": "guardianPhone", "type": "phone", "required": False},
+    {
+        "name": "heardAbout",
+        "type": "enum",
+        "required": True,
+        "allowedValues": ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+    },
     {"name": "hasPassport", "type": "boolean", "required": True},
     {"name": "passportNumber", "type": "string", "required": False, "maxLength": 64},
     {"name": "passportExpiresOn", "type": "date", "required": False},
+    {
+        "name": "affiliationType",
+        "type": "enum",
+        "required": True,
+        "allowedValues": ["school", "company", "workshop"],
+    },
+    {"name": "organizationName", "type": "string", "required": False, "maxLength": 200},
+    {"name": "organizationCity", "type": "string", "required": False, "maxLength": 120},
+    {"name": "organizationPhone", "type": "phone", "required": True},
+    {"name": "organizationEmail", "type": "email", "required": True},
     {"name": "institutionId", "type": "uuid", "required": False},
     {"name": "regionId", "type": "uuid", "required": False},
     {"name": "skillIds", "type": "array", "required": True},

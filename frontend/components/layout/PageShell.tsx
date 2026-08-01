@@ -4,13 +4,14 @@ type PageShellProps = {
   children: React.ReactNode
   className?: string
   /** Wider content for dense admin lists; default is standard app width. */
-  width?: "default" | "narrow" | "wide"
+  width?: "default" | "narrow" | "wide" | "full"
 }
 
 const widthClass = {
   narrow: "max-w-xl",
   default: "max-w-3xl",
   wide: "max-w-6xl",
+  full: "max-w-none",
 } as const
 
 export function PageShell({

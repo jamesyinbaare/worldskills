@@ -548,22 +548,6 @@ async def validate_competition(session: AsyncSession, competition_id: uuid.UUID)
                             link=f"/admin/competitions/{competition_id}/skills/{skill.id}/pathway",
                         )
                     )
-                ex = stage.exercise
-                if ex is None or ex.status != "PUBLISHED" or not ex.scheme_id:
-                    issues.append(
-                        ValidationIssue(
-                            code="CONFIG_INCOMPLETE",
-                            entity=str(stage.id),
-                            message=(
-                                f"Stage '{stage.name}' on skill '{skill.name}' "
-                                "needs a published Exercise with marking scheme"
-                            ),
-                            link=(
-                                f"/admin/competitions/{competition_id}/skills/{skill.id}"
-                                f"/stages/{stage.id}/exercise"
-                            ),
-                        )
-                    )
         # Legacy skill-level pathway checks (optional once stages exist)
         if skill.pathway_id is None and not skill_stages:
             issues.append(
@@ -577,15 +561,20 @@ async def validate_competition(session: AsyncSession, competition_id: uuid.UUID)
 
     for stage in cfg.stages:
         ex = stage.exercise
+        skill_name = next((s.name for s in cfg.skills if s.id == stage.skill_id), None)
         if ex is None or ex.status != "PUBLISHED" or not ex.scheme_id:
+            skill_bit = f" on skill '{skill_name}'" if skill_name else ""
             issues.append(
                 ValidationIssue(
-                    code="EXERCISE_NOT_PUBLISHED"
-                    if ex is not None and ex.status != "PUBLISHED"
-                    else "CONFIG_INCOMPLETE",
+                    code="EXERCISE_PENDING",
                     entity=str(stage.id),
-                    message=f"Stage '{stage.name}' has no published Exercise with scheme",
+                    message=(
+                        f"Stage '{stage.name}'{skill_bit} has no published Exercise with "
+                        "marking scheme yet (registration can still go live; submissions "
+                        "stay closed until published)"
+                    ),
                     link=f"/admin/competitions/{competition_id}/stages/{stage.id}/exercise",
+                    severity="advisory",
                 )
             )
         effective_quota = stage.quota
@@ -628,8 +617,13 @@ async def validate_competition(session: AsyncSession, competition_id: uuid.UUID)
                     )
                 )
 
-    ok = len(issues) == 0
+    blocking = [i for i in issues if i.severity != "advisory"]
+    ok = len(blocking) == 0
     return ok, issues
+
+
+def _blocking_issues(issues: list[ValidationIssue]) -> list[ValidationIssue]:
+    return [i for i in issues if i.severity != "advisory"]
 
 
 async def activate_competition(
@@ -664,8 +658,9 @@ async def activate_competition(
             )
 
     ok, issues = await validate_competition(session, competition_id)
-    if not ok:
-        incomplete = [i for i in issues if i.code == "CONFIG_INCOMPLETE"]
+    blocking = _blocking_issues(issues)
+    if not ok or blocking:
+        incomplete = [i for i in blocking if i.code == "CONFIG_INCOMPLETE"]
         if incomplete:
             raise AppError(
                 "CONFIG_INCOMPLETE",
@@ -674,10 +669,10 @@ async def activate_competition(
                 fields=[FieldError(i.entity, i.code) for i in incomplete],
             )
         raise AppError(
-            issues[0].code,
-            issues[0].message,
+            blocking[0].code if blocking else issues[0].code,
+            blocking[0].message if blocking else issues[0].message,
             status_code=status.HTTP_409_CONFLICT,
-            fields=[FieldError(i.entity, i.code) for i in issues],
+            fields=[FieldError(i.entity, i.code) for i in (blocking or issues)],
         )
 
     before = competition_to_dict(cycle)
