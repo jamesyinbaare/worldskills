@@ -32,3 +32,12 @@ def normalize_msisdn(phone: str) -> str:
         return f"233{digits}"
 
     raise ValueError("phone_number is not a valid Ghana mobile number")
+
+
+def is_valid_ghana_phone(phone: str) -> bool:
+    """True when phone normalizes to a Ghana MSISDN (local or +233 form)."""
+    try:
+        normalize_msisdn(phone)
+        return True
+    except ValueError:
+        return False

@@ -173,7 +173,7 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "affiliationType": "school",
         "organizationPhone": "+233302123456",
         "organizationEmail": "school@example.com",
-        "heardAbout": "FRIEND",
+        "heardAbout": "Friend",
         "guardianName": "Kofi Mensah",
         "guardianPhone": "+233241000111",
         "hasPassport": False,

@@ -29,7 +29,15 @@ const DEFAULT_FIELDS = [
     name: "heardAbout",
     type: "enum",
     required: true,
-    allowedValues: ["Facebook", "Newspaper", "Internet", "FRIEND", "Other"],
+    allowedValues: [
+      "Social media",
+      "Newspaper",
+      "Friend",
+      "Radio",
+      "Television",
+      "Website (CTVET/WorldSkills)",
+      "Other means",
+    ],
   },
   { name: "nationalId", type: "string", required: false },
   { name: "institutionId", type: "uuid", required: true },
@@ -333,7 +341,7 @@ async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
   await page.locator("#whatsapp").fill("+233241234567");
   await page.locator("#guardianName").fill("Kofi Mensah");
   await page.locator("#guardianPhone").fill("+233241000111");
-  await page.locator("#heardAbout").selectOption("Facebook");
+  await page.locator("#heardAbout").selectOption("Social media");
   await page.getByTestId("id-kind-GHANA_CARD").click();
   await page.locator("#nationalId").fill("GHA-123456789");
   await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
@@ -363,7 +371,6 @@ async function fillHappyPath(page: Page, opts?: { captcha?: string }) {
   await page.getByTestId("coach-otherName").fill("Mensah");
   await page.getByTestId("coach-contactNumber").fill("+233201112233");
   await page.getByTestId("coach-email").fill("coach@example.com");
-  await page.getByTestId("coach-whatsapp").fill("+233201112233");
   await page.getByTestId("coach-dateOfBirth").fill("1985-04-12");
   await page.getByTestId("registration-continue").click();
 
@@ -513,7 +520,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await page.locator("#whatsapp").fill("+233241234567");
     await page.locator("#guardianName").fill("Kofi Mensah");
     await page.locator("#guardianPhone").fill("+233241000111");
-    await page.locator("#heardAbout").selectOption("Facebook");
+    await page.locator("#heardAbout").selectOption("Social media");
     await page.getByTestId("id-kind-GHANA_CARD").click();
     await page.locator("#nationalId").fill("GHA-123456789");
     await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());
@@ -552,7 +559,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await page.locator("#whatsapp").fill("+233241234567");
     await page.locator("#guardianName").fill("Kofi Mensah");
     await page.locator("#guardianPhone").fill("+233241000111");
-    await page.locator("#heardAbout").selectOption("Other");
+    await page.locator("#heardAbout").selectOption("Other means");
     await page.getByTestId("id-kind-OTHER").click();
     await page.getByTestId("other-id-type").selectOption("Passport");
     await page.locator("#nationalId").fill("P1234567");
@@ -574,7 +581,6 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await page.getByTestId("coach-firstName").fill("Kojo");
     await page.getByTestId("coach-contactNumber").fill("+233201112233");
     await page.getByTestId("coach-email").fill("coach@example.com");
-    await page.getByTestId("coach-whatsapp").fill("+233201112233");
     await page.getByTestId("coach-dateOfBirth").fill("1985-04-12");
     await page.getByTestId("registration-continue").click();
     await page.getByTestId("registration-declaration").check();
@@ -599,7 +605,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await page.locator("#whatsapp").fill("+233241234567");
     await page.locator("#guardianName").fill("Kofi Mensah");
     await page.locator("#guardianPhone").fill("+233241000111");
-    await page.locator("#heardAbout").selectOption("FRIEND");
+    await page.locator("#heardAbout").selectOption("Friend");
     await page.getByTestId("id-kind-GHANA_CARD").click();
     await page.locator("#nationalId").fill("GHA-123456789");
     await page.getByTestId("registration-photo").setInputFiles(tinyPngPath());

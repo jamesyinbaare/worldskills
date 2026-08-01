@@ -33,9 +33,9 @@ const FIELD_LABELS: Record<string, string> = {
   "coach.surname": "Coach surname",
   "coach.firstName": "Coach first name",
   "coach.otherName": "Coach other name",
-  "coach.contactNumber": "Coach contact number",
+  "coach.contactNumber": "Coach phone / WhatsApp",
   "coach.email": "Coach email",
-  "coach.whatsapp": "Coach WhatsApp",
+  "coach.whatsapp": "Coach phone / WhatsApp",
   "coach.dateOfBirth": "Coach date of birth",
 };
 
@@ -49,7 +49,7 @@ const REASON_MESSAGES: Record<string, string> = {
   VALUE_ERROR: "This value is not valid.",
   TYPE_ERROR: "This value is not the right type.",
   EMAIL_INVALID: "Enter a valid email address.",
-  PHONE_INVALID: "Enter a valid phone number.",
+  PHONE_INVALID: "Enter a valid Ghana phone number (e.g. 024XXXXXXX or +233…).",
   ID_INVALID: "Enter a valid national ID.",
   INVALID_CHARS: "Only letters, spaces, hyphens, and apostrophes are allowed.",
   DECLARATION_REQUIRED: "Please accept the declaration to continue.",

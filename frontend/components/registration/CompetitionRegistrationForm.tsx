@@ -93,6 +93,35 @@ function asDateInput(value: unknown): string {
   return String(value).slice(0, 10);
 }
 
+/** Ghana phone: 0XXXXXXXXX, +233XXXXXXXXX / 233XXXXXXXXX, or bare 9 digits. */
+function isValidPhone(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return false;
+  if (digits.startsWith("233")) return digits.length >= 12;
+  if (digits.startsWith("0")) return digits.length === 10;
+  return digits.length === 9;
+}
+
+const GHANA_PHONE_HINT =
+  "Enter a valid Ghana phone number (e.g. 024XXXXXXX or +233…).";
+
+const PHONE_FIELDS = new Set([
+  "mobile",
+  "whatsapp",
+  "guardianPhone",
+  "organizationPhone",
+]);
+
+function phoneFieldError(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return isValidPhone(trimmed) ? undefined : GHANA_PHONE_HINT;
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 function formatDraftSavedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -140,11 +169,13 @@ const INSTITUTION_HIDDEN_FIELDS = new Set([
 
 const OTHER_ID_TYPES = ["Passport", "Driver's License", "Student ID"] as const;
 const HEARD_ABOUT_OPTIONS = [
-  "Facebook",
+  "Social media",
   "Newspaper",
-  "Internet",
-  "FRIEND",
-  "Other",
+  "Friend",
+  "Radio",
+  "Television",
+  "Website (CTVET/WorldSkills)",
+  "Other means",
 ] as const;
 
 function labelFor(name: string): string {
@@ -454,9 +485,12 @@ export function CompetitionRegistrationForm({
               surname: draft.coach.surname ?? "",
               firstName: draft.coach.firstName ?? "",
               otherName: draft.coach.otherName ?? "",
-              contactNumber: draft.coach.contactNumber ?? "",
+              contactNumber:
+                draft.coach.contactNumber?.trim() ||
+                draft.coach.whatsapp?.trim() ||
+                "",
               email: draft.coach.email ?? "",
-              whatsapp: draft.coach.whatsapp ?? "",
+              whatsapp: "",
               dateOfBirth: asDateInput(draft.coach.dateOfBirth),
             });
           }
@@ -566,6 +600,15 @@ export function CompetitionRegistrationForm({
 
   function setValue(name: string, value: string) {
     setValues((prev) => ({ ...prev, [name]: value }));
+    if (PHONE_FIELDS.has(name)) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        const message = phoneFieldError(value);
+        if (message) next[name] = message;
+        else delete next[name];
+        return next;
+      });
+    }
   }
 
   function updateSkillAt(index: number, value: string) {
@@ -673,13 +716,14 @@ export function CompetitionRegistrationForm({
       payload.organizationCity = null;
     }
 
+    const phone = coach.contactNumber.trim();
     const coachPayload: CoachBioInput = {
       surname: coach.surname.trim(),
       firstName: coach.firstName.trim(),
       otherName: coach.otherName.trim() || null,
-      contactNumber: coach.contactNumber.trim(),
+      contactNumber: phone,
       email: coach.email.trim(),
-      whatsapp: coach.whatsapp.trim(),
+      whatsapp: phone || null,
       dateOfBirth: coach.dateOfBirth.trim(),
     };
     if (
@@ -687,7 +731,6 @@ export function CompetitionRegistrationForm({
       coachPayload.firstName ||
       coachPayload.contactNumber ||
       coachPayload.email ||
-      coachPayload.whatsapp ||
       coachPayload.dateOfBirth
     ) {
       payload.coach = coachPayload;
@@ -756,6 +799,7 @@ export function CompetitionRegistrationForm({
     if (!formDef) return false;
     setError(null);
     const nextErrors: Record<string, string> = {};
+    const nextReasons: Record<string, string> = {};
     const stepStandardFields = formDef.fields.filter(
       (f) =>
         !SPECIAL_FIELDS.has(f.name) &&
@@ -773,44 +817,78 @@ export function CompetitionRegistrationForm({
           nextErrors[field.name] =
             field.name === "dateOfBirth"
               ? "Enter your date of birth."
-              : "This field is required.";
+              : field.name === "mobile"
+                ? "Enter your mobile number."
+                : field.name === "email"
+                  ? "Enter your email address."
+                  : "This field is required.";
+          nextReasons[field.name] =
+            field.name === "dateOfBirth" ? "INVALID_DATE" : "REQUIRED";
+          continue;
+        }
+        if (field.name === "mobile" && !isValidPhone(raw)) {
+          nextErrors.mobile = GHANA_PHONE_HINT;
+          nextReasons.mobile = "PHONE_INVALID";
+        }
+        if (field.name === "email" && !isValidEmail(raw)) {
+          nextErrors.email = "Enter a valid email address.";
+          nextReasons.email = "EMAIL_INVALID";
         }
       }
       const idKind = values.idDocumentKind?.trim() || "";
       if (idKind === "OTHER" && !values.otherIdType?.trim()) {
         nextErrors.otherIdType = "Select the type of ID.";
+        nextReasons.otherIdType = "REQUIRED";
       }
       if (idKind && !values.nationalId?.trim()) {
         nextErrors.nationalId = "Enter your ID number.";
+        nextReasons.nationalId = "REQUIRED";
       }
       if (!idKind && values.nationalId?.trim()) {
         nextErrors.idDocumentKind = "Select Ghana Card or Other ID.";
+        nextReasons.idDocumentKind = "REQUIRED";
       }
       if (!values.heardAbout?.trim()) {
         nextErrors.heardAbout = "Tell us how you heard about WSGH.";
+        nextReasons.heardAbout = "REQUIRED";
       }
-      if (!values.whatsapp?.trim()) {
+      const whatsapp = values.whatsapp?.trim() ?? "";
+      if (!whatsapp) {
         nextErrors.whatsapp = "Enter your WhatsApp number.";
+        nextReasons.whatsapp = "REQUIRED";
+      } else if (!isValidPhone(whatsapp)) {
+        nextErrors.whatsapp = GHANA_PHONE_HINT;
+        nextReasons.whatsapp = "PHONE_INVALID";
+      }
+      const guardianPhone = values.guardianPhone?.trim() ?? "";
+      if (guardianPhone && !isValidPhone(guardianPhone)) {
+        nextErrors.guardianPhone = GHANA_PHONE_HINT;
+        nextReasons.guardianPhone = "PHONE_INVALID";
       }
       const photoRequired = formDef.fields.some(
         (f) => f.name === "photo" && f.required,
       );
       if (photoClientError) {
         nextErrors.photo = photoClientError;
+        nextReasons.photo = "PHOTO_INVALID";
       } else if (photoRequired && !photoFile && !hasSavedPhoto) {
         nextErrors.photo = "Please upload your photo.";
+        nextReasons.photo = "REQUIRED";
       }
     }
 
     if (step === 2) {
       if (hasPassport === null) {
         nextErrors.hasPassport = "Tell us whether you have a passport.";
+        nextReasons.hasPassport = "REQUIRED";
       } else if (hasPassport) {
         if (!passportNumber.trim()) {
           nextErrors.passportNumber = "Enter your passport number.";
+          nextReasons.passportNumber = "REQUIRED";
         }
         if (!passportExpiresOn.trim()) {
           nextErrors.passportExpiresOn = "Enter your passport expiry date.";
+          nextReasons.passportExpiresOn = "REQUIRED";
         }
       }
     }
@@ -819,46 +897,59 @@ export function CompetitionRegistrationForm({
       const trimmedSkills = skillIds.map((s) => s.trim()).filter(Boolean);
       if (trimmedSkills.length !== formDef.maxSkills) {
         nextErrors.skillIds = `Select exactly ${formDef.maxSkills} skill(s)`;
+        nextReasons.skillIds = "SKILL_SELECTION_INVALID";
       }
       const aff = affiliationType();
       if (mode === "competitor" && !aff) {
         nextErrors.affiliationType = "Select school, company, or workshop.";
+        nextReasons.affiliationType = "REQUIRED";
       }
-      if (!values.organizationPhone?.trim()) {
+      const orgPhone = values.organizationPhone?.trim() ?? "";
+      if (!orgPhone) {
         nextErrors.organizationPhone = "Enter the organisation phone number.";
+        nextReasons.organizationPhone = "REQUIRED";
+      } else if (!isValidPhone(orgPhone)) {
+        nextErrors.organizationPhone = GHANA_PHONE_HINT;
+        nextReasons.organizationPhone = "PHONE_INVALID";
       }
       if (!values.organizationEmail?.trim()) {
         nextErrors.organizationEmail = "Enter the organisation email address.";
+        nextReasons.organizationEmail = "REQUIRED";
+      } else if (!isValidEmail(values.organizationEmail)) {
+        nextErrors.organizationEmail =
+          "Enter a valid organisation email address.";
+        nextReasons.organizationEmail = "EMAIL_INVALID";
       }
       if (mode === "competitor") {
         if (aff === "school") {
           if (!school?.institutionId && !schoolManualMode) {
             nextErrors.institutionId =
               "Search for your school, or choose “School not listed”.";
+            nextReasons.institutionId = "REQUIRED";
           }
           if (schoolManualMode) {
             if (!values.organizationName?.trim()) {
               nextErrors.organizationName = "Enter the name of your school.";
+              nextReasons.organizationName = "REQUIRED";
             }
             if (!regionId) {
               nextErrors.regionId = "Select your region.";
+              nextReasons.regionId = "REQUIRED";
             }
           }
-        } else {
+        } else if (aff) {
           if (!values.organizationName?.trim()) {
             nextErrors.organizationName = `Enter the name of your ${aff}.`;
+            nextReasons.organizationName = "REQUIRED";
           }
           if (!regionId) {
             nextErrors.regionId = "Select the location region.";
+            nextReasons.regionId = "REQUIRED";
           }
           if (!values.organizationCity?.trim()) {
             nextErrors.organizationCity = "Enter the city or town.";
+            nextReasons.organizationCity = "REQUIRED";
           }
-        }
-      } else {
-        // Institution mode still needs org contacts.
-        if (!values.organizationPhone?.trim()) {
-          nextErrors.organizationPhone = "Enter the organisation phone number.";
         }
       }
     }
@@ -869,13 +960,25 @@ export function CompetitionRegistrationForm({
         { key: "firstName", field: "coach.firstName" },
         { key: "contactNumber", field: "coach.contactNumber" },
         { key: "email", field: "coach.email" },
-        { key: "whatsapp", field: "coach.whatsapp" },
         { key: "dateOfBirth", field: "coach.dateOfBirth" },
       ];
       for (const { key, field } of coachRequired) {
         if (!coach[key].trim()) {
-          nextErrors[field] = "Required";
+          nextErrors[field] =
+            key === "contactNumber"
+              ? "Enter the coach phone / WhatsApp number."
+              : "Required";
+          nextReasons[field] = "REQUIRED";
         }
+      }
+      const coachPhone = coach.contactNumber.trim();
+      if (coachPhone && !isValidPhone(coachPhone)) {
+        nextErrors["coach.contactNumber"] = GHANA_PHONE_HINT;
+        nextReasons["coach.contactNumber"] = "PHONE_INVALID";
+      }
+      if (coach.email.trim() && !isValidEmail(coach.email)) {
+        nextErrors["coach.email"] = "Enter a valid coach email address.";
+        nextReasons["coach.email"] = "EMAIL_INVALID";
       }
     }
 
@@ -883,9 +986,11 @@ export function CompetitionRegistrationForm({
       if (stepHasDeclaration && !declarationAccepted) {
         nextErrors.declarationAccepted =
           "Please accept the declaration to continue.";
+        nextReasons.declarationAccepted = "DECLARATION_REQUIRED";
       }
       if (!captchaToken.trim()) {
         nextErrors.captchaToken = "Complete the security check.";
+        nextReasons.captchaToken = "REQUIRED";
       }
     }
 
@@ -898,7 +1003,7 @@ export function CompetitionRegistrationForm({
             message: "Please fix the highlighted fields before continuing.",
             fields: Object.keys(nextErrors).map((name) => ({
               name,
-              reason: "REQUIRED",
+              reason: nextReasons[name] ?? "REQUIRED",
             })),
             traceId: "",
           },
@@ -1075,7 +1180,6 @@ export function CompetitionRegistrationForm({
         { key: "firstName", field: "coach.firstName" },
         { key: "contactNumber", field: "coach.contactNumber" },
         { key: "email", field: "coach.email" },
-        { key: "whatsapp", field: "coach.whatsapp" },
         { key: "dateOfBirth", field: "coach.dateOfBirth" },
       ];
       for (const { key, field } of coachRequired) {
@@ -1091,13 +1195,14 @@ export function CompetitionRegistrationForm({
         }
       }
 
+      const phone = coach.contactNumber.trim();
       const coachPayload: CoachBioInput = {
         surname: coach.surname.trim(),
         firstName: coach.firstName.trim(),
         otherName: coach.otherName.trim() || null,
-        contactNumber: coach.contactNumber.trim(),
+        contactNumber: phone,
         email: coach.email.trim(),
-        whatsapp: coach.whatsapp.trim(),
+        whatsapp: phone,
         dateOfBirth: coach.dateOfBirth.trim(),
       };
       payload.coach = coachPayload;
@@ -2252,7 +2357,7 @@ export function CompetitionRegistrationForm({
             <FormSection
               icon={UserRound}
               title="Coach / team leader"
-              description="BIO-DATA OF TEAM LEADER/COACH/COMPATRIOT EXPERT OF THE COMPETITOR FROM THE COMPETING INSTITUTION"
+              description="Details of the coach or team leader from your school or organisation."
             >
               <div className="grid gap-4 sm:grid-cols-2">
                 {(
@@ -2262,7 +2367,7 @@ export function CompetitionRegistrationForm({
                     { key: "otherName", label: "Other name", required: false },
                     {
                       key: "contactNumber",
-                      label: "Contact number",
+                      label: "Phone / WhatsApp number",
                       required: true,
                       type: "tel",
                     },
@@ -2271,12 +2376,6 @@ export function CompetitionRegistrationForm({
                       label: "Email address",
                       required: true,
                       type: "email",
-                    },
-                    {
-                      key: "whatsapp",
-                      label: "WhatsApp line / contact",
-                      required: true,
-                      type: "tel",
                     },
                     {
                       key: "dateOfBirth",
@@ -2318,6 +2417,10 @@ export function CompetitionRegistrationForm({
                             const next = { ...prev };
                             delete next[errKey];
                             delete next.coach;
+                            if (field.key === "contactNumber") {
+                              const message = phoneFieldError(value);
+                              if (message) next[errKey] = message;
+                            }
                             return next;
                           });
                         }}

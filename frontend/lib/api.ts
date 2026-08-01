@@ -1122,11 +1122,13 @@ export type AffiliationType = "school" | "company" | "workshop";
 export type IdDocumentKind = "GHANA_CARD" | "OTHER";
 export type OtherIdType = "Passport" | "Driver's License" | "Student ID";
 export type HeardAbout =
-  | "Facebook"
+  | "Social media"
   | "Newspaper"
-  | "Internet"
-  | "FRIEND"
-  | "Other";
+  | "Friend"
+  | "Radio"
+  | "Television"
+  | "Website (CTVET/WorldSkills)"
+  | "Other means";
 
 export type RegistrationCreateInput = {
   givenNames?: string | null;
@@ -1167,7 +1169,8 @@ export type CoachBioInput = {
   otherName?: string | null;
   contactNumber: string;
   email: string;
-  whatsapp: string;
+  /** Optional; when omitted the API uses contactNumber. */
+  whatsapp?: string | null;
   dateOfBirth: string;
 };
 

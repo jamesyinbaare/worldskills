@@ -160,7 +160,7 @@ def _reg_payload(ctx: dict[str, uuid.UUID], *, dob: str, **overrides: object) ->
         "affiliationType": "school",
         "organizationPhone": "+233302123456",
         "organizationEmail": "school@example.com",
-        "heardAbout": "Internet",
+        "heardAbout": "Website (CTVET/WorldSkills)",
         "guardianName": "Ama Guardian",
         "guardianPhone": "+233241000111",
         "hasPassport": False,
