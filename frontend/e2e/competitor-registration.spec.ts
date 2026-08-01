@@ -186,7 +186,7 @@ async function mockCreateRegistration(
       if (mode === "duplicate") {
         await fulfillJson(route, 201, {
           competitorId: COMPETITOR_ID,
-          competitorRef: "WSG-DUP-001",
+          competitorRef: "WSGH-DUP-001",
           status: "PENDING_REVIEW",
           flags: ["DUPLICATE_SUSPECTED"],
           message: "DUPLICATE_SUSPECTED — admin review pending",
@@ -195,7 +195,7 @@ async function mockCreateRegistration(
       }
       await fulfillJson(route, 201, {
         competitorId: COMPETITOR_ID,
-        competitorRef: "WSG-REF-001",
+        competitorRef: "WSGH-REF-001",
         status: "PENDING_REVIEW",
         flags: [],
         message: null,
@@ -396,7 +396,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
       { timeout: 15_000 },
     );
     await expect(page.getByTestId("registration-confirmation")).toBeVisible();
-    await expect(page.getByTestId("competitor-ref")).toHaveText("WSG-REF-001");
+    await expect(page.getByTestId("competitor-ref")).toHaveText("WSGH-REF-001");
   });
 
   test("US-REG-01-UI-AC2 window closed disables submit", async ({ page }) => {
@@ -487,7 +487,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
     });
     await fillHappyPath(page);
     await page.getByTestId("registration-submit").click();
-    await expect(page.getByTestId("competitor-ref")).toHaveText("WSG-DUP-001", {
+    await expect(page.getByTestId("competitor-ref")).toHaveText("WSGH-DUP-001", {
       timeout: 15_000,
     });
     await expect(page.getByTestId("duplicate-pending-alert")).toBeVisible();
@@ -579,7 +579,7 @@ test.describe("US-REG-01-UI competitor registration", () => {
     await page.getByTestId("registration-continue").click();
     await page.getByTestId("registration-declaration").check();
     await page.getByTestId("registration-submit").click();
-    await expect(page.getByTestId("competitor-ref")).toHaveText("WSG-REF-001", {
+    await expect(page.getByTestId("competitor-ref")).toHaveText("WSGH-REF-001", {
       timeout: 15_000,
     });
   });

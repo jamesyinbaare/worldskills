@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 class AdminCompetitorItem(BaseModel):
     competitorId: UUID
-    refNo: str
+    refNo: str | None = None
     givenNames: str | None = None
     familyName: str | None = None
     skillId: UUID

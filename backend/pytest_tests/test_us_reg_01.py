@@ -205,7 +205,7 @@ async def test_US_REG_01_AC1_successful_registration(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "PENDING_REVIEW"
-    assert body["competitorRef"].startswith("WSG-")
+    assert body["competitorRef"].startswith("WSGH-")
 
     # Idempotent replay
     replay = await client.post(
@@ -285,7 +285,7 @@ async def test_registration_confirmation_sms_failure_does_not_block_registration
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["competitorRef"].startswith("WSG-")
+    assert body["competitorRef"].startswith("WSGH-")
     async with session_manager.session() as session:
         sms_rows = (
             await session.execute(

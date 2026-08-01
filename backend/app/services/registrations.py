@@ -558,7 +558,7 @@ def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreat
 
 
 def _issue_ref() -> str:
-    return f"WSG-{date.today().year}-{uuid.uuid4().hex[:8].upper()}"
+    return f"WSGH-{date.today().year}-{uuid.uuid4().hex[:8].upper()}"
 
 
 async def _enforce_institution_nomination_quota(

@@ -54,6 +54,9 @@ async def list_admin_competitors(
         stmt = stmt.where(Competitor.skill_id == skill_id)
     if status_filter and status_filter.strip():
         stmt = stmt.where(Competitor.status == status_filter.strip().upper())
+    else:
+        # Incomplete draft applications are not part of the admin roster.
+        stmt = stmt.where(Competitor.status != "DRAFT")
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -166,6 +169,8 @@ async def export_admin_competitors_xlsx(
         stmt = stmt.where(Competitor.skill_id == skill_id)
     if status_filter and status_filter.strip():
         stmt = stmt.where(Competitor.status == status_filter.strip().upper())
+    else:
+        stmt = stmt.where(Competitor.status != "DRAFT")
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(

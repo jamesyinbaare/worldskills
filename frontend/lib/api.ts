@@ -1794,7 +1794,7 @@ export type EligibilityOverrideOut = {
 
 export type AdminCompetitorItem = {
   competitorId: string;
-  refNo: string;
+  refNo?: string | null;
   givenNames?: string | null;
   familyName?: string | null;
   skillId: string;
