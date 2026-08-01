@@ -15,10 +15,10 @@ export const REGISTRATION_STEPS = [
   },
   {
     id: 3,
-    key: "school",
-    title: "School & skill",
-    shortTitle: "School",
-    description: "School, region, and skill area",
+    key: "affiliation",
+    title: "Affiliation & skill",
+    shortTitle: "Affiliation",
+    description: "Organisation, location, and skill area",
   },
   {
     id: 4,

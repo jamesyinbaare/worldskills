@@ -84,19 +84,19 @@ const SMS_TEMPLATES: {
     key: "exercise_reminder",
     label: "Exercise reminder",
     description: "Point competitors to the portal for exercise details.",
-    body: "WorldSkills GH: Reminder for {{competitorName}} — {{skillName}} exercise details are in the competitor portal. {{portalUrl}}",
+    body: "Reminder for {{competitorName}} — {{skillName}} exercise details are in the competitor portal. {{portalUrl}}",
   },
   {
     key: "schedule_update",
     label: "Schedule update",
     description: "Notify about schedule changes for this skill.",
-    body: "WorldSkills GH: Schedule update for {{skillName}}{{zoneLabel}}. Check the portal for details. {{portalUrl}}",
+    body: "Schedule update for {{skillName}}{{zoneLabel}}. Check the portal for details. {{portalUrl}}",
   },
   {
     key: "general_notice",
     label: "General notice",
     description: "Short official notice; add detail in the message field.",
-    body: "WorldSkills GH: Notice for {{skillName}} competitors{{zoneLabel}}. {{customNote}} {{portalUrl}}",
+    body: "Notice for {{skillName}} competitors{{zoneLabel}}. {{customNote}} {{portalUrl}}",
   },
   {
     key: "custom",

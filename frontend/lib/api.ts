@@ -1108,12 +1108,25 @@ export type RegistrationFormOut = {
   photoFormats: string[];
   readOnly: boolean;
   window?: { opensAt: string; closesAt: string } | null;
+  /** Competition minor threshold (informational; guardian consent is not enforced). */
+  minorAgeUnder?: number | null;
+  minorReferenceDate?: string | null;
 };
 
 export type RegistrationPhotoIn = {
   contentBase64: string;
   contentType: string;
 };
+
+export type AffiliationType = "school" | "company" | "workshop";
+export type IdDocumentKind = "GHANA_CARD" | "OTHER";
+export type OtherIdType = "Passport" | "Driver's License" | "Student ID";
+export type HeardAbout =
+  | "Facebook"
+  | "Newspaper"
+  | "Internet"
+  | "FRIEND"
+  | "Other";
 
 export type RegistrationCreateInput = {
   givenNames?: string | null;
@@ -1124,9 +1137,17 @@ export type RegistrationCreateInput = {
   mobile?: string | null;
   whatsapp?: string | null;
   nationalId?: string | null;
+  idDocumentKind?: IdDocumentKind | string | null;
+  otherIdType?: OtherIdType | string | null;
   hasPassport?: boolean | null;
   passportNumber?: string | null;
   passportExpiresOn?: string | null;
+  affiliationType?: AffiliationType | string | null;
+  organizationName?: string | null;
+  organizationCity?: string | null;
+  organizationPhone?: string | null;
+  organizationEmail?: string | null;
+  heardAbout?: HeardAbout | string | null;
   institutionId?: string | null;
   regionId?: string | null;
   zoneId?: string | null;
@@ -1171,10 +1192,18 @@ export type RegistrationDraftOut = {
   mobile?: string | null;
   whatsapp?: string | null;
   nationalId?: string | null;
+  idDocumentKind?: string | null;
+  otherIdType?: string | null;
   nationality?: string | null;
   hasPassport?: boolean | null;
   passportNumber?: string | null;
   passportExpiresOn?: string | null;
+  affiliationType?: string | null;
+  organizationName?: string | null;
+  organizationCity?: string | null;
+  organizationPhone?: string | null;
+  organizationEmail?: string | null;
+  heardAbout?: string | null;
   institutionId?: string | null;
   institutionName?: string | null;
   institutionCode?: string | null;

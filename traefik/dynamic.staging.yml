@@ -42,6 +42,43 @@ http:
       middlewares:
         - worldskills-security-headers
 
+    worldskills-frontend-ctvet:
+      rule: "Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-frontend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-frontend-ctvet-http:
+      rule: "Host(`worldskills.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-frontend-staging
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-ctvet:
+      rule: "Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - websecure
+      service: worldskills-backend-staging
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - worldskills-security-headers
+
+    worldskills-backend-ctvet-http:
+      rule: "Host(`worldskills-api.ctvet.gov.gh`)"
+      entryPoints:
+        - web
+      service: worldskills-backend-staging
+      middlewares:
+        - worldskills-security-headers
+
+
   services:
     worldskills-frontend-staging:
       loadBalancer:

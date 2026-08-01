@@ -530,7 +530,8 @@ export function StageExerciseEditor({
 
           {notifiedAt ? (
             <p className="text-sm text-muted-foreground" role="status">
-              Availability SMS last sent: {new Date(notifiedAt).toLocaleString()}
+              Availability SMS last sent: {new Date(notifiedAt).toLocaleString()}.
+              You can notify again with the button above.
             </p>
           ) : isPublished ? (
             <p className="text-sm text-muted-foreground" role="status">

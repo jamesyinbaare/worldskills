@@ -169,14 +169,14 @@ async def test_exercise_available_sms_on_publish_and_dedupe(
         assert "coach" in roles
         assert len(rows) == 2
 
-    # Re-notify should dedupe successful sends
+    # Admin re-notify should send again (force bypasses dedupe)
     notify = await client.post(
         f"/competitions/{competition_id}/stages/{stage_id}/exercise:notify",
         headers=auth_headers,
     )
     assert notify.status_code == 200, notify.text
-    assert notify.json()["competitorSent"] == 0
-    assert notify.json()["coachSent"] == 0
+    assert notify.json()["competitorSent"] == 1
+    assert notify.json()["coachSent"] == 1
 
     async with session_manager.session() as session:
         count = (
@@ -190,7 +190,7 @@ async def test_exercise_available_sms_on_publish_and_dedupe(
                 )
             )
         ).scalar_one()
-        assert count == 2
+        assert count == 4
 
 
 @pytest.mark.asyncio

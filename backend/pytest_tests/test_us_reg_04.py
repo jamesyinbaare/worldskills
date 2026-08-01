@@ -70,7 +70,13 @@ async def _seed_reg(
 ) -> dict[str, uuid.UUID]:
     region_id = await region_id_by_name(session_manager, "Greater Accra")
     async with session_manager.session() as session:
-        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        age = AgeRule(
+            competition_id=competition_id,
+            name="U25",
+            max_age=25,
+            reference_date=date(2026, 1, 1),
+            open_category_enabled=False,
+        )
         path = Pathway(competition_id=competition_id, name="National")
         scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([age, path, scheme])
@@ -161,7 +167,15 @@ def _payload(ctx: dict[str, uuid.UUID], **overrides: object) -> dict:
         "dateOfBirth": "2005-03-15",
         "email": f"ama-{uuid.uuid4().hex[:6]}@example.com",
         "mobile": "+233241234567",
+        "whatsapp": "+233241234567",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        "idDocumentKind": "GHANA_CARD",
+        "affiliationType": "school",
+        "organizationPhone": "+233302123456",
+        "organizationEmail": "school@example.com",
+        "heardAbout": "FRIEND",
+        "guardianName": "Kofi Mensah",
+        "guardianPhone": "+233241000111",
         "hasPassport": False,
         "institutionId": str(ctx["institution_id"]),
         "skillIds": [str(ctx["skill_id"])],
@@ -307,6 +321,7 @@ async def test_US_REG_04_AC3_competitor_without_school(
             ctx,
             institutionId=None,
             regionId=str(ctx["region_id"]),
+            organizationName="Independent Competitor School",
         ),
         headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
     )
@@ -322,6 +337,7 @@ async def test_US_REG_04_AC3_competitor_without_school(
         assert row.user_id == user.id
         assert row.institution_id is None
         assert row.region_id == ctx["region_id"]
+        assert row.organization_name == "Independent Competitor School"
 
 
 @pytest.mark.asyncio
@@ -337,11 +353,13 @@ async def test_US_REG_04_AC4_competitor_no_school_no_region(
 
     resp = await client.post(
         f"/competitions/{competition_id}/registrations",
-        json=_payload(ctx, institutionId=None),
+        json=_payload(ctx, institutionId=None, organizationName="Unlisted SHS"),
         headers=comp,
     )
     assert resp.status_code == 422
-    assert resp.json()["error"]["code"] == "REGION_REQUIRED"
+    body = resp.json()["error"]
+    assert body["code"] == "VALIDATION_ERROR"
+    assert any(f["name"] == "regionId" for f in body["fields"])
 
 
 @pytest.mark.asyncio

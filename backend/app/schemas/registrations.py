@@ -21,6 +21,9 @@ class RegistrationFormOut(BaseModel):
     photoFormats: list[str]
     readOnly: bool
     window: dict[str, str] | None = None
+    # Used by clients for display; guardian consent is not enforced from age.
+    minorAgeUnder: int | None = None
+    minorReferenceDate: date | None = None
 
 
 class PhotoIn(BaseModel):
@@ -71,10 +74,18 @@ class RegistrationCreate(BaseModel):
     mobile: str | None = None
     whatsapp: str | None = None
     nationalId: str | None = None
+    idDocumentKind: str | None = None
+    otherIdType: str | None = None
     nationality: str | None = None
     hasPassport: bool | None = None
     passportNumber: str | None = None
     passportExpiresOn: date | None = None
+    affiliationType: str | None = None
+    organizationName: str | None = None
+    organizationCity: str | None = None
+    organizationPhone: str | None = None
+    organizationEmail: str | None = None
+    heardAbout: str | None = None
     institutionId: UUID | None = None
     regionId: UUID | None = None
     zoneId: UUID | None = None  # rejected — zone is derived from region
@@ -107,10 +118,18 @@ class RegistrationDraftIn(BaseModel):
     mobile: str | None = None
     whatsapp: str | None = None
     nationalId: str | None = None
+    idDocumentKind: str | None = None
+    otherIdType: str | None = None
     nationality: str | None = None
     hasPassport: bool | None = None
     passportNumber: str | None = None
     passportExpiresOn: date | None = None
+    affiliationType: str | None = None
+    organizationName: str | None = None
+    organizationCity: str | None = None
+    organizationPhone: str | None = None
+    organizationEmail: str | None = None
+    heardAbout: str | None = None
     institutionId: UUID | None = None
     regionId: UUID | None = None
     zoneId: UUID | None = None
@@ -138,10 +157,18 @@ class RegistrationDraftOut(BaseModel):
     mobile: str | None = None
     whatsapp: str | None = None
     nationalId: str | None = None
+    idDocumentKind: str | None = None
+    otherIdType: str | None = None
     nationality: str | None = None
     hasPassport: bool | None = None
     passportNumber: str | None = None
     passportExpiresOn: date | None = None
+    affiliationType: str | None = None
+    organizationName: str | None = None
+    organizationCity: str | None = None
+    organizationPhone: str | None = None
+    organizationEmail: str | None = None
+    heardAbout: str | None = None
     institutionId: UUID | None = None
     regionId: UUID | None = None
     skillIds: list[UUID] = Field(default_factory=list)

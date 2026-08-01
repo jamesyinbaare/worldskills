@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # Nalo SMS (competitors / coaches)
     sms_enabled: bool = False
     nalo_sms_key: str = ""
-    nalo_sms_sender_id: str = "WorldSkills"
+    nalo_sms_sender_id: str = "WSkillsGH"
     nalo_sms_url: str = "https://sms.nalosolutions.com/smsbackend/Resl_Nalo/send-message/"
 
 

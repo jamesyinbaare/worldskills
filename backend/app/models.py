@@ -355,6 +355,8 @@ class Competitor(Base):
     mobile = Column(String(32), nullable=True)
     whatsapp = Column(String(32), nullable=True)
     national_id = Column(String(64), nullable=True, index=True)
+    id_document_kind = Column(String(32), nullable=True)  # GHANA_CARD | OTHER
+    other_id_type = Column(String(64), nullable=True)  # Passport | Driver's License | Student ID
     has_passport = Column(Boolean, default=False, nullable=False)
     passport_number = Column(String(64), nullable=True)
     passport_expires_on = Column(Date, nullable=True)
@@ -363,6 +365,13 @@ class Competitor(Base):
     flags = Column(JSON, nullable=False, default=list)
     registration_payload = Column(JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    # Affiliation (school / company / workshop)
+    affiliation_type = Column(String(32), nullable=True)  # school | company | workshop
+    organization_name = Column(String(200), nullable=True)
+    organization_city = Column(String(120), nullable=True)
+    organization_phone = Column(String(32), nullable=True)
+    organization_email = Column(String(255), nullable=True)
+    heard_about = Column(String(32), nullable=True)
     # Guardian consent (US-REG-02) — privacy by default for minors
     guardian_name = Column(String(200), nullable=True)
     guardian_email = Column(String(255), nullable=True)

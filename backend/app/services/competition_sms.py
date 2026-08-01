@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.services.sms.delivery_log import (
     MESSAGE_TYPE_EXERCISE_AVAILABLE,
+    MESSAGE_TYPE_REGISTRATION_CONFIRMATION,
     MESSAGE_TYPE_SKILL_BROADCAST,
     MESSAGE_TYPE_SUBMISSION_RECEIVED,
     RECIPIENT_COACH,
@@ -47,15 +48,15 @@ _ELIGIBLE_STATUSES = {
 
 SKILL_SMS_TEMPLATES: dict[str, str] = {
     "exercise_reminder": (
-        "WorldSkills GH: Reminder for {{competitorName}} — {{skillName}} exercise details "
+        "Reminder for {{competitorName}} — {{skillName}} exercise details "
         "are in the competitor portal. {{portalUrl}}"
     ),
     "schedule_update": (
-        "WorldSkills GH: Schedule update for {{skillName}}"
+        "Schedule update for {{skillName}}"
         "{{zoneLabel}}. Check the portal for details. {{portalUrl}}"
     ),
     "general_notice": (
-        "WorldSkills GH: Notice for {{skillName}} competitors"
+        "Notice for {{skillName}} competitors"
         "{{zoneLabel}}. {{customNote}} {{portalUrl}}"
     ),
 }
@@ -108,12 +109,12 @@ def _portal_url(competition_id: uuid.UUID, stage_id: uuid.UUID) -> str:
 def _exercise_available_message(context: dict[str, Any], *, for_coach: bool) -> str:
     if for_coach:
         template = (
-            "WorldSkills GH: Exercise for {{competitorName}} ({{skillName}} / {{stageName}}) "
+            "Exercise for {{competitorName}} ({{skillName}} / {{stageName}}) "
             "is now available. Portal: {{portalUrl}}"
         )
     else:
         template = (
-            "WorldSkills GH: {{skillName}} — {{stageName}} exercise is available. "
+            "{{skillName}} — {{stageName}} exercise is available. "
             "Submit via {{portalUrl}}"
         )
     return _render(template, context)
@@ -122,15 +123,80 @@ def _exercise_available_message(context: dict[str, Any], *, for_coach: bool) -> 
 def _submission_received_message(context: dict[str, Any], *, for_coach: bool) -> str:
     if for_coach:
         template = (
-            "WorldSkills GH: {{competitorName}} submitted {{skillName}} / {{stageName}}. "
+            "{{competitorName}} submitted {{skillName}} / {{stageName}}. "
             "Receipt {{receipt}} ({{state}})."
         )
     else:
         template = (
-            "WorldSkills GH: Submission received for {{skillName}} / {{stageName}}. "
+            "Submission received for {{skillName}} / {{stageName}}. "
             "Receipt {{receipt}} ({{state}})."
         )
     return _render(template, context)
+
+
+def _registration_confirmation_message(context: dict[str, Any]) -> str:
+    template = (
+        "Registration received for {{competitionName}}. "
+        "Ref {{competitorRef}}."
+    )
+    return _render(template, context)
+
+
+async def notify_registration_received(
+    session: AsyncSession,
+    *,
+    competitor: Competitor,
+    competition_id: uuid.UUID,
+    competitor_ref: str,
+    trigger: str = "registration_create",
+    commit: bool = False,
+) -> NotifySummary:
+    """Send REGISTRATION_CONFIRMATION SMS to the competitor (best-effort)."""
+    summary = NotifySummary()
+    competition = await session.get(Competition, competition_id)
+    if competition is None:
+        return summary
+
+    summary.competitors_considered = 1
+    context = {
+        "competitionName": competition.name,
+        "competitorName": _competitor_display_name(competitor),
+        "competitorRef": competitor_ref,
+        "status": competitor.status or "",
+    }
+
+    dedupe = f"REGISTRATION_CONFIRMATION:{competitor.id}"
+    message = _registration_confirmation_message(context)
+    result, _ = await send_and_log_sms(
+        session,
+        phone=_competitor_phone(competitor),
+        message=message,
+        message_type=MESSAGE_TYPE_REGISTRATION_CONFIRMATION,
+        trigger=trigger,
+        recipient_role=RECIPIENT_COMPETITOR,
+        competitor_id=competitor.id,
+        user_id=competitor.user_id,
+        competition_id=competition_id,
+        dedupe_key=dedupe,
+    )
+    if result.sent and result.error != "deduped":
+        summary.competitor_sent += 1
+        await _enqueue_outbox(
+            session,
+            event_key=MESSAGE_TYPE_REGISTRATION_CONFIRMATION,
+            competition_id=competition_id,
+            recipient_role="COMPETITOR",
+            recipient_id=competitor.id,
+            body=message,
+            dedupe_key=dedupe,
+            payload=context,
+        )
+    elif not result.sent:
+        summary.failed += 1
+
+    if commit:
+        await session.commit()
+    return summary
 
 
 def is_stage_window_open(stage: Stage, *, now: datetime | None = None) -> bool:
@@ -203,8 +269,8 @@ async def notify_exercise_available(
     """Fan-out EXERCISE_AVAILABLE SMS to eligible competitors and coaches.
 
     Only sends when exercise is PUBLISHED and the stage window is open.
-    Dedupes per competitor/coach unless force=True (still skips successful dedupe keys
-    unless force; force clears availability_notified_at gate only for stage-level skip).
+    Automatic sends (force=False) skip when availability_notified_at is set and
+    dedupe per competitor/coach. Admin notify (force=True) always re-sends.
     """
     summary = NotifySummary()
     loaded = await _load_stage_context(session, competition_id, stage_id)
@@ -253,6 +319,7 @@ async def notify_exercise_available(
     }
 
     actor_id = actor.id if actor else None
+    # Stable keys for auto-send; omit on force so admins can notify again.
     for competitor in competitors:
         context = {
             **context_base,
@@ -260,7 +327,11 @@ async def notify_exercise_available(
             "coachName": _coach_name(competitor),
         }
         # Competitor
-        c_dedupe = f"EXERCISE_AVAILABLE:{competitor.id}:{stage_id}:competitor"
+        c_dedupe = (
+            None
+            if force
+            else f"EXERCISE_AVAILABLE:{competitor.id}:{stage_id}:competitor"
+        )
         c_msg = _exercise_available_message(context, for_coach=False)
         c_result, _ = await send_and_log_sms(
             session,
@@ -293,7 +364,9 @@ async def notify_exercise_available(
 
         # Coach
         coach_phone = _coach_phone(competitor)
-        k_dedupe = f"EXERCISE_AVAILABLE:{competitor.id}:{stage_id}:coach"
+        k_dedupe = (
+            None if force else f"EXERCISE_AVAILABLE:{competitor.id}:{stage_id}:coach"
+        )
         k_msg = _exercise_available_message(context, for_coach=True)
         k_result, _ = await send_and_log_sms(
             session,

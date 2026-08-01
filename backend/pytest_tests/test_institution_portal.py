@@ -56,7 +56,13 @@ async def _seed(
 ) -> dict[str, uuid.UUID | str]:
     region_id = await region_id_by_name(session_manager, "Greater Accra")
     async with session_manager.session() as session:
-        age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
+        age = AgeRule(
+            competition_id=competition_id,
+            name="U25",
+            max_age=25,
+            reference_date=date(2026, 1, 1),
+            open_category_enabled=False,
+        )
         path = Pathway(competition_id=competition_id, name="National")
         scheme = MarkingScheme(competition_id=competition_id, name="CIS")
         session.add_all([age, path, scheme])
@@ -149,7 +155,15 @@ def _payload(ctx: dict[str, uuid.UUID | str], **overrides: object) -> dict:
         "dateOfBirth": "2005-03-15",
         "email": f"ama-{uuid.uuid4().hex[:6]}@example.com",
         "mobile": "+233241234567",
+        "whatsapp": "+233241234567",
         "nationalId": f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        "idDocumentKind": "GHANA_CARD",
+        "affiliationType": "school",
+        "organizationPhone": "+233302123456",
+        "organizationEmail": "school@example.com",
+        "heardAbout": "Newspaper",
+        "guardianName": "Kofi Mensah",
+        "guardianPhone": "+233241000111",
         "skillIds": [str(ctx["skill_id"])],
         "coach": {
             "surname": "Asante",

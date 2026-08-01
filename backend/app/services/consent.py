@@ -118,28 +118,13 @@ async def apply_minor_gate_on_registration(
     guardian_email: str | None,
     guardian_phone: str | None,
 ) -> ConsentRequest | None:
-    """Flag minors for guardian consent without blocking progression."""
-    if not is_minor(
-        competitor.date_of_birth,
-        minor_age_under=form.minor_age_under,
-        reference_date=form.minor_reference_date,
-    ):
-        return None
+    """No-op: guardian details are informational; consent is not enforced.
 
-    # Privacy by default — public stays off
-    competitor.public_profile_visible = False
-    flags = _flag_list(competitor)
-    if "CONSENT_PENDING" not in flags:
-        flags.append("CONSENT_PENDING")
-    _set_flags(competitor, flags)
-    # Keep registration status (e.g. PENDING_REVIEW); consent is not a progression gate.
-
-    if guardian_name and guardian_email:
-        competitor.guardian_name = guardian_name.strip()
-        competitor.guardian_email = guardian_email.strip()
-        competitor.guardian_phone = guardian_phone.strip() if guardian_phone else None
-        return await _create_consent_request(session, competitor)
-
+    Kept for call-site compatibility. Does not set CONSENT_PENDING or create
+    consent requests. Guardian fields are persisted on the competitor record
+    during registration create/update.
+    """
+    _ = (session, competitor, form, guardian_name, guardian_email, guardian_phone)
     return None
 
 
@@ -205,11 +190,6 @@ async def create_consent_request(
     competitor.guardian_name = payload.guardianName.strip()
     competitor.guardian_email = payload.guardianEmail.strip()
     competitor.guardian_phone = payload.guardianPhone.strip() if payload.guardianPhone else None
-
-    flags = _flag_list(competitor)
-    if "CONSENT_PENDING" not in flags:
-        flags.append("CONSENT_PENDING")
-    _set_flags(competitor, flags)
 
     req = await _create_consent_request(session, competitor)
     await write_audit_event(
@@ -357,8 +337,8 @@ async def withdraw_consent(
     flags = _flag_list(competitor)
     if "CONSENT_WITHDRAWN" not in flags:
         flags.append("CONSENT_WITHDRAWN")
-    if "CONSENT_PENDING" not in flags:
-        flags.append("CONSENT_PENDING")
+    # Strip any legacy CONSENT_PENDING — consent is informational, not enforced.
+    flags = [f for f in flags if f != "CONSENT_PENDING"]
     _set_flags(competitor, flags)
     # Withdrawal clears consent evidence but does not block progression.
 
@@ -744,12 +724,8 @@ async def verify_consent_form(
     competitor.consent_verified_by = actor.id
     competitor.consent_verification_reason = reason if outcome == "REJECTED" else None
 
-    # Completing admin review of the signed form advances registration.
-    if outcome == "VERIFIED" and competitor.status in {
-        "PENDING_REVIEW",
-        "CONSENT_PENDING",
-    }:
-        competitor.status = "REGISTERED"
+    # Consent verification is informational — it does not advance registration status.
+    if outcome == "VERIFIED":
         flags = [f for f in _flag_list(competitor) if f != "CONSENT_PENDING"]
         _set_flags(competitor, flags)
 
