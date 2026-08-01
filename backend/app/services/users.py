@@ -700,6 +700,8 @@ async def change_password(
 
     user.hashed_password = get_password_hash(new_password)
     user.must_change_password = False
+    user.pending_password_hash = None
+    user.pending_password_expires_at = None
     await write_audit_event(
         session,
         action="USER_PASSWORD_CHANGED",
@@ -711,6 +713,152 @@ async def change_password(
         user_agent=user_agent,
     )
     await session.commit()
+
+
+_FORGOT_PASSWORD_OK_MESSAGE = "A temporary password was sent by SMS."
+
+
+def clear_pending_password(user: User) -> None:
+    user.pending_password_hash = None
+    user.pending_password_expires_at = None
+
+
+async def authenticate_user_password(
+    session: AsyncSession,
+    user: User,
+    plain_password: str,
+) -> bool:
+    """Verify current or pending reset password. Mutates user on success.
+
+    - Current password: clears any pending reset.
+    - Pending temp (unexpired): promotes to hashed_password, forces change,
+      revokes refresh tokens.
+    """
+    from app.core.security import verify_password
+
+    if user.hashed_password and verify_password(plain_password, user.hashed_password):
+        if user.pending_password_hash is not None:
+            clear_pending_password(user)
+        return True
+
+    pending = user.pending_password_hash
+    expires = user.pending_password_expires_at
+    if (
+        pending
+        and expires is not None
+        and expires > datetime.utcnow()
+        and verify_password(plain_password, pending)
+    ):
+        user.hashed_password = pending
+        clear_pending_password(user)
+        user.must_change_password = True
+        await _revoke_refresh_tokens(session, user.id)
+        return True
+
+    return False
+
+
+async def request_password_reset(
+    session: AsyncSession,
+    *,
+    email: str | None,
+    phone_number: str | None,
+    ip: str | None,
+    user_agent: str | None,
+) -> dict:
+    """Self-service reset: look up by email or phone, SMS a temporary password.
+
+    Always returns the same success payload (anti-enumeration). Stores a pending
+    temporary password (current password stays valid) when SMS can be sent.
+    """
+    email_raw = (email or "").strip().lower() or None
+    phone_raw = (phone_number or "").strip() or None
+    if bool(email_raw) == bool(phone_raw):
+        raise AppError(
+            "VALIDATION_ERROR",
+            "Provide either an email address or a phone number",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            fields=[FieldError("email", "REQUIRED"), FieldError("phoneNumber", "REQUIRED")],
+        )
+
+    user: User | None = None
+    if email_raw:
+        user = (
+            await session.execute(select(User).where(User.email == email_raw))
+        ).scalar_one_or_none()
+    else:
+        assert phone_raw is not None
+        if not is_valid_ghana_phone(phone_raw):
+            # Invalid format — do not leak; same generic response
+            return {"ok": True, "message": _FORGOT_PASSWORD_OK_MESSAGE}
+        local = to_local_ghana_phone(phone_raw)
+        target_msisdn = normalize_msisdn(local)
+        candidates = (
+            await session.execute(
+                select(User).where(User.phone_number.is_not(None))
+            )
+        ).scalars().all()
+        for candidate in candidates:
+            stored = (candidate.phone_number or "").strip()
+            if not stored:
+                continue
+            try:
+                if normalize_msisdn(stored) == target_msisdn:
+                    user = candidate
+                    break
+            except ValueError:
+                continue
+
+    if (
+        user is None
+        or not user.is_active
+        or not settings.sms_enabled
+        or not (user.phone_number or "").strip()
+    ):
+        return {"ok": True, "message": _FORGOT_PASSWORD_OK_MESSAGE}
+
+    phone_for_sms = require_ghana_phone(user.phone_number)
+    temp = generate_temporary_password()
+    validate_password_policy(temp)
+
+    ttl = max(1, settings.password_reset_pending_ttl_minutes)
+    user.pending_password_hash = get_password_hash(temp)
+    user.pending_password_expires_at = datetime.utcnow() + timedelta(minutes=ttl)
+    user.phone_number = phone_for_sms
+
+    message = (
+        f"Your WorldSkills temporary password is: {temp}. "
+        "Sign in with it to replace your current password, then change it when prompted."
+    )
+    result, _ = await send_and_log_sms(
+        session,
+        phone=phone_for_sms,
+        message=message,
+        message_type=MESSAGE_TYPE_PASSWORD_RESET,
+        trigger="self_service_forgot_password",
+        recipient_role=RECIPIENT_USER,
+        user_id=user.id,
+        triggered_by_user_id=None,
+    )
+
+    if not result.sent:
+        # Do not leave an undelivered pending temporary password.
+        await session.rollback()
+        return {"ok": True, "message": _FORGOT_PASSWORD_OK_MESSAGE}
+
+    await write_audit_event(
+        session,
+        action="USER_PASSWORD_RESET_REQUESTED",
+        entity_type="User",
+        entity_id=str(user.id),
+        actor_id=user.id,
+        actor_role=user.role.value,
+        after={"channel": "SMS", "lookup": "email" if email_raw else "phone"},
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    return {"ok": True, "message": _FORGOT_PASSWORD_OK_MESSAGE}
 
 
 async def list_institutions(session: AsyncSession) -> list[dict]:

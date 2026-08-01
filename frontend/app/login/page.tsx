@@ -156,6 +156,14 @@ function LoginContent() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <p className="text-sm">
+                  <Link
+                    href="/forgot-password"
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    Forgot password?
+                  </Link>
+                </p>
               </div>
               <ApiErrorAlert error={error} title="Sign-in failed" />
               <Button

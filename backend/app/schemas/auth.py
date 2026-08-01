@@ -76,3 +76,18 @@ class ChangePasswordRequest(BaseModel):
     new_password_confirm: str = Field(alias="newPasswordConfirm")
 
     model_config = {"populate_by_name": True}
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Provide exactly one of email or phoneNumber."""
+
+    email: str | None = None
+    phone_number: str | None = Field(default=None, alias="phoneNumber")
+    captcha_token: str | None = Field(default=None, alias="captchaToken")
+
+    model_config = {"populate_by_name": True}
+
+
+class ForgotPasswordResponse(BaseModel):
+    ok: bool = True
+    message: str

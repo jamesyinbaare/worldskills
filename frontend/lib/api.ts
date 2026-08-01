@@ -3205,6 +3205,27 @@ export async function changePassword(payload: {
   });
 }
 
+export type ForgotPasswordResponse = {
+  ok: boolean;
+  message: string;
+};
+
+export async function forgotPassword(payload: {
+  email?: string;
+  phoneNumber?: string;
+  captchaToken?: string | null;
+}): Promise<ForgotPasswordResponse> {
+  return apiFetch<ForgotPasswordResponse>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({
+      email: payload.email,
+      phoneNumber: payload.phoneNumber,
+      captchaToken: payload.captchaToken ?? "ok",
+    }),
+    skipAuthRetry: true,
+  });
+}
+
 export async function listUsers(params?: {
   role?: string;
   active?: boolean;

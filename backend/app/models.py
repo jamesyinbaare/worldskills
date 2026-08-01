@@ -89,6 +89,8 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True)
     must_change_password = Column(Boolean, default=False, nullable=False)
+    pending_password_hash = Column(String(255), nullable=True)
+    pending_password_expires_at = Column(DateTime, nullable=True)
     invite_token_hash = Column(String(255), nullable=True)
     invite_expires_at = Column(DateTime, nullable=True)
     created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

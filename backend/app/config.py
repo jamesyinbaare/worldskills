@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     invite_token_expire_hours: int = 72
     password_min_length: int = 8
     temporary_password_length: int = 8
+    password_reset_pending_ttl_minutes: int = 60
 
     # Nalo SMS (competitors / coaches)
     sms_enabled: bool = False
