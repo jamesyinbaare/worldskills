@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { MessageCircle, Phone } from "lucide-react";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
 import { HomeOpenCompetitions } from "@/components/competitions/HomeOpenCompetitions";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,15 @@ const journeySteps = [
     title: "Excel",
     description: "Shortlisting and results with fairness",
   },
+] as const;
+
+const contactTeam = [
+  { name: "Eunice", e164: "233596874163", display: "+233 59 687 4163" },
+  { name: "Mayer", e164: "233263145572", display: "+233 26 314 5572" },
+  { name: "Bestina", e164: "233599252548", display: "+233 59 925 2548" },
+  { name: "Beatrice", e164: "233598105441", display: "+233 59 810 5441" },
+  { name: "Sylvester", e164: "233204681951", display: "+233 20 468 1951" },
+  { name: "Frank", e164: "233509655330", display: "+233 50 965 5330" },
 ] as const;
 
 export default function Home() {
@@ -172,7 +182,87 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <section
+        id="contact"
+        className="relative overflow-hidden border-t border-border bg-[linear-gradient(180deg,#f8fafb_0%,#eef3f7_100%)] px-4 py-20 sm:px-6 sm:py-24 lg:py-28"
+      >
+        <div className="pointer-events-none absolute inset-0" aria-hidden>
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_45%_at_100%_0%,rgba(0,55,100,0.06),transparent_55%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_45%_40%_at_0%_100%,rgba(0,133,63,0.07),transparent_50%)]" />
+        </div>
+
+        <div className="relative mx-auto max-w-6xl">
+          <header className="animate-journey-step mx-auto max-w-2xl space-y-4 text-center">
+            <p className="text-xs font-semibold tracking-[0.18em] text-brand-blue/70 uppercase">
+              Support
+            </p>
+            <h2 className="text-3xl font-bold tracking-tight text-brand-blue sm:text-4xl lg:text-5xl">
+              For more information
+            </h2>
+            <p className="mx-auto max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
+              Reach the WorldSkills Ghana team directly by call or WhatsApp.
+            </p>
+          </header>
+
+          <div
+            className="animate-journey-step mx-auto mt-10 h-px max-w-md bg-linear-to-r from-transparent via-brand-blue/25 to-transparent sm:mt-12"
+            style={{ animationDelay: "0.1s" }}
+            aria-hidden
+          />
+
+          <ul className="mx-auto mt-10 max-w-3xl divide-y divide-brand-blue/10 rounded-2xl border border-brand-blue/10 bg-white/90 px-4 sm:mt-12 sm:px-6">
+            {contactTeam.map((person, index) => (
+              <li
+                key={person.e164}
+                className="animate-journey-step flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:py-6"
+                style={{ animationDelay: `${0.12 + 0.07 * index}s` }}
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <span
+                    className="flex size-12 shrink-0 items-center justify-center rounded-full bg-brand-blue/8 text-base font-bold tracking-tight text-brand-blue ring-1 ring-brand-blue/15"
+                    aria-hidden
+                  >
+                    {person.name.slice(0, 1)}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-lg font-bold tracking-tight text-brand-blue sm:text-xl">
+                      {person.name}
+                    </p>
+                    <a
+                      href={`tel:+${person.e164}`}
+                      className="mt-0.5 inline-block font-mono text-sm tracking-wide text-muted-foreground transition-colors hover:text-brand-blue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-offset-2"
+                    >
+                      {person.display}
+                    </a>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:gap-2.5">
+                  <a
+                    href={`tel:+${person.e164}`}
+                    aria-label={`Call ${person.name}`}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-brand-blue/20 bg-white px-4 text-sm font-semibold text-brand-blue transition-colors hover:border-brand-blue/40 hover:bg-brand-blue/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue focus-visible:ring-offset-2"
+                  >
+                    <Phone className="size-4 opacity-90" aria-hidden />
+                    Call
+                  </a>
+                  <a
+                    href={`https://wa.me/${person.e164}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`WhatsApp ${person.name}`}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand-green px-4 text-sm font-semibold text-white transition-colors hover:bg-[#06964a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-green focus-visible:ring-offset-2"
+                  >
+                    <MessageCircle className="size-4 opacity-95" aria-hidden />
+                    WhatsApp
+                  </a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
     </>
   );
 }
-

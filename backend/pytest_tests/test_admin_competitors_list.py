@@ -166,3 +166,39 @@ async def test_admin_list_competitors(
         headers=auth_headers,
     )
     assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_list_competitors_skips_drafts_with_null_ref(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    """Draft competitors (null ref_no) must not 500 the admin roster."""
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_competitors(session_manager, competition_id)
+
+    async with session_manager.session() as session:
+        session.add(
+            Competitor(
+                competition_id=competition_id,
+                skill_id=ctx["skill_web_id"],
+                ref_no=None,
+                status="DRAFT",
+                given_names="Drafty",
+                family_name="Applicant",
+                flags=[],
+            )
+        )
+        await session.commit()
+
+    listed = await client.get(
+        f"/competitions/{competition_id}/competitors",
+        params={"skillId": str(ctx["skill_web_id"])},
+        headers=auth_headers,
+    )
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()
+    assert len(rows) == 1
+    assert rows[0]["competitorId"] == str(ctx["competitor_a_id"])
+    assert all(r.get("status") != "DRAFT" for r in rows)

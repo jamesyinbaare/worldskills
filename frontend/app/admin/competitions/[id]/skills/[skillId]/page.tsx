@@ -108,7 +108,7 @@ const SMS_TEMPLATES: {
 
 function displayName(row: AdminCompetitorItem): string {
   const name = [row.givenNames, row.familyName].filter(Boolean).join(" ").trim();
-  return name || row.refNo;
+  return name || row.refNo || "Competitor";
 }
 
 export default function CycleSkillDetailPage() {
@@ -312,7 +312,7 @@ export default function CycleSkillDetailPage() {
               {row.original.displayName}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
-              {row.original.refNo}
+              {row.original.refNo || "—"}
             </p>
           </div>
         ),

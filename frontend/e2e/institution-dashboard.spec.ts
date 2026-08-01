@@ -39,7 +39,7 @@ async function mockInstitutionDashboardApis(page: Page): Promise<void> {
       await fulfillJson(route, 200, [
         {
           competitorId: COMPETITOR_ID,
-          competitorRef: "WSG-2026-ABC12345",
+          competitorRef: "WSGH-2026-ABC12345",
           competitionId: COMPETITION_ID,
           competitionName: "National Skills 2026",
           competitionStatus: "ACTIVE",
@@ -247,7 +247,7 @@ test.describe("institution dashboard", () => {
     ).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("National Skills 2026")).toBeVisible();
     await expect(page.getByTestId("lifecycle-competitor-ref")).toContainText(
-      "WSG-2026-ABC12345",
+      "WSGH-2026-ABC12345",
     );
   });
 });

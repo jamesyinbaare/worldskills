@@ -180,7 +180,7 @@ async def test_registration_draft_upsert_get_and_submit(
     out = submit.json()
     assert out["competitorId"] == draft_id
     assert out["status"] == "PENDING_REVIEW"
-    assert out["competitorRef"].startswith("WSG-")
+    assert out["competitorRef"].startswith("WSGH-")
 
     async with session_manager.session() as session:
         count = (
