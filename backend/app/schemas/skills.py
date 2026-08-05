@@ -125,3 +125,6 @@ class AvailableSkillOut(BaseModel):
     active: bool = True
     hasCriteriaDocument: bool = False
     criteriaFileName: str | None = None
+    maxAge: int | None = None
+    referenceDate: date | None = None
+    openCategoryEnabled: bool = False

@@ -40,6 +40,8 @@ class CompetitionOut(BaseModel):
     timeZone: str | None = None
     languages: list[str] | None = None
     description: str | None = None
+    hasGeneralCriteriaDocument: bool = False
+    generalCriteriaFileName: str | None = None
 
 
 class CompetitionListItem(BaseModel):
@@ -76,6 +78,8 @@ class PublicCompetitionOut(BaseModel):
     period: PeriodIn
     timeZone: str
     window: dict[str, str] | None = None
+    hasGeneralCriteriaDocument: bool = False
+    generalCriteriaFileName: str | None = None
     skills: list[PublicSkillOut] = Field(default_factory=list)
 
 

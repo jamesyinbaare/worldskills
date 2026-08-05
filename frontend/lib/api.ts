@@ -350,6 +350,8 @@ export type CompetitionOut = {
   timeZone?: string | null;
   languages?: string[] | null;
   description?: string | null;
+  hasGeneralCriteriaDocument?: boolean;
+  generalCriteriaFileName?: string | null;
 };
 
 export type ValidateOut = {
@@ -995,6 +997,50 @@ export async function downloadPublicSkillCriteriaDocument(
   };
 }
 
+export async function uploadGeneralCriteriaDocument(
+  competitionId: string,
+  file: File,
+): Promise<CompetitionOut> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<CompetitionOut>(
+    `/competitions/${competitionId}/general-criteria-document`,
+    { method: "POST", body },
+  );
+}
+
+export async function deleteGeneralCriteriaDocument(
+  competitionId: string,
+): Promise<CompetitionOut> {
+  return apiFetch<CompetitionOut>(
+    `/competitions/${competitionId}/general-criteria-document`,
+    { method: "DELETE" },
+  );
+}
+
+export async function downloadGeneralCriteriaDocument(
+  competitionId: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const { blob, filename } = await apiFetchBlob(
+    `/competitions/${competitionId}/general-criteria-document`,
+  );
+  return { blob, filename: filename || "general-criteria" };
+}
+
+export async function downloadPublicGeneralCriteriaDocument(
+  competitionId: string,
+): Promise<{ blob: Blob; filename: string; contentType: string | null }> {
+  const { blob, filename, contentType } = await apiFetchBlob(
+    `/competitions/${competitionId}/public/general-criteria-document`,
+    { skipAuthRetry: true },
+  );
+  return {
+    blob,
+    filename: filename || "general-criteria",
+    contentType,
+  };
+}
+
 export async function uploadMarkingSchemeDocument(
   competitionId: string,
   schemeId: string,
@@ -1119,7 +1165,7 @@ export type RegistrationPhotoIn = {
   contentType: string;
 };
 
-export type AffiliationType = "school" | "company" | "workshop";
+export type AffiliationType = "school" | "company" | "workshop" | "none";
 export type IdDocumentKind = "GHANA_CARD" | "OTHER";
 export type OtherIdType = "Passport" | "Driver's License" | "Student ID";
 export type HeardAbout =
@@ -1310,6 +1356,8 @@ export type PublicCompetitionOut = {
   period: { start: string; end: string };
   timeZone: string;
   window?: { opensAt: string; closesAt: string } | null;
+  hasGeneralCriteriaDocument?: boolean;
+  generalCriteriaFileName?: string | null;
   skills: PublicSkillOut[];
 };
 
@@ -1322,6 +1370,9 @@ export type AvailableSkillOut = {
   active: boolean;
   hasCriteriaDocument?: boolean;
   criteriaFileName?: string | null;
+  maxAge?: number | null;
+  referenceDate?: string | null;
+  openCategoryEnabled?: boolean;
 };
 
 export type InstitutionLookupOut = {

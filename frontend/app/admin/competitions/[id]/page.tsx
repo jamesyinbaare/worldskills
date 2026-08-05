@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronRightIcon } from "lucide-react";
-import { ApiError, CompetitionOut, ValidateOut, apiFetch, updateCompetitionPublicProfile } from "@/lib/api";
+import { ApiError, CompetitionOut, ValidateOut, apiFetch, deleteGeneralCriteriaDocument, downloadGeneralCriteriaDocument, triggerBrowserDownload, updateCompetitionPublicProfile, uploadGeneralCriteriaDocument } from "@/lib/api";
 import { RegistrationConfigCard } from "@/components/admin/RegistrationConfigCard";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -123,21 +123,26 @@ function ModuleNavSection({
 
 function PublicProfilePanel({
   competitionId,
-  description,
+  cycle,
   onSaved,
 }: {
   competitionId: string;
-  description: string | null | undefined;
+  cycle: CompetitionOut;
   onSaved: (cycle: CompetitionOut) => void;
 }) {
-  const [text, setText] = useState(description ?? "");
+  const [text, setText] = useState(cycle.description ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const criteriaInputRef = useRef<HTMLInputElement>(null);
+  const [criteriaPending, setCriteriaPending] = useState(false);
+  const [criteriaError, setCriteriaError] = useState<ApiError | null>(null);
+  const [criteriaMessage, setCriteriaMessage] = useState<string | null>(null);
+
   useEffect(() => {
-    setText(description ?? "");
-  }, [description]);
+    setText(cycle.description ?? "");
+  }, [cycle.description]);
 
   async function onSave(e: FormEvent) {
     e.preventDefault();
@@ -171,43 +176,172 @@ function PublicProfilePanel({
   }
 
   return (
-    <div className="admin-panel space-y-6 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:p-7">
-      <div>
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">
-          Public profile
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          About text shown on the public competition page.
-        </p>
-      </div>
-      <form onSubmit={onSave} className="space-y-4" noValidate>
-        <div className="space-y-2">
-          <Label htmlFor="publicDescription">About this competition</Label>
-          <Textarea
-            id="publicDescription"
-            className="min-h-40"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            maxLength={20000}
-            placeholder="Describe the competition for competitors and institutions…"
-            data-testid="cycle-public-description"
-          />
-        </div>
-        <ApiErrorAlert error={error} title="Could not save" />
-        {message ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            {message}
+    <div className="space-y-5">
+      <div className="admin-panel space-y-6 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:p-7">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
+            Public profile
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            About text shown on the public competition page.
           </p>
+        </div>
+        <form onSubmit={onSave} className="space-y-4" noValidate>
+          <div className="space-y-2">
+            <Label htmlFor="publicDescription">About this competition</Label>
+            <Textarea
+              id="publicDescription"
+              className="min-h-40"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              maxLength={20000}
+              placeholder="Describe the competition for competitors and institutions…"
+              data-testid="cycle-public-description"
+            />
+          </div>
+          <ApiErrorAlert error={error} title="Could not save" />
+          {message ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              {message}
+            </p>
+          ) : null}
+          <Button
+            type="submit"
+            disabled={pending}
+            className="min-h-11"
+            data-testid="cycle-public-description-save"
+          >
+            {pending ? "Saving…" : "Save public profile"}
+          </Button>
+        </form>
+      </div>
+
+      <div className="admin-panel space-y-5 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:p-7">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">
+            General criteria
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Optional competition-wide criteria document. Competitors can
+            download it alongside skill-area criteria.
+          </p>
+        </div>
+        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground">Document</dt>
+            <dd className="font-medium">
+              {cycle.generalCriteriaFileName ?? "None uploaded"}
+            </dd>
+          </div>
+        </dl>
+        <input
+          ref={criteriaInputRef}
+          type="file"
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            if (!file) return;
+            void (async () => {
+              setCriteriaPending(true);
+              setCriteriaError(null);
+              setCriteriaMessage(null);
+              try {
+                const updated = await uploadGeneralCriteriaDocument(
+                  competitionId,
+                  file,
+                );
+                onSaved(updated);
+                setCriteriaMessage("General criteria document uploaded.");
+              } catch (err) {
+                if (err instanceof ApiError) setCriteriaError(err);
+              } finally {
+                setCriteriaPending(false);
+                if (criteriaInputRef.current) {
+                  criteriaInputRef.current.value = "";
+                }
+              }
+            })();
+          }}
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={criteriaPending}
+            onClick={() => criteriaInputRef.current?.click()}
+            data-testid="general-criteria-upload"
+          >
+            {criteriaPending
+              ? "Working…"
+              : cycle.hasGeneralCriteriaDocument
+                ? "Replace document"
+                : "Upload document"}
+          </Button>
+          {cycle.hasGeneralCriteriaDocument ? (
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-11"
+                disabled={criteriaPending}
+                onClick={() => {
+                  void (async () => {
+                    setCriteriaPending(true);
+                    setCriteriaError(null);
+                    try {
+                      const { blob, filename } =
+                        await downloadGeneralCriteriaDocument(competitionId);
+                      triggerBrowserDownload(blob, filename);
+                    } catch (err) {
+                      if (err instanceof ApiError) setCriteriaError(err);
+                    } finally {
+                      setCriteriaPending(false);
+                    }
+                  })();
+                }}
+                data-testid="general-criteria-download"
+              >
+                Download
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={criteriaPending}
+                onClick={() => {
+                  void (async () => {
+                    setCriteriaPending(true);
+                    setCriteriaError(null);
+                    setCriteriaMessage(null);
+                    try {
+                      const updated =
+                        await deleteGeneralCriteriaDocument(competitionId);
+                      onSaved(updated);
+                      setCriteriaMessage("General criteria document removed.");
+                    } catch (err) {
+                      if (err instanceof ApiError) setCriteriaError(err);
+                    } finally {
+                      setCriteriaPending(false);
+                    }
+                  })();
+                }}
+                data-testid="general-criteria-remove"
+              >
+                Remove
+              </Button>
+            </>
+          ) : null}
+        </div>
+        <ApiErrorAlert error={criteriaError} title="General criteria" />
+        {criteriaMessage ? (
+          <Alert>
+            <AlertTitle>Updated</AlertTitle>
+            <AlertDescription>{criteriaMessage}</AlertDescription>
+          </Alert>
         ) : null}
-        <Button
-          type="submit"
-          disabled={pending}
-          className="min-h-11"
-          data-testid="cycle-public-description-save"
-        >
-          {pending ? "Saving…" : "Save public profile"}
-        </Button>
-      </form>
+      </div>
     </div>
   );
 }
@@ -676,7 +810,7 @@ function CompetitionWorkspacePageInner() {
         <TabsContent value="profile" className="outline-none">
           <PublicProfilePanel
             competitionId={competitionId}
-            description={cycle.description}
+            cycle={cycle}
             onSaved={setCycle}
           />
         </TabsContent>

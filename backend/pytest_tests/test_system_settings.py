@@ -130,7 +130,7 @@ async def test_activate_blocked_when_single_active_mode(
 
 
 @pytest.mark.asyncio
-async def test_registration_requires_coach_biodata(
+async def test_registration_coach_optional_but_incomplete_rejected(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
@@ -146,19 +146,29 @@ async def test_registration_requires_coach_biodata(
     ctx = await _seed_reg(session_manager, competition_id)
     comp = await _comp_headers(client, session_manager)
 
-    bad = _payload(ctx)
-    bad.pop("coach", None)
-    resp = await client.post(
+    incomplete = _payload(ctx, coach={"surname": "Asante"})
+    bad = await client.post(
         f"/competitions/{competition_id}/registrations",
-        json=bad,
+        json=incomplete,
         headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
     )
-    assert resp.status_code == 422, resp.text
-    assert any(f["name"].startswith("coach") for f in resp.json()["error"]["fields"])
+    assert bad.status_code == 422, bad.text
+    assert any(f["name"].startswith("coach") for f in bad.json()["error"]["fields"])
 
+    without_coach = _payload(ctx)
+    without_coach.pop("coach", None)
+    resp = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=without_coach,
+        headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
+    )
+    assert resp.status_code == 201, resp.text
+
+    # Second competitor account can still register with a full coach payload.
+    comp2 = await _comp_headers(client, session_manager)
     good = await client.post(
         f"/competitions/{competition_id}/registrations",
         json=_payload(ctx, coach=VALID_COACH),
-        headers={**comp, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
+        headers={**comp2, "Idempotency-Key": f"idem-{uuid.uuid4()}"},
     )
     assert good.status_code == 201, good.text

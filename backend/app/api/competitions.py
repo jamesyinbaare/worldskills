@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, File, Request, UploadFile, status
 from fastapi.responses import Response
 
-from app.dependencies.auth import AdminUserDep, client_meta
+from app.dependencies.auth import AdminUserDep, CurrentUserDep, client_meta
 from app.dependencies.database import DBSessionDep
 from app.schemas.competitions import (
     ActivateOut,
@@ -37,6 +37,10 @@ def _cycle_out(cycle) -> CompetitionOut:
         timeZone=cycle.time_zone,
         languages=list(cycle.languages or []),
         description=cycle.description,
+        hasGeneralCriteriaDocument=bool(
+            cycle.general_criteria_object_key and cycle.general_criteria_file_name
+        ),
+        generalCriteriaFileName=cycle.general_criteria_file_name,
     )
 
 
@@ -112,6 +116,85 @@ async def download_public_skill_criteria_document(
         content=data,
         media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/{competition_id}/public/general-criteria-document")
+async def download_public_general_criteria_document(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+) -> Response:
+    """Public general criteria download while registration is open (no auth)."""
+    data, filename, content_type = (
+        await competition_service.download_public_general_criteria_document(
+            session, competition_id
+        )
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/{competition_id}/general-criteria-document",
+    response_model=CompetitionOut,
+)
+async def upload_general_criteria_document(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    admin: AdminUserDep,
+    request: Request,
+    file: UploadFile = File(...),
+) -> CompetitionOut:
+    ip, ua = client_meta(request)
+    data = await file.read()
+    cycle = await competition_service.upload_general_criteria_document(
+        session,
+        competition_id,
+        actor=admin,
+        data=data,
+        filename=file.filename or "general-criteria.pdf",
+        content_type=file.content_type,
+        ip=ip,
+        user_agent=ua,
+    )
+    return _cycle_out(cycle)
+
+
+@router.delete(
+    "/{competition_id}/general-criteria-document",
+    response_model=CompetitionOut,
+)
+async def delete_general_criteria_document(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    admin: AdminUserDep,
+    request: Request,
+) -> CompetitionOut:
+    ip, ua = client_meta(request)
+    cycle = await competition_service.delete_general_criteria_document(
+        session, competition_id, actor=admin, ip=ip, user_agent=ua
+    )
+    return _cycle_out(cycle)
+
+
+@router.get("/{competition_id}/general-criteria-document")
+async def download_general_criteria_document(
+    competition_id: uuid.UUID,
+    session: DBSessionDep,
+    user: CurrentUserDep,
+) -> Response:
+    data, filename, content_type = (
+        await competition_service.download_general_criteria_document(
+            session, competition_id, actor=user
+        )
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

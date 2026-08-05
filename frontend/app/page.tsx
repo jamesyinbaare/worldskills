@@ -184,8 +184,8 @@ export default function Home() {
       </section>
 
       <section
-        id="contact"
-        className="relative overflow-hidden border-t border-border bg-[linear-gradient(180deg,#f8fafb_0%,#eef3f7_100%)] px-4 py-20 sm:px-6 sm:py-24 lg:py-28"
+        id="support"
+        className="relative scroll-mt-[var(--site-header-height)] overflow-hidden border-t border-border bg-[linear-gradient(180deg,#f8fafb_0%,#eef3f7_100%)] px-4 py-20 sm:px-6 sm:py-24 lg:py-28"
       >
         <div className="pointer-events-none absolute inset-0" aria-hidden>
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_55%_45%_at_100%_0%,rgba(0,55,100,0.06),transparent_55%)]" />

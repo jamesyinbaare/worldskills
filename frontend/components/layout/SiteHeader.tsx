@@ -41,12 +41,14 @@ export function SiteHeader() {
   const navItems: NavItem[] = [
     { href: "/", label: "Home" },
     { href: "/competitions", label: "Competitions" },
+    { href: "/#support", label: "Support" },
   ];
 
   const portalHref = signedIn ? homeForRole(me.role) : null;
   const portalText = signedIn ? portalLabel(me.role) : null;
 
   function isActive(href: string) {
+    if (href.startsWith("/#")) return false;
     if (href === "/") return pathname === "/";
     return pathname === href || pathname.startsWith(`${href}/`);
   }

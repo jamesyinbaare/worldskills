@@ -64,6 +64,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import {
+  findAgeIneligibilities,
+  formatIsoDateLong,
+  summarizeAgeEligibility,
+} from "@/lib/ageEligibility";
+import { AgeIneligibilityNotice } from "@/components/registration/AgeIneligibilityNotice";
+import { ReadyToSubmitNotice } from "@/components/registration/ReadyToSubmitNotice";
+import {
+  RegistrationReviewSummary,
+  type ReviewGroup,
+} from "@/components/registration/RegistrationReviewSummary";
 
 const DRAFT_VALUE_KEYS = [
   "givenNames",
@@ -506,13 +517,15 @@ export function CompetitionRegistrationForm({
             });
             setSchoolManualMode(false);
             setRegionId("");
+            setValues((prev) => ({ ...prev, affiliationType: "school" }));
           } else {
             setSchool(null);
             setRegionId(draft.regionId ? String(draft.regionId) : "");
-            const aff = String(draft.affiliationType ?? "school");
+            const aff = draft.affiliationType?.trim() || "none";
             setSchoolManualMode(
               aff === "school" && Boolean(draft.organizationName),
             );
+            setValues((prev) => ({ ...prev, affiliationType: aff }));
           }
 
           const draftSkills = (draft.skillIds ?? [])
@@ -655,7 +668,22 @@ export function CompetitionRegistrationForm({
 
   function affiliationType(): string {
     if (mode === "institution") return "school";
-    return values.affiliationType?.trim() || "school";
+    return values.affiliationType?.trim() || "";
+  }
+
+  function isUnaffiliated(): boolean {
+    return mode === "competitor" && affiliationType() === "none";
+  }
+
+  function coachHasAnyInput(): boolean {
+    return Boolean(
+      coach.surname.trim() ||
+        coach.firstName.trim() ||
+        coach.otherName.trim() ||
+        coach.contactNumber.trim() ||
+        coach.email.trim() ||
+        coach.dateOfBirth.trim(),
+    );
   }
 
   async function onPhotoChange(file: File | null) {
@@ -710,10 +738,20 @@ export function CompetitionRegistrationForm({
     }
 
     const aff = affiliationType();
-    payload.affiliationType = aff;
-    if (aff === "school" && school?.institutionId && mode !== "institution") {
+    if (isUnaffiliated()) {
+      payload.affiliationType = null;
       payload.organizationName = null;
       payload.organizationCity = null;
+      payload.organizationPhone = null;
+      payload.organizationEmail = null;
+      payload.institutionId = null;
+      payload.regionId = regionId || null;
+    } else {
+      payload.affiliationType = aff;
+      if (aff === "school" && school?.institutionId && mode !== "institution") {
+        payload.organizationName = null;
+        payload.organizationCity = null;
+      }
     }
 
     const phone = coach.contactNumber.trim();
@@ -741,14 +779,16 @@ export function CompetitionRegistrationForm({
       payload.affiliationType = "school";
       payload.organizationName = null;
       payload.organizationCity = null;
-    } else if (aff === "school" && school?.institutionId) {
-      payload.institutionId = school.institutionId;
-      payload.regionId = null;
-      payload.organizationName = null;
-      payload.organizationCity = null;
-    } else {
-      payload.institutionId = null;
-      payload.regionId = regionId || null;
+    } else if (!isUnaffiliated()) {
+      if (aff === "school" && school?.institutionId) {
+        payload.institutionId = school.institutionId;
+        payload.regionId = null;
+        payload.organizationName = null;
+        payload.organizationCity = null;
+      } else {
+        payload.institutionId = null;
+        payload.regionId = regionId || null;
+      }
     }
 
     if (photoFile) {
@@ -901,84 +941,100 @@ export function CompetitionRegistrationForm({
       }
       const aff = affiliationType();
       if (mode === "competitor" && !aff) {
-        nextErrors.affiliationType = "Select school, company, or workshop.";
+        nextErrors.affiliationType =
+          "Select school, company, workshop, or not affiliated.";
         nextReasons.affiliationType = "REQUIRED";
       }
-      const orgPhone = values.organizationPhone?.trim() ?? "";
-      if (!orgPhone) {
-        nextErrors.organizationPhone = "Enter the organisation phone number.";
-        nextReasons.organizationPhone = "REQUIRED";
-      } else if (!isValidPhone(orgPhone)) {
-        nextErrors.organizationPhone = GHANA_PHONE_HINT;
-        nextReasons.organizationPhone = "PHONE_INVALID";
-      }
-      if (!values.organizationEmail?.trim()) {
-        nextErrors.organizationEmail = "Enter the organisation email address.";
-        nextReasons.organizationEmail = "REQUIRED";
-      } else if (!isValidEmail(values.organizationEmail)) {
-        nextErrors.organizationEmail =
-          "Enter a valid organisation email address.";
-        nextReasons.organizationEmail = "EMAIL_INVALID";
-      }
-      if (mode === "competitor") {
-        if (aff === "school") {
-          if (!school?.institutionId && !schoolManualMode) {
-            nextErrors.institutionId =
-              "Search for your school, or choose “School not listed”.";
-            nextReasons.institutionId = "REQUIRED";
-          }
-          if (schoolManualMode) {
+      if (mode === "competitor" && aff === "none") {
+        if (!regionId) {
+          nextErrors.regionId = "Select your region.";
+          nextReasons.regionId = "REQUIRED";
+        }
+      } else if (mode === "institution" || (mode === "competitor" && aff)) {
+        const orgPhone = values.organizationPhone?.trim() ?? "";
+        if (!orgPhone) {
+          nextErrors.organizationPhone =
+            "Enter the organisation phone number.";
+          nextReasons.organizationPhone = "REQUIRED";
+        } else if (!isValidPhone(orgPhone)) {
+          nextErrors.organizationPhone = GHANA_PHONE_HINT;
+          nextReasons.organizationPhone = "PHONE_INVALID";
+        }
+        if (!values.organizationEmail?.trim()) {
+          nextErrors.organizationEmail =
+            "Enter the organisation email address.";
+          nextReasons.organizationEmail = "REQUIRED";
+        } else if (!isValidEmail(values.organizationEmail)) {
+          nextErrors.organizationEmail =
+            "Enter a valid organisation email address.";
+          nextReasons.organizationEmail = "EMAIL_INVALID";
+        }
+        if (mode === "competitor") {
+          if (aff === "school") {
+            if (!school?.institutionId && !schoolManualMode) {
+              nextErrors.institutionId =
+                "Search for your school, or choose “School not listed”.";
+              nextReasons.institutionId = "REQUIRED";
+            }
+            if (schoolManualMode) {
+              if (!values.organizationName?.trim()) {
+                nextErrors.organizationName =
+                  "Enter the name of your school.";
+                nextReasons.organizationName = "REQUIRED";
+              }
+              if (!regionId) {
+                nextErrors.regionId = "Select your region.";
+                nextReasons.regionId = "REQUIRED";
+              }
+            }
+          } else if (aff) {
             if (!values.organizationName?.trim()) {
-              nextErrors.organizationName = "Enter the name of your school.";
+              nextErrors.organizationName = `Enter the name of your ${aff}.`;
               nextReasons.organizationName = "REQUIRED";
             }
             if (!regionId) {
-              nextErrors.regionId = "Select your region.";
+              nextErrors.regionId = "Select the location region.";
               nextReasons.regionId = "REQUIRED";
             }
-          }
-        } else if (aff) {
-          if (!values.organizationName?.trim()) {
-            nextErrors.organizationName = `Enter the name of your ${aff}.`;
-            nextReasons.organizationName = "REQUIRED";
-          }
-          if (!regionId) {
-            nextErrors.regionId = "Select the location region.";
-            nextReasons.regionId = "REQUIRED";
-          }
-          if (!values.organizationCity?.trim()) {
-            nextErrors.organizationCity = "Enter the city or town.";
-            nextReasons.organizationCity = "REQUIRED";
+            if (!values.organizationCity?.trim()) {
+              nextErrors.organizationCity = "Enter the city or town.";
+              nextReasons.organizationCity = "REQUIRED";
+            }
           }
         }
       }
     }
 
     if (step === 4) {
-      const coachRequired: Array<{ key: keyof typeof coach; field: string }> = [
-        { key: "surname", field: "coach.surname" },
-        { key: "firstName", field: "coach.firstName" },
-        { key: "contactNumber", field: "coach.contactNumber" },
-        { key: "email", field: "coach.email" },
-        { key: "dateOfBirth", field: "coach.dateOfBirth" },
-      ];
-      for (const { key, field } of coachRequired) {
-        if (!coach[key].trim()) {
-          nextErrors[field] =
-            key === "contactNumber"
-              ? "Enter the coach phone / WhatsApp number."
-              : "Required";
-          nextReasons[field] = "REQUIRED";
+      if (coachHasAnyInput()) {
+        const coachRequired: Array<{
+          key: keyof typeof coach;
+          field: string;
+        }> = [
+          { key: "surname", field: "coach.surname" },
+          { key: "firstName", field: "coach.firstName" },
+          { key: "contactNumber", field: "coach.contactNumber" },
+          { key: "email", field: "coach.email" },
+          { key: "dateOfBirth", field: "coach.dateOfBirth" },
+        ];
+        for (const { key, field } of coachRequired) {
+          if (!coach[key].trim()) {
+            nextErrors[field] =
+              key === "contactNumber"
+                ? "Enter the coach phone / WhatsApp number."
+                : "Required";
+            nextReasons[field] = "REQUIRED";
+          }
         }
-      }
-      const coachPhone = coach.contactNumber.trim();
-      if (coachPhone && !isValidPhone(coachPhone)) {
-        nextErrors["coach.contactNumber"] = GHANA_PHONE_HINT;
-        nextReasons["coach.contactNumber"] = "PHONE_INVALID";
-      }
-      if (coach.email.trim() && !isValidEmail(coach.email)) {
-        nextErrors["coach.email"] = "Enter a valid coach email address.";
-        nextReasons["coach.email"] = "EMAIL_INVALID";
+        const coachPhone = coach.contactNumber.trim();
+        if (coachPhone && !isValidPhone(coachPhone)) {
+          nextErrors["coach.contactNumber"] = GHANA_PHONE_HINT;
+          nextReasons["coach.contactNumber"] = "PHONE_INVALID";
+        }
+        if (coach.email.trim() && !isValidEmail(coach.email)) {
+          nextErrors["coach.email"] = "Enter a valid coach email address.";
+          nextReasons["coach.email"] = "EMAIL_INVALID";
+        }
       }
     }
 
@@ -1038,6 +1094,25 @@ export function CompetitionRegistrationForm({
     }
 
     if (!validateStep(5)) return;
+
+    const ageBlocks = findAgeIneligibilities(
+      values.dateOfBirth,
+      skillIds,
+      skills,
+    );
+    if (ageBlocks.length > 0) {
+      setError(
+        new ApiError(422, {
+          error: {
+            code: "ELIGIBILITY_FAILED",
+            message: ageBlocks.map((b) => b.message).join(" "),
+            fields: [{ name: "dateOfBirth", reason: "AGE_EXCEEDS_LIMIT" }],
+            traceId: "",
+          },
+        }),
+      );
+      return;
+    }
 
     setError(null);
     setFieldErrors({});
@@ -1111,7 +1186,15 @@ export function CompetitionRegistrationForm({
       }
 
       const aff = affiliationType();
-      payload.affiliationType = aff;
+      if (isUnaffiliated()) {
+        payload.affiliationType = null;
+        payload.organizationName = null;
+        payload.organizationCity = null;
+        payload.organizationPhone = null;
+        payload.organizationEmail = null;
+      } else {
+        payload.affiliationType = aff;
+      }
       if (values.idDocumentKind !== "OTHER") {
         payload.otherIdType = null;
       }
@@ -1175,43 +1258,52 @@ export function CompetitionRegistrationForm({
         });
       }
 
-      const coachRequired: Array<{ key: keyof typeof coach; field: string }> = [
-        { key: "surname", field: "coach.surname" },
-        { key: "firstName", field: "coach.firstName" },
-        { key: "contactNumber", field: "coach.contactNumber" },
-        { key: "email", field: "coach.email" },
-        { key: "dateOfBirth", field: "coach.dateOfBirth" },
-      ];
-      for (const { key, field } of coachRequired) {
-        if (!coach[key].trim()) {
-          throw new ApiError(422, {
-            error: {
-              code: "VALIDATION_ERROR",
-              message: "Please complete the coach / team leader details.",
-              fields: [{ name: field, reason: "REQUIRED" }],
-              traceId: "",
-            },
-          });
+      if (coachHasAnyInput()) {
+        const coachRequired: Array<{
+          key: keyof typeof coach;
+          field: string;
+        }> = [
+          { key: "surname", field: "coach.surname" },
+          { key: "firstName", field: "coach.firstName" },
+          { key: "contactNumber", field: "coach.contactNumber" },
+          { key: "email", field: "coach.email" },
+          { key: "dateOfBirth", field: "coach.dateOfBirth" },
+        ];
+        for (const { key, field } of coachRequired) {
+          if (!coach[key].trim()) {
+            throw new ApiError(422, {
+              error: {
+                code: "VALIDATION_ERROR",
+                message: "Please complete the coach / team leader details.",
+                fields: [{ name: field, reason: "REQUIRED" }],
+                traceId: "",
+              },
+            });
+          }
         }
-      }
 
-      const phone = coach.contactNumber.trim();
-      const coachPayload: CoachBioInput = {
-        surname: coach.surname.trim(),
-        firstName: coach.firstName.trim(),
-        otherName: coach.otherName.trim() || null,
-        contactNumber: phone,
-        email: coach.email.trim(),
-        whatsapp: phone,
-        dateOfBirth: coach.dateOfBirth.trim(),
-      };
-      payload.coach = coachPayload;
+        const phone = coach.contactNumber.trim();
+        payload.coach = {
+          surname: coach.surname.trim(),
+          firstName: coach.firstName.trim(),
+          otherName: coach.otherName.trim() || null,
+          contactNumber: phone,
+          email: coach.email.trim(),
+          whatsapp: phone,
+          dateOfBirth: coach.dateOfBirth.trim(),
+        };
+      }
 
       if (mode === "institution") {
         payload.institutionId = sessionInstitutionId;
         payload.affiliationType = "school";
         payload.organizationName = null;
         payload.organizationCity = null;
+      } else if (isUnaffiliated()) {
+        payload.institutionId = null;
+        if (regionId) {
+          payload.regionId = regionId;
+        }
       } else if (aff === "school" && school?.institutionId) {
         payload.institutionId = school.institutionId;
         payload.regionId = null;
@@ -1293,6 +1385,14 @@ export function CompetitionRegistrationForm({
       ? "Your claimed school"
       : (() => {
           const aff = affiliationType();
+          if (aff === "none") {
+            const regionName = regionId
+              ? (regions.find((r) => r.regionId === regionId)?.name ?? null)
+              : null;
+            return regionName
+              ? `Not affiliated · ${regionName}`
+              : "Not affiliated";
+          }
           if (aff === "school" && school?.name) {
             return school.code
               ? `${school.name} (${school.code})`
@@ -1313,6 +1413,12 @@ export function CompetitionRegistrationForm({
           }
           return regionName ?? "—";
         })();
+  const ageIneligibilities = findAgeIneligibilities(
+    values.dateOfBirth,
+    skillIds,
+    skills,
+  );
+  const ageIneligible = ageIneligibilities.length > 0;
   const summaryId = !values.idDocumentKind && !values.nationalId
     ? "—"
     : values.idDocumentKind === "OTHER"
@@ -1320,6 +1426,114 @@ export function CompetitionRegistrationForm({
       : values.idDocumentKind === "GHANA_CARD"
         ? `Ghana Card · ${values.nationalId || "—"}`
         : values.nationalId || "—";
+  const ageChecks = summarizeAgeEligibility(
+    values.dateOfBirth,
+    skillIds,
+    skills,
+  );
+  const coachName = [coach.firstName, coach.otherName, coach.surname]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
+  const hasCoach = coachHasAnyInput();
+  const reviewGroups: ReviewGroup[] = [
+    {
+      title: "About you",
+      step: 1,
+      items: [
+        { label: "Name", value: summaryName },
+        {
+          label: "Date of birth",
+          value: values.dateOfBirth
+            ? formatIsoDateLong(values.dateOfBirth)
+            : "—",
+        },
+        ...(values.gender
+          ? [{ label: "Gender", value: values.gender }]
+          : []),
+        { label: "Identification", value: summaryId },
+        { label: "Email", value: values.email || "—" },
+        { label: "Mobile", value: values.mobile || "—" },
+        ...(values.whatsapp
+          ? [{ label: "WhatsApp", value: values.whatsapp }]
+          : []),
+        ...(values.guardianName
+          ? [
+              {
+                label: "Guardian",
+                value: values.guardianPhone
+                  ? `${values.guardianName} · ${values.guardianPhone}`
+                  : values.guardianName,
+                wide: true,
+              },
+            ]
+          : []),
+        ...(values.heardAbout
+          ? [
+              {
+                label: "Heard about WSGH",
+                value: values.heardAbout,
+                wide: true,
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      title: "Passport",
+      step: 2,
+      items:
+        hasPassport === true
+          ? [
+              { label: "Passport number", value: passportNumber || "—" },
+              {
+                label: "Expires on",
+                value: passportExpiresOn
+                  ? formatIsoDateLong(passportExpiresOn)
+                  : "—",
+              },
+            ]
+          : [
+              {
+                label: "Passport",
+                value:
+                  hasPassport === false
+                    ? "No passport"
+                    : "Not answered yet",
+                muted: hasPassport !== false,
+                wide: true,
+              },
+            ],
+    },
+    {
+      title: "Affiliation & skill",
+      step: 3,
+      items: [
+        { label: "Skill area", value: summarySkill },
+        { label: "Affiliation", value: summarySchool },
+      ],
+    },
+    {
+      title: "Coach",
+      step: 4,
+      items: hasCoach
+        ? [
+            { label: "Name", value: coachName || "—" },
+            ...(coach.contactNumber
+              ? [{ label: "Phone", value: coach.contactNumber }]
+              : []),
+            ...(coach.email ? [{ label: "Email", value: coach.email }] : []),
+          ]
+        : [
+            {
+              label: "Coach",
+              value: "Not provided — this section is optional",
+              muted: true,
+              wide: true,
+            },
+          ],
+    },
+  ];
   const authLoading = status === "loading" || status === "anonymous";
   const wrongRole =
     status === "authenticated" &&
@@ -2017,7 +2231,7 @@ export function CompetitionRegistrationForm({
               <FormSection
                 icon={MapPin}
                 title="Affiliation"
-                description="Link your registration to a school, company, or workshop."
+                description="Link your registration to a school, company, or workshop — or register without an organisation."
               >
                 <div className="space-y-2">
                   <Label>Affiliation type *</Label>
@@ -2027,6 +2241,7 @@ export function CompetitionRegistrationForm({
                         { value: "school", label: "School" },
                         { value: "company", label: "Company" },
                         { value: "workshop", label: "Workshop" },
+                        { value: "none", label: "Not affiliated" },
                       ] as const
                     ).map((opt) => (
                       <label
@@ -2051,6 +2266,10 @@ export function CompetitionRegistrationForm({
                             setRegionId("");
                             setValue("organizationName", "");
                             setValue("organizationCity", "");
+                            if (opt.value === "none") {
+                              setValue("organizationPhone", "");
+                              setValue("organizationEmail", "");
+                            }
                           }}
                           data-testid={`affiliation-${opt.value}`}
                         />
@@ -2060,6 +2279,29 @@ export function CompetitionRegistrationForm({
                   </div>
                   <FieldMessage message={fieldErrors.affiliationType} />
                 </div>
+
+                {affiliationType() === "none" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="regionId">Region *</Label>
+                    <select
+                      id="regionId"
+                      className="flex min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={regionId}
+                      disabled={readOnly || pending || draftPending}
+                      onChange={(e) => setRegionId(e.target.value)}
+                      aria-invalid={Boolean(fieldErrors.regionId)}
+                      data-testid="region-select"
+                    >
+                      <option value="">Select region</option>
+                      {regions.map((r) => (
+                        <option key={r.regionId} value={r.regionId}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                    <FieldMessage message={fieldErrors.regionId} />
+                  </div>
+                ) : null}
 
                 {affiliationType() === "school" ? (
                   <div className="space-y-4">
@@ -2149,7 +2391,10 @@ export function CompetitionRegistrationForm({
                       </div>
                     )}
                   </div>
-                ) : (
+                ) : null}
+
+                {affiliationType() === "company" ||
+                affiliationType() === "workshop" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="organizationName">
@@ -2204,40 +2449,46 @@ export function CompetitionRegistrationForm({
                       <FieldMessage message={fieldErrors.organizationCity} />
                     </div>
                   </div>
-                )}
+                ) : null}
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="organizationPhone">Organisation phone *</Label>
-                    <Input
-                      id="organizationPhone"
-                      type="tel"
-                      className="min-h-11"
-                      value={values.organizationPhone ?? ""}
-                      disabled={readOnly || pending || draftPending}
-                      onChange={(e) =>
-                        setValue("organizationPhone", e.target.value)
-                      }
-                      data-testid="organization-phone"
-                    />
-                    <FieldMessage message={fieldErrors.organizationPhone} />
+                {affiliationType() && affiliationType() !== "none" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="organizationPhone">
+                        Organisation phone *
+                      </Label>
+                      <Input
+                        id="organizationPhone"
+                        type="tel"
+                        className="min-h-11"
+                        value={values.organizationPhone ?? ""}
+                        disabled={readOnly || pending || draftPending}
+                        onChange={(e) =>
+                          setValue("organizationPhone", e.target.value)
+                        }
+                        data-testid="organization-phone"
+                      />
+                      <FieldMessage message={fieldErrors.organizationPhone} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="organizationEmail">
+                        Organisation email *
+                      </Label>
+                      <Input
+                        id="organizationEmail"
+                        type="email"
+                        className="min-h-11"
+                        value={values.organizationEmail ?? ""}
+                        disabled={readOnly || pending || draftPending}
+                        onChange={(e) =>
+                          setValue("organizationEmail", e.target.value)
+                        }
+                        data-testid="organization-email"
+                      />
+                      <FieldMessage message={fieldErrors.organizationEmail} />
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="organizationEmail">Organisation email *</Label>
-                    <Input
-                      id="organizationEmail"
-                      type="email"
-                      className="min-h-11"
-                      value={values.organizationEmail ?? ""}
-                      disabled={readOnly || pending || draftPending}
-                      onChange={(e) =>
-                        setValue("organizationEmail", e.target.value)
-                      }
-                      data-testid="organization-email"
-                    />
-                    <FieldMessage message={fieldErrors.organizationEmail} />
-                  </div>
-                </div>
+                ) : null}
               </FormSection>
             )}
 
@@ -2357,30 +2608,30 @@ export function CompetitionRegistrationForm({
             <FormSection
               icon={UserRound}
               title="Coach / team leader"
-              description="Details of the coach or team leader from your school or organisation."
+              description="Optional. Add details of the coach or team leader from your school or organisation if you have one."
             >
               <div className="grid gap-4 sm:grid-cols-2">
                 {(
                   [
-                    { key: "surname", label: "Surname", required: true },
-                    { key: "firstName", label: "First name", required: true },
+                    { key: "surname", label: "Surname", required: false },
+                    { key: "firstName", label: "First name", required: false },
                     { key: "otherName", label: "Other name", required: false },
                     {
                       key: "contactNumber",
                       label: "Phone / WhatsApp number",
-                      required: true,
+                      required: false,
                       type: "tel",
                     },
                     {
                       key: "email",
                       label: "Email address",
-                      required: true,
+                      required: false,
                       type: "email",
                     },
                     {
                       key: "dateOfBirth",
                       label: "Date of birth",
-                      required: true,
+                      required: false,
                       type: "date",
                       wide: true,
                     },
@@ -2440,58 +2691,34 @@ export function CompetitionRegistrationForm({
               title="Confirm & submit"
               description="Review your details before submitting. You will receive a competitor reference on success."
             >
-              <dl
-                className="space-y-3 rounded-lg border border-border/70 bg-muted/30 px-4 py-3 text-sm"
-                data-testid="registration-review-summary"
-              >
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                  <dt className="text-muted-foreground">Name</dt>
-                  <dd className="font-medium text-foreground sm:text-right">
-                    {summaryName}
-                  </dd>
-                </div>
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                  <dt className="text-muted-foreground">Skill</dt>
-                  <dd className="font-medium text-foreground sm:text-right">
-                    {summarySkill}
-                  </dd>
-                </div>
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                  <dt className="text-muted-foreground">Affiliation</dt>
-                  <dd className="font-medium text-foreground sm:text-right">
-                    {summarySchool}
-                  </dd>
-                </div>
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                  <dt className="text-muted-foreground">ID</dt>
-                  <dd className="font-medium text-foreground sm:text-right">
-                    {summaryId}
-                  </dd>
-                </div>
-                {values.heardAbout ? (
-                  <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                    <dt className="text-muted-foreground">Heard about WSGH</dt>
-                    <dd className="font-medium text-foreground sm:text-right">
-                      {values.heardAbout}
-                    </dd>
-                  </div>
-                ) : null}
-                {mode === "competitor" && values.guardianName ? (
-                  <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between sm:gap-4">
-                    <dt className="text-muted-foreground">Guardian</dt>
-                    <dd className="font-medium text-foreground sm:text-right">
-                      {values.guardianName}
-                      {values.guardianPhone
-                        ? ` · ${values.guardianPhone}`
-                        : ""}
-                    </dd>
-                  </div>
-                ) : null}
-              </dl>
+              {ageIneligible ? (
+                <AgeIneligibilityNotice
+                  items={ageIneligibilities}
+                  onChangeSkill={() => setCurrentStep(3)}
+                  onCheckDateOfBirth={() => setCurrentStep(1)}
+                />
+              ) : (
+                <ReadyToSubmitNotice checks={ageChecks} hasCoach={hasCoach} />
+              )}
+
+              <RegistrationReviewSummary
+                name={summaryName}
+                headline={summarySkill}
+                photoUrl={photoPreview}
+                groups={reviewGroups}
+                onEdit={readOnly ? undefined : setCurrentStep}
+              />
 
               {hasDeclaration ? (
                 <div className="space-y-2">
-                  <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-3 py-3">
+                  <div
+                    className={cn(
+                      "flex items-start gap-3 rounded-xl border px-3 py-3 transition-colors",
+                      declarationAccepted
+                        ? "border-brand-green/40 bg-brand-green/6"
+                        : "border-border bg-muted/30",
+                    )}
+                  >
                     <input
                       id="declarationAccepted"
                       type="checkbox"
@@ -2595,13 +2822,17 @@ export function CompetitionRegistrationForm({
                   <Button
                     type="submit"
                     className="min-h-12 w-full flex-1 gap-2 text-base sm:min-w-40"
-                    disabled={pending || draftPending || readOnly}
+                    disabled={
+                      pending || draftPending || readOnly || ageIneligible
+                    }
                     data-testid="registration-submit"
                   >
                     {pending ? (
                       "Submitting…"
                     ) : readOnly ? (
                       "Registration closed"
+                    ) : ageIneligible ? (
+                      "Not eligible"
                     ) : (
                       <>
                         <CheckCircle2 className="size-4" aria-hidden />

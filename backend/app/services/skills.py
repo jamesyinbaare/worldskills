@@ -120,6 +120,16 @@ async def list_skills(session: AsyncSession, competition_id: uuid.UUID) -> list[
 async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID) -> list[dict]:
     """Active cycle skills for competitor/institution registration pickers."""
     skills = await list_skills(session, competition_id)
+    legacy_rule_ids = {
+        skill.age_rule_id
+        for skill in skills
+        if skill.active and skill.max_age is None and skill.age_rule_id is not None
+    }
+    age_rules: dict[uuid.UUID, AgeRule] = {}
+    if legacy_rule_ids:
+        result = await session.execute(select(AgeRule).where(AgeRule.id.in_(legacy_rule_ids)))
+        age_rules = {row.id: row for row in result.scalars().all()}
+
     out: list[dict] = []
     for skill in skills:
         if not skill.active:
@@ -132,6 +142,21 @@ async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID
             family = catalog.__dict__.get("family")
             if family is not None:
                 family_name = family.name
+
+        max_age = skill.max_age
+        reference_date = skill.age_reference_date
+        open_category = (
+            bool(skill.open_category_enabled)
+            if skill.open_category_enabled is not None
+            else False
+        )
+        if max_age is None and skill.age_rule_id is not None:
+            rule = age_rules.get(skill.age_rule_id)
+            if rule is not None:
+                max_age = rule.max_age
+                reference_date = rule.reference_date
+                open_category = bool(rule.open_category_enabled)
+
         out.append(
             {
                 "skillId": skill.id,
@@ -144,6 +169,9 @@ async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID
                     skill.criteria_object_key and skill.criteria_file_name
                 ),
                 "criteriaFileName": skill.criteria_file_name,
+                "maxAge": max_age,
+                "referenceDate": reference_date,
+                "openCategoryEnabled": open_category,
             }
         )
     return out

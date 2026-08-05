@@ -560,6 +560,90 @@ async def test_registration_company_affiliation_and_other_id(
 
 
 @pytest.mark.asyncio
+async def test_registration_unaffiliated_requires_region(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    comp = await _comp_headers(client, session_manager)
+
+    missing_region = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            institutionId=None,
+            affiliationType="none",
+            organizationName=None,
+            organizationCity=None,
+            organizationPhone=None,
+            organizationEmail=None,
+            regionId=None,
+        ),
+        headers=comp,
+    )
+    assert missing_region.status_code == 422, missing_region.text
+    reasons = {f["name"] for f in missing_region.json()["error"]["fields"]}
+    assert "regionId" in reasons
+
+    ok = await client.post(
+        f"/competitions/{competition_id}/registrations",
+        json=_payload(
+            ctx,
+            institutionId=None,
+            affiliationType="none",
+            organizationName=None,
+            organizationCity=None,
+            organizationPhone=None,
+            organizationEmail=None,
+            regionId=str(ctx["region_id"]),
+            email=f"solo-{uuid.uuid4().hex[:6]}@example.com",
+            nationalId=f"GHA-{uuid.uuid4().int % 10**9:09d}",
+        ),
+        headers=comp,
+    )
+    assert ok.status_code == 201, ok.text
+    async with session_manager.session() as session:
+        row = await session.get(Competitor, uuid.UUID(ok.json()["competitorId"]))
+        assert row is not None
+        assert row.affiliation_type is None
+        assert row.institution_id is None
+        assert row.organization_name is None
+        assert row.organization_phone is None
+        assert str(row.region_id) == str(ctx["region_id"])
+
+
+@pytest.mark.asyncio
+async def test_available_skills_include_age_limits(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    ctx = await _seed_reg(session_manager, competition_id)
+    async with session_manager.session() as session:
+        skill = await session.get(Skill, ctx["skill_id"])
+        assert skill is not None
+        skill.max_age = 23
+        skill.age_reference_date = date(2026, 1, 1)
+        skill.open_category_enabled = False
+        await session.commit()
+
+    comp = await _comp_headers(client, session_manager)
+    resp = await client.get(
+        f"/competitions/{competition_id}/skills:available",
+        headers=comp,
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    match = next(i for i in items if i["skillId"] == str(ctx["skill_id"]))
+    assert match["maxAge"] == 23
+    assert match["referenceDate"] == "2026-01-01"
+    assert match["openCategoryEnabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_registration_manual_school_requires_region(
     client: AsyncClient,
     auth_headers: dict[str, str],

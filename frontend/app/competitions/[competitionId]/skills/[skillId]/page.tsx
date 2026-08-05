@@ -10,6 +10,7 @@ import {
 import { useParams } from "next/navigation";
 import {
   ApiError,
+  downloadPublicGeneralCriteriaDocument,
   downloadPublicSkillCriteriaDocument,
   getPublicCompetition,
   isCompetitorRole,
@@ -44,7 +45,9 @@ export default function SkillAreaDetailPage() {
   const [skillIndex, setSkillIndex] = useState(0);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
-  const [downloadPending, setDownloadPending] = useState(false);
+  const [downloadPending, setDownloadPending] = useState<
+    "general" | "skill" | null
+  >(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
 
@@ -152,9 +155,9 @@ export default function SkillAreaDetailPage() {
       ? "Continue registration"
       : "Start registration";
 
-  async function onDownloadCriteria() {
+  async function onDownloadSkillCriteria() {
     if (!skill) return;
-    setDownloadPending(true);
+    setDownloadPending("skill");
     setDownloadError(null);
     try {
       const { blob, filename } = await downloadPublicSkillCriteriaDocument(
@@ -166,10 +169,28 @@ export default function SkillAreaDetailPage() {
       setDownloadError(
         err instanceof ApiError
           ? err.message
-          : "Could not download criteria document.",
+          : "Could not download skill-area criteria.",
       );
     } finally {
-      setDownloadPending(false);
+      setDownloadPending(null);
+    }
+  }
+
+  async function onDownloadGeneralCriteria() {
+    setDownloadPending("general");
+    setDownloadError(null);
+    try {
+      const { blob, filename } =
+        await downloadPublicGeneralCriteriaDocument(competitionId);
+      triggerBrowserDownload(blob, filename);
+    } catch (err) {
+      setDownloadError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not download general criteria.",
+      );
+    } finally {
+      setDownloadPending(null);
     }
   }
 
@@ -313,35 +334,72 @@ export default function SkillAreaDetailPage() {
                     id="criteria-heading"
                     className="text-lg font-semibold tracking-tight text-foreground"
                   >
-                    Criteria document
+                    Criteria documents
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    Download the official skill criteria before you register.
+                    Download official criteria before you register. General
+                    criteria apply to the whole competition; skill-area criteria
+                    apply to {skill.name} only.
                   </p>
                 </div>
-                {skill.hasCriteriaDocument ? (
+                {cycle?.hasGeneralCriteriaDocument ||
+                skill.hasCriteriaDocument ? (
                   <div className="space-y-3">
                     {downloadError ? (
                       <p className="text-sm text-destructive" role="alert">
                         {downloadError}
                       </p>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="min-h-11 gap-2"
-                      disabled={downloadPending}
-                      onClick={() => void onDownloadCriteria()}
-                      data-testid={`download-criteria-${skill.skillId}`}
-                    >
-                      <DownloadIcon className="size-4" aria-hidden />
-                      {downloadPending ? "Downloading…" : "Download criteria"}
-                    </Button>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {cycle?.hasGeneralCriteriaDocument ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11 gap-2"
+                          disabled={downloadPending !== null}
+                          onClick={() => void onDownloadGeneralCriteria()}
+                          data-testid="download-general-criteria"
+                        >
+                          <DownloadIcon className="size-4" aria-hidden />
+                          {downloadPending === "general"
+                            ? "Downloading…"
+                            : "Download general criteria"}
+                        </Button>
+                      ) : null}
+                      {skill.hasCriteriaDocument ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11 gap-2"
+                          disabled={downloadPending !== null}
+                          onClick={() => void onDownloadSkillCriteria()}
+                          data-testid={`download-criteria-${skill.skillId}`}
+                        >
+                          <DownloadIcon className="size-4" aria-hidden />
+                          {downloadPending === "skill"
+                            ? "Downloading…"
+                            : "Download skill-area criteria"}
+                        </Button>
+                      ) : null}
+                    </div>
+                    {(cycle?.generalCriteriaFileName ||
+                      skill.criteriaFileName) && (
+                      <ul className="space-y-1 text-xs text-muted-foreground">
+                        {cycle?.generalCriteriaFileName ? (
+                          <li>
+                            General: {cycle.generalCriteriaFileName}
+                          </li>
+                        ) : null}
+                        {skill.criteriaFileName ? (
+                          <li>Skill area: {skill.criteriaFileName}</li>
+                        ) : null}
+                      </ul>
+                    )}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    No criteria document has been published for this skill area
-                    yet.
+                    No criteria documents have been published for this
+                    competition or skill area yet.
                   </p>
                 )}
               </section>

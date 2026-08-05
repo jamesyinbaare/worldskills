@@ -61,6 +61,10 @@ def competition_to_dict(cycle: Competition) -> dict[str, Any]:
         "description": cycle.description,
         "organisingBody": cycle.organising_body,
         "branding": cycle.branding,
+        "hasGeneralCriteriaDocument": bool(
+            cycle.general_criteria_object_key and cycle.general_criteria_file_name
+        ),
+        "generalCriteriaFileName": cycle.general_criteria_file_name,
     }
 
 
@@ -205,6 +209,10 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
             "opensAt": window.opens_at.isoformat(),
             "closesAt": window.closes_at.isoformat(),
         },
+        "hasGeneralCriteriaDocument": bool(
+            cycle.general_criteria_object_key and cycle.general_criteria_file_name
+        ),
+        "generalCriteriaFileName": cycle.general_criteria_file_name,
         "skills": [
             {
                 "skillId": s["skillId"],
@@ -762,3 +770,194 @@ async def competition_has_isolated_data(session: AsyncSession, cycle_a: uuid.UUI
     a_ids = {row[0] for row in a_skills.all()}
     b_ids = {row[0] for row in b_skills.all()}
     return a_ids.isdisjoint(b_ids)
+
+
+_DOC_MIME = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+}
+
+
+def _assert_doc_mime(content_type: str | None, filename: str) -> str:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    lower = filename.lower()
+    if ct in _DOC_MIME:
+        return ct
+    if lower.endswith(".pdf"):
+        return "application/pdf"
+    if lower.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    raise AppError(
+        "FILE_TYPE",
+        "Only PDF or DOCX documents are allowed",
+        status_code=status.HTTP_400_BAD_REQUEST,
+        fields=[FieldError("file", "FILE_TYPE")],
+    )
+
+
+async def upload_general_criteria_document(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    data: bytes,
+    filename: str,
+    content_type: str | None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> Competition:
+    from app.services.storage import get_object_storage
+
+    cycle = await get_competition(session, competition_id)
+    mime = _assert_doc_mime(content_type, filename)
+    store = get_object_storage()
+    stored = store.put(
+        data,
+        prefix=f"cycles/{competition_id}/general-criteria",
+        filename=filename,
+    )
+    before = competition_to_dict(cycle)
+    cycle.general_criteria_object_key = stored.key
+    cycle.general_criteria_file_name = filename
+    cycle.general_criteria_content_type = mime
+    cycle.general_criteria_scan_status = "CLEAN"
+    await session.flush()
+    await write_audit_event(
+        session,
+        action="COMPETITION_GENERAL_CRITERIA_UPLOAD",
+        entity_type="Competition",
+        entity_id=str(cycle.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=competition_id,
+        before=before,
+        after=competition_to_dict(cycle),
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(cycle)
+    return cycle
+
+
+async def delete_general_criteria_document(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> Competition:
+    cycle = await get_competition(session, competition_id)
+    before = competition_to_dict(cycle)
+    cycle.general_criteria_object_key = None
+    cycle.general_criteria_file_name = None
+    cycle.general_criteria_content_type = None
+    cycle.general_criteria_scan_status = None
+    await session.flush()
+    await write_audit_event(
+        session,
+        action="COMPETITION_GENERAL_CRITERIA_DELETE",
+        entity_type="Competition",
+        entity_id=str(cycle.id),
+        actor_id=actor.id,
+        actor_role=actor.role.value,
+        competition_id=competition_id,
+        before=before,
+        after=competition_to_dict(cycle),
+        ip=ip,
+        user_agent=user_agent,
+    )
+    await session.commit()
+    await session.refresh(cycle)
+    return cycle
+
+
+async def download_general_criteria_document(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+    *,
+    actor: User,
+) -> tuple[bytes, str, str]:
+    from app.core.rbac import is_admin_role
+    from app.models import Competitor, UserRole
+    from app.services.storage import get_object_storage
+
+    cycle = await get_competition(session, competition_id)
+    if not cycle.general_criteria_object_key or not cycle.general_criteria_file_name:
+        raise AppError("FILE_NOT_FOUND", "No general criteria document attached", status_code=404)
+
+    role = actor.role
+    if is_admin_role(role) or role in {UserRole.EXPERT, UserRole.CHIEF_EXPERT}:
+        pass
+    elif role == UserRole.COMPETITOR:
+        competitor = (
+            await session.execute(
+                select(Competitor).where(
+                    Competitor.user_id == actor.id,
+                    Competitor.competition_id == competition_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if competitor is None:
+            raise AppError(
+                "FORBIDDEN",
+                "Not registered for this competition",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+    elif role == UserRole.INSTITUTION:
+        if actor.institution_id is None:
+            raise AppError("FORBIDDEN", "Institution membership required", status_code=403)
+    else:
+        raise AppError("FORBIDDEN", "Not allowed to download general criteria", status_code=403)
+
+    store = get_object_storage()
+    data = store.get(cycle.general_criteria_object_key)
+    return (
+        data,
+        cycle.general_criteria_file_name,
+        cycle.general_criteria_content_type or "application/octet-stream",
+    )
+
+
+async def download_public_general_criteria_document(
+    session: AsyncSession,
+    competition_id: uuid.UUID,
+) -> tuple[bytes, str, str]:
+    """General criteria download for open-registration competitions (no auth)."""
+    from datetime import datetime
+
+    from app.models import RegistrationWindow
+    from app.services.storage import get_object_storage
+
+    now = datetime.utcnow()
+    open_row = (
+        await session.execute(
+            select(Competition.id)
+            .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
+            .where(
+                Competition.id == competition_id,
+                Competition.status == CompetitionStatus.ACTIVE,
+                RegistrationWindow.opens_at <= now,
+                RegistrationWindow.closes_at >= now,
+            )
+        )
+    ).scalar_one_or_none()
+    if open_row is None:
+        raise AppError(
+            "COMPETITION_NOT_FOUND",
+            "Competition not found or not open for registration",
+            status_code=404,
+        )
+
+    cycle = await get_competition(session, competition_id)
+    if not cycle.general_criteria_object_key or not cycle.general_criteria_file_name:
+        raise AppError("FILE_NOT_FOUND", "No general criteria document attached", status_code=404)
+
+    store = get_object_storage()
+    data = store.get(cycle.general_criteria_object_key)
+    return (
+        data,
+        cycle.general_criteria_file_name,
+        cycle.general_criteria_content_type or "application/octet-stream",
+    )

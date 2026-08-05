@@ -411,11 +411,23 @@ def _validate_id_document(
     return errors
 
 
+def _normalize_affiliation_type(raw: str | None) -> str | None:
+    """Map blank / 'none' to unaffiliated (None); otherwise return stripped type."""
+    aff = (raw or "").strip() or None
+    if aff is None or aff == "none":
+        return None
+    return aff
+
+
 def _validate_affiliation(payload: RegistrationCreate) -> list[FieldError]:
     errors: list[FieldError] = []
-    aff = (payload.affiliationType or "").strip() or None
-    if not aff:
-        errors.append(FieldError("affiliationType", "REQUIRED"))
+    aff = _normalize_affiliation_type(payload.affiliationType)
+    if aff is None:
+        # Unaffiliated: region required for zone derivation; no org / institution.
+        if payload.regionId is None:
+            errors.append(FieldError("regionId", "REQUIRED"))
+        if payload.institutionId is not None:
+            errors.append(FieldError("institutionId", "NOT_ALLOWED"))
         return errors
     if aff not in ALLOWED_AFFILIATION_TYPES:
         errors.append(FieldError("affiliationType", "INVALID"))
@@ -476,16 +488,32 @@ def _validate_guardian_contacts(payload: RegistrationCreate) -> list[FieldError]
     return errors
 
 
-def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]:
-    """Coach bio-data is always required for competitor registration."""
-    raw = payload.coach
+def _coach_payload_is_blank(raw: CoachBioIn | dict[str, Any] | None) -> bool:
     if raw is None:
-        raise AppError(
-            "VALIDATION_ERROR",
-            "Coach / team leader details are required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            fields=[FieldError("coach", "REQUIRED")],
-        )
+        return True
+    if isinstance(raw, CoachBioIn):
+        data = raw.model_dump(mode="json")
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        return False
+    keys = (
+        "surname",
+        "firstName",
+        "otherName",
+        "contactNumber",
+        "email",
+        "whatsapp",
+        "dateOfBirth",
+    )
+    return not any(str(data.get(k) or "").strip() for k in keys)
+
+
+def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any] | None:
+    """Coach bio-data is optional; when any field is provided, all required fields must be valid."""
+    raw = payload.coach
+    if _coach_payload_is_blank(raw):
+        return None
     try:
         if isinstance(raw, CoachBioIn):
             coach = raw
@@ -1356,10 +1384,17 @@ async def create_registration(
     other_id = (
         (payload.otherIdType or "").strip() or None if id_kind == "OTHER" else None
     )
-    aff = (payload.affiliationType or "").strip() or None
+    aff = _normalize_affiliation_type(payload.affiliationType)
     org_name = (payload.organizationName or "").strip() or None
     org_city = (payload.organizationCity or "").strip() or None
-    if aff == "school" and payload.institutionId is not None:
+    org_phone = (payload.organizationPhone or "").strip() or None
+    org_email = (payload.organizationEmail or "").strip().lower() or None
+    if aff is None:
+        org_name = None
+        org_city = None
+        org_phone = None
+        org_email = None
+    elif aff == "school" and payload.institutionId is not None:
         org_name = None
         org_city = None
     elif aff == "school":
@@ -1378,8 +1413,8 @@ async def create_registration(
         "affiliationType": aff,
         "organizationName": org_name,
         "organizationCity": org_city,
-        "organizationPhone": (payload.organizationPhone or "").strip() or None,
-        "organizationEmail": (payload.organizationEmail or "").strip().lower() or None,
+        "organizationPhone": org_phone,
+        "organizationEmail": org_email,
         "idDocumentKind": id_kind,
         "otherIdType": other_id,
         "heardAbout": (payload.heardAbout or "").strip() or None,
@@ -1626,13 +1661,13 @@ DEFAULT_REGISTRATION_FIELDS: list[dict[str, Any]] = [
     {
         "name": "affiliationType",
         "type": "enum",
-        "required": True,
-        "allowedValues": ["school", "company", "workshop"],
+        "required": False,
+        "allowedValues": ["school", "company", "workshop", "none"],
     },
     {"name": "organizationName", "type": "string", "required": False, "maxLength": 200},
     {"name": "organizationCity", "type": "string", "required": False, "maxLength": 120},
-    {"name": "organizationPhone", "type": "phone", "required": True},
-    {"name": "organizationEmail", "type": "email", "required": True},
+    {"name": "organizationPhone", "type": "phone", "required": False},
+    {"name": "organizationEmail", "type": "email", "required": False},
     {"name": "institutionId", "type": "uuid", "required": False},
     {"name": "regionId", "type": "uuid", "required": False},
     {"name": "skillIds", "type": "array", "required": True},

@@ -155,6 +155,11 @@ class Competition(Base):
     description = Column(Text, nullable=True)
     organising_body = Column(JSON, nullable=True)
     branding = Column(JSON, nullable=True)
+    # Optional competition-wide general criteria (PDF/DOCX)
+    general_criteria_object_key = Column(String(512), nullable=True)
+    general_criteria_file_name = Column(String(255), nullable=True)
+    general_criteria_content_type = Column(String(120), nullable=True)
+    general_criteria_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
