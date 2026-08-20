@@ -10,9 +10,11 @@ from app.dependencies.database import DBSessionDep
 from app.schemas.public_portal import (
     PublicCompetitorDirectoryOut,
     PublicCompetitorProfileOut,
+    PublicStatsOut,
     SkillProgressionOut,
 )
 from app.services import public_portal as portal_service
+from app.services import public_stats as public_stats_service
 
 router = APIRouter(tags=["public-portal"])
 
@@ -24,6 +26,18 @@ def _client_key(request: Request) -> str:
     if request.client and request.client.host:
         return request.client.host
     return "anonymous"
+
+
+@router.get("/public/stats", response_model=PublicStatsOut)
+async def get_public_stats(
+    session: DBSessionDep,
+    request: Request,
+) -> PublicStatsOut:
+    portal_service.check_public_rate_limit(
+        f"stats:{_client_key(request)}",
+        public_stats_service.STATS_RATE_LIMIT_PER_MINUTE,
+    )
+    return await public_stats_service.get_public_stats(session)
 
 
 @router.get(

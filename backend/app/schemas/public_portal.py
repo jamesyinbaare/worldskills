@@ -67,3 +67,36 @@ class SkillProgressionOut(BaseModel):
     skillId: UUID
     skillName: str
     byZone: list[ProgressionZoneOut]
+
+
+class PublicStatsCompetitionOut(BaseModel):
+    competitionId: UUID
+    name: str
+
+
+class PublicStatsTotalsOut(BaseModel):
+    competitorsRegistered: int = 0
+    skillAreas: int = 0
+    expertsAssigned: int = 0
+
+
+class PublicStatsExpertOut(BaseModel):
+    expertId: UUID
+    fullName: str
+
+
+class PublicStatsSkillOut(BaseModel):
+    competitionId: UUID
+    skillId: UUID
+    name: str
+    number: str | None = None
+    competitorsRegistered: int = 0
+    capacity: int | None = None
+    experts: list[PublicStatsExpertOut] = Field(default_factory=list)
+
+
+class PublicStatsOut(BaseModel):
+    generatedAt: str
+    competitions: list[PublicStatsCompetitionOut] = Field(default_factory=list)
+    totals: PublicStatsTotalsOut = Field(default_factory=PublicStatsTotalsOut)
+    skills: list[PublicStatsSkillOut] = Field(default_factory=list)
