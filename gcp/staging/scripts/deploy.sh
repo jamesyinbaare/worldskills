@@ -79,6 +79,14 @@ else
     dc logs --tail 80 world-skills-backend || true
 fi
 
+echo "Verifying backend /ready (DB) inside the container..."
+if dc exec -T world-skills-backend curl -fsS "http://127.0.0.1:80/ready" > /dev/null; then
+    echo "Backend /ready OK (database reachable)."
+else
+    echo "Warning: in-container /ready failed — check Cloud SQL proxy, DATABASE_URL, and connection budget."
+    dc logs --tail 80 world-skills-backend cloud-sql-proxy || true
+fi
+
 echo "Verifying backend via Traefik on localhost (Host header; avoids VM hairpin to public IP)..."
 if curl -fsS -o /dev/null \
     --connect-timeout 5 \
