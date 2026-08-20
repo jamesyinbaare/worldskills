@@ -3,6 +3,7 @@ import Link from "next/link";
 import { MessageCircle, Phone } from "lucide-react";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
 import { HomeOpenCompetitions } from "@/components/competitions/HomeOpenCompetitions";
+import { HomeLiveStats } from "@/components/home/HomeLiveStats";
 import { Button } from "@/components/ui/button";
 
 const journeySteps = [
@@ -35,7 +36,7 @@ const contactTeam = [
 export default function Home() {
   return (
     <>
-      <section className="relative isolate flex min-h-[max(22rem,calc(68dvh-var(--site-header-height)))] overflow-hidden bg-brand-blue sm:min-h-[max(26rem,calc(72dvh-var(--site-header-height)))] lg:min-h-[max(30rem,calc(78dvh-var(--site-header-height)))] xl:min-h-[max(34rem,calc(82dvh-var(--site-header-height)))]">
+      <section className="relative isolate flex min-h-[max(22rem,calc(68dvh-var(--site-header-height)))] flex-col overflow-hidden bg-brand-blue sm:min-h-[max(26rem,calc(72dvh-var(--site-header-height)))] lg:min-h-[max(30rem,calc(78dvh-var(--site-header-height)))] xl:min-h-[max(34rem,calc(82dvh-var(--site-header-height)))]">
         <div className="absolute inset-0" aria-hidden>
           <Image
             src="/auto2.jpg"
@@ -99,6 +100,8 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        <HomeLiveStats />
       </section>
 
       <HomeOpenCompetitions />

@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { MoreHorizontalIcon } from "lucide-react";
+import { DownloadIcon, MoreHorizontalIcon } from "lucide-react";
 import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import {
   AdminCompetitorItem,
   ApiError,
+  exportAdminCompetitorsExcel,
   fetchAdminUploadedConsentForm,
   listAdminCompetitors,
+  triggerBrowserDownload,
   verifyConsentForm,
 } from "@/lib/api";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
@@ -66,6 +68,7 @@ function CompetitorsPageInner() {
   const [error, setError] = useState<ApiError | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [exportPending, setExportPending] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -99,6 +102,23 @@ function CompetitorsPageInner() {
       cancelled = true;
     };
   }, [competitionId, filters.skillId, filters.q, reloadKey]);
+
+  async function onExportExcel() {
+    if (!competitionId) return;
+    setExportPending(true);
+    setError(null);
+    try {
+      const { blob, filename } = await exportAdminCompetitorsExcel(competitionId, {
+        skillId: filters.skillId || null,
+        q: filters.q || null,
+      });
+      triggerBrowserDownload(blob, filename);
+    } catch (err) {
+      if (err instanceof ApiError) setError(err);
+    } finally {
+      setExportPending(false);
+    }
+  }
 
   async function onViewConsent(competitorId: string) {
     setError(null);
@@ -155,6 +175,20 @@ function CompetitorsPageInner() {
           className="mb-0"
           title="Competitors"
           description="Registered competitors for a competition, filterable by skill area."
+          actions={
+            competitionId ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-10 gap-1.5"
+                disabled={exportPending || loading}
+                onClick={() => void onExportExcel()}
+              >
+                <DownloadIcon className="size-4" aria-hidden />
+                {exportPending ? "Downloading…" : "Download Excel"}
+              </Button>
+            ) : null
+          }
         />
       </div>
 

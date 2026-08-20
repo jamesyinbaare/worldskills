@@ -78,6 +78,11 @@ def reset_rate_limits() -> None:
         _rate_buckets.clear()
 
 
+def check_public_rate_limit(client_key: str, limit: int) -> None:
+    """Enforce an in-process per-minute rate limit for public portal routes."""
+    _check_rate_limit(client_key, limit)
+
+
 def _minute_bucket() -> int:
     return int(time.time() // 60)
 

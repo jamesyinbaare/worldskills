@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
 from app.core.rbac import Capability, has_capability, is_admin_role
-from app.models import Competition, Competitor, Institution, Skill, User, Zone
+from app.models import Competition, Competitor, Institution, Region, Skill, User, Zone
 from app.schemas.competitors_admin import AdminCompetitorItem
 
 
@@ -159,10 +159,11 @@ async def export_admin_competitors_xlsx(
         skill_label = skill.name
 
     stmt = (
-        select(Competitor, Skill, Institution, Zone)
+        select(Competitor, Skill, Institution, Zone, Region)
         .join(Skill, Skill.id == Competitor.skill_id)
         .outerjoin(Institution, Institution.id == Competitor.institution_id)
         .outerjoin(Zone, Zone.id == Competitor.zone_id)
+        .outerjoin(Region, Region.id == Competitor.region_id)
         .where(Competitor.competition_id == competition_id)
     )
     if skill_id is not None:
@@ -180,6 +181,7 @@ async def export_admin_competitors_xlsx(
                 Competitor.family_name.ilike(term),
                 Skill.name.ilike(term),
                 Institution.name.ilike(term),
+                Region.name.ilike(term),
             )
         )
     stmt = stmt.order_by(
@@ -204,6 +206,7 @@ async def export_admin_competitors_xlsx(
         "Mobile",
         "WhatsApp",
         "Skill",
+        "Region",
         "Zone",
         "Institution",
         "Status",
@@ -215,7 +218,7 @@ async def export_admin_competitors_xlsx(
         "Coach WhatsApp",
     ]
     ws.append(headers)
-    for comp, skill, inst, zone in rows:
+    for comp, skill, inst, zone, region in rows:
         coach = comp.coach if isinstance(comp.coach, dict) else None
         ws.append(
             [
@@ -228,6 +231,7 @@ async def export_admin_competitors_xlsx(
                 _cell(comp.mobile),
                 _cell(comp.whatsapp),
                 _cell(skill.name),
+                _cell(region.name if region else None),
                 _cell(zone.name if zone else None),
                 _cell(inst.name if inst else None),
                 _cell(comp.status),

@@ -3071,6 +3071,45 @@ export type SkillProgressionOut = {
   byZone: ProgressionZoneOut[];
 };
 
+export type PublicStatsCompetitionOut = {
+  competitionId: string;
+  name: string;
+};
+
+export type PublicStatsTotalsOut = {
+  competitorsRegistered: number;
+  skillAreas: number;
+  expertsAssigned: number;
+};
+
+export type PublicStatsExpertOut = {
+  expertId: string;
+  fullName: string;
+};
+
+export type PublicStatsSkillOut = {
+  competitionId: string;
+  skillId: string;
+  name: string;
+  number?: string | null;
+  competitorsRegistered: number;
+  capacity?: number | null;
+  experts: PublicStatsExpertOut[];
+};
+
+export type PublicStatsOut = {
+  generatedAt: string;
+  competitions: PublicStatsCompetitionOut[];
+  totals: PublicStatsTotalsOut;
+  skills: PublicStatsSkillOut[];
+};
+
+export async function getPublicStats(): Promise<PublicStatsOut> {
+  return apiFetch<PublicStatsOut>("/public/stats", {
+    skipAuthRetry: true,
+  });
+}
+
 export async function fetchSkillProgression(
   competitionId: string,
   skillId: string,
