@@ -52,7 +52,7 @@ Root files:
 
 5. **VM bootstrap**: SSH in and run `./gcp/staging/infrastructure/scripts/setup-gce-vm.sh` (or install Docker + Compose manually).
 
-6. **Cloud SQL**: Create a PostgreSQL instance and database/user for world-skills. Note the **connection name** `project:region:instance` and set `CLOUD_SQL_CONNECTION_NAME` to that value (not an instance name from another project/product).
+6. **Cloud SQL**: Create a PostgreSQL instance and database/user for world-skills, **or** reuse a shared instance (another product’s Cloud SQL) with a **separate database** for world-skills. Set `CLOUD_SQL_CONNECTION_NAME` to `project:region:instance`. Set `DATABASE_URL` to the world-skills database name on that instance (host `cloud-sql-proxy`). When sharing an instance, keep pools small (`POOL_SIZE` / `MAX_OVERFLOW`, e.g. 5/5) so both apps stay under Cloud SQL `max_connections`.
 
 7. **DNS**: Point `A`/`AAAA` records for these hosts at the VM’s external IP:
 
@@ -84,6 +84,24 @@ Root files:
    ```
 
 `prestart.sh` runs **Alembic migrations** and **initial super admin** when the backend container starts. On a fresh or half-failed migrate (e.g. after a failed `upgrade`), reset the empty staging database (drop app schema / recreate DB) before re-deploying — do not `alembic stamp head` without applying revisions.
+
+### DB / proxy troubleshooting
+
+Symptoms: `/health` is 200 but `/settings`, `/auth/register`, etc. hang or fail with `TimeoutError`, `ConnectionDoesNotExistError`, or `Temporary failure in name resolution`. Proxy logs show `Accepted connection` then `instance closed the connection`.
+
+1. Confirm DNS inside the backend container: `getent hosts cloud-sql-proxy`.
+2. Confirm `DATABASE_URL` uses host `cloud-sql-proxy` and the **world-skills** database/user (not the other product’s DB name on a shared instance).
+3. Test auth through the proxy (replace user/password/db):
+
+   ```bash
+   docker run --rm --network world-skills-network-staging postgres:16 \
+     psql "postgresql://USER:PASSWORD@cloud-sql-proxy:5432/WORLD_SKILLS_DB" -c 'SELECT current_database(), now();'
+   ```
+
+4. Check Cloud SQL connection count / `max_connections` if both apps share the instance.
+5. After fixing env, recreate proxy + backend:  
+   `docker compose -f compose.staging.gcp.yaml up -d --force-recreate cloud-sql-proxy world-skills-backend`
+6. Prefer `/ready` (runs `SELECT 1`) over `/health` when checking whether the API can serve traffic.
 
 ## Frontend API URL
 

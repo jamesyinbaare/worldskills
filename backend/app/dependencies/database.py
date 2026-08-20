@@ -56,6 +56,9 @@ class DBSettings(BaseSettings):
     max_overflow: int = 10
     pool_timeout: int = 30
     pool_recycle: int = 1800  # 30 minutes
+    pool_pre_ping: bool = True
+    # asyncpg connect timeout (seconds); avoids multi-minute hangs when Cloud SQL/proxy is down
+    database_connect_timeout: int = 10
     mock_database: bool = False
     use_null_pool: bool = False
     database_extensions: list[str] = []
@@ -106,6 +109,9 @@ def asyncpg_connect_args(database_url: str) -> dict[str, Any]:
 
     Disable SSL unless DATABASE_SSL / URL ssl|sslmode explicitly enables it.
     Host ``cloud-sql-proxy`` always forces ssl=False.
+
+    Always sets a connect ``timeout`` so failed proxy/Cloud SQL handshakes fail
+    in seconds instead of hanging for minutes.
     """
     normalized = (
         database_url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
@@ -134,9 +140,21 @@ def asyncpg_connect_args(database_url: str) -> dict[str, Any]:
         "allow",
     } or env_ssl in {"1", "true", "require", "verify-ca", "verify-full"}
 
+    args: dict[str, Any] = {"timeout": db_settings.database_connect_timeout}
     if host == "cloud-sql-proxy" or explicit_disable or not explicit_enable:
-        return {"ssl": False}
-    return {}
+        args["ssl"] = False
+    return args
+
+
+def _engine_pool_kwargs() -> dict[str, Any]:
+    return {
+        "echo": db_settings.echo_sql,
+        "pool_size": db_settings.pool_size,
+        "max_overflow": db_settings.max_overflow,
+        "pool_timeout": db_settings.pool_timeout,
+        "pool_recycle": db_settings.pool_recycle,
+        "pool_pre_ping": db_settings.pool_pre_ping,
+    }
 
 
 class DatabaseSessionManager:
@@ -261,11 +279,7 @@ if db_settings.mock_database:
         sessionmanager = TestingDatabaseSessionManager(
             _async_url,
             {
-                "echo": db_settings.echo_sql,
-                "pool_size": db_settings.pool_size,
-                "max_overflow": db_settings.max_overflow,
-                "pool_timeout": db_settings.pool_timeout,
-                "pool_recycle": db_settings.pool_recycle,
+                **_engine_pool_kwargs(),
                 "connect_args": _connect_args,
             },
         )
@@ -276,11 +290,7 @@ elif db_settings.database_use:
     sessionmanager = DatabaseSessionManager(
         _async_url,
         {
-            "echo": db_settings.echo_sql,
-            "pool_size": db_settings.pool_size,
-            "max_overflow": db_settings.max_overflow,
-            "pool_timeout": db_settings.pool_timeout,
-            "pool_recycle": db_settings.pool_recycle,
+            **_engine_pool_kwargs(),
             "connect_args": asyncpg_connect_args(_async_url),
         },
     )

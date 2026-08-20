@@ -56,13 +56,14 @@ services:
     restart: unless-stopped
     depends_on:
       cloud-sql-proxy:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      # /ready runs SELECT 1; /health stays liveness-only for probes that must not depend on DB
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ready || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 3
-      start_period: 60s
+      start_period: 90s
     networks:
       - world-skills-network
 
@@ -93,14 +94,24 @@ services:
       - world-skills-network
 
   cloud-sql-proxy:
-    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
+    # Alpine variant includes wget for Compose healthchecks (default image is distroless).
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.2-alpine
     container_name: world-skills-cloud-sql-proxy-staging
     env_file:
       - .env.staging.gcp
     command:
       - --address=0.0.0.0
       - --port=5432
+      - --health-check
+      - --http-address=0.0.0.0
+      - --http-port=9090
       - ${CLOUD_SQL_CONNECTION_NAME}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9090/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
     networks:
       - world-skills-network
     restart: unless-stopped

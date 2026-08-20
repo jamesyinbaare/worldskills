@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
+from sqlalchemy import text
 
 from app.api import appeals as appeals_api
 from app.api import assignments as assignments_api
@@ -127,7 +128,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.logger = logging.getLogger("http")
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in {"/health", "/metrics"}:
+        if request.url.path in {"/health", "/ready", "/metrics"}:
             return await call_next(request)
 
         start_time = time.monotonic()
@@ -229,6 +230,21 @@ def root() -> dict[str, Any]:
 @app.get("/health", status_code=status.HTTP_200_OK)
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ready", status_code=status.HTTP_200_OK)
+async def ready() -> dict[str, str]:
+    """Readiness: process is up and can obtain a working DB connection."""
+    try:
+        manager = get_sessionmanager()
+        async with manager.session() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database unavailable",
+        ) from exc
+    return {"status": "ready"}
 
 
 if __name__ == "__main__":
