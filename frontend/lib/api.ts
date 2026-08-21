@@ -724,7 +724,11 @@ export async function fetchSponsorLogo(
   const { blob, filename, contentType } = await apiFetchBlob(
     `/sponsors/${sponsorId}/logo`,
   );
-  return { blob, filename: filename || "logo", contentType };
+  return {
+    blob,
+    filename: filename || "logo",
+    contentType: contentType ?? undefined,
+  };
 }
 
 export async function listPublicSponsors(): Promise<SponsorOut[]> {
@@ -740,7 +744,11 @@ export async function fetchPublicSponsorLogo(
     `/public/sponsors/${sponsorId}/logo`,
     { skipAuthRetry: true },
   );
-  return { blob, filename: filename || "logo", contentType };
+  return {
+    blob,
+    filename: filename || "logo",
+    contentType: contentType ?? undefined,
+  };
 }
 
 export async function listCatalogSkills(opts?: {
