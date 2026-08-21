@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
@@ -20,6 +21,23 @@ from sqlalchemy.orm import relationship
 
 from app.dependencies.database import Base
 
+
+sponsor_catalog_skills = Table(
+    "sponsor_catalog_skills",
+    Base.metadata,
+    Column(
+        "sponsor_id",
+        UUID(as_uuid=True),
+        ForeignKey("sponsors.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "catalog_skill_id",
+        UUID(as_uuid=True),
+        ForeignKey("catalog_skills.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
@@ -185,6 +203,31 @@ class Family(Base):
     catalog_skills = relationship("CatalogSkill", back_populates="family")
 
 
+class Sponsor(Base):
+    """Global sponsorship catalog (admin-managed)."""
+
+    __tablename__ = "sponsors"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(200), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    website = Column(String(512), nullable=True)
+    logo_object_key = Column(String(512), nullable=True)
+    logo_file_name = Column(String(255), nullable=True)
+    logo_content_type = Column(String(120), nullable=True)
+    logo_scan_status = Column(String(32), nullable=True)  # CLEAN | INFECTED | PENDING
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    catalog_skills = relationship(
+        "CatalogSkill",
+        secondary=sponsor_catalog_skills,
+        back_populates="sponsors",
+        order_by="CatalogSkill.name",
+    )
+
+
 class CatalogSkill(Base):
     """Global skill catalog entry (US-SKL-02). Associated to cycles via Skill (CycleSkill)."""
 
@@ -200,7 +243,11 @@ class CatalogSkill(Base):
 
     family = relationship("Family", back_populates="catalog_skills")
     cycle_skills = relationship("Skill", back_populates="catalog_skill")
-
+    sponsors = relationship(
+        "Sponsor",
+        secondary=sponsor_catalog_skills,
+        back_populates="catalog_skills",
+    )
 
 class AgeRule(Base):
     __tablename__ = "age_rules"

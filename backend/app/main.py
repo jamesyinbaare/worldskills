@@ -37,6 +37,7 @@ from app.api import registrations as registrations_api
 from app.api import scheduling as scheduling_api
 from app.api import settings as settings_api
 from app.api import skills as skills_api
+from app.api import sponsors as sponsors_api
 from app.api import stages as stages_api
 from app.api import submissions as submissions_api
 from app.api import assessment as assessment_api
@@ -218,6 +219,7 @@ app.include_router(scheduling_api.router)
 app.include_router(public_portal_api.router)
 app.include_router(users_api.router)
 app.include_router(institutions_api.router)
+app.include_router(sponsors_api.router)
 app.include_router(governance_api.router)
 app.include_router(settings_api.router)
 

@@ -4,6 +4,7 @@ import { MessageCircle, Phone } from "lucide-react";
 import { CrestLogo, WorldSkillsLogo } from "@/components/brand/LogoMark";
 import { HomeOpenCompetitions } from "@/components/competitions/HomeOpenCompetitions";
 import { HomeLiveStats } from "@/components/home/HomeLiveStats";
+import { HomeSponsors } from "@/components/home/HomeSponsors";
 import { Button } from "@/components/ui/button";
 
 const journeySteps = [
@@ -185,6 +186,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <HomeSponsors />
 
       <section
         id="support"

@@ -400,6 +400,23 @@ export type FamilyOut = {
   active: boolean;
 };
 
+export type SponsorSkillAreaOut = {
+  catalogSkillId: string;
+  name: string;
+  number?: string | null;
+};
+
+export type SponsorOut = {
+  sponsorId: string;
+  name: string;
+  description?: string | null;
+  website?: string | null;
+  hasLogo: boolean;
+  logoFileName?: string | null;
+  active: boolean;
+  skillAreas?: SponsorSkillAreaOut[];
+};
+
 export type CatalogSkillOut = {
   skillId: string;
   name: string;
@@ -649,6 +666,81 @@ export async function patchFamily(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export async function listSponsors(): Promise<SponsorOut[]> {
+  return apiFetch<SponsorOut[]>("/sponsors");
+}
+
+export async function createSponsor(payload: {
+  name: string;
+  description?: string | null;
+  website?: string | null;
+  catalogSkillIds?: string[];
+}): Promise<SponsorOut> {
+  return apiFetch<SponsorOut>("/sponsors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function patchSponsor(
+  sponsorId: string,
+  payload: {
+    name?: string;
+    description?: string | null;
+    website?: string | null;
+    active?: boolean;
+    catalogSkillIds?: string[];
+  },
+): Promise<SponsorOut> {
+  return apiFetch<SponsorOut>(`/sponsors/${sponsorId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadSponsorLogo(
+  sponsorId: string,
+  file: File,
+): Promise<SponsorOut> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<SponsorOut>(`/sponsors/${sponsorId}/logo`, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function deleteSponsorLogo(sponsorId: string): Promise<SponsorOut> {
+  return apiFetch<SponsorOut>(`/sponsors/${sponsorId}/logo`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchSponsorLogo(
+  sponsorId: string,
+): Promise<{ blob: Blob; filename: string; contentType?: string }> {
+  const { blob, filename, contentType } = await apiFetchBlob(
+    `/sponsors/${sponsorId}/logo`,
+  );
+  return { blob, filename: filename || "logo", contentType };
+}
+
+export async function listPublicSponsors(): Promise<SponsorOut[]> {
+  return apiFetch<SponsorOut[]>("/public/sponsors", {
+    skipAuthRetry: true,
+  });
+}
+
+export async function fetchPublicSponsorLogo(
+  sponsorId: string,
+): Promise<{ blob: Blob; filename: string; contentType?: string }> {
+  const { blob, filename, contentType } = await apiFetchBlob(
+    `/public/sponsors/${sponsorId}/logo`,
+    { skipAuthRetry: true },
+  );
+  return { blob, filename: filename || "logo", contentType };
 }
 
 export async function listCatalogSkills(opts?: {
@@ -1347,6 +1439,7 @@ export type PublicSkillOut = {
   description?: string | null;
   hasCriteriaDocument?: boolean;
   criteriaFileName?: string | null;
+  sponsors?: SponsorOut[];
 };
 
 export type PublicCompetitionOut = {

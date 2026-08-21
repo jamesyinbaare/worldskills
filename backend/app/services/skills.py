@@ -164,6 +164,7 @@ async def list_available_skills(session: AsyncSession, competition_id: uuid.UUID
                 "number": skill.number,
                 "familyName": family_name,
                 "description": description,
+                "catalogSkillId": skill.catalog_skill_id,
                 "active": True,
                 "hasCriteriaDocument": bool(
                     skill.criteria_object_key and skill.criteria_file_name
