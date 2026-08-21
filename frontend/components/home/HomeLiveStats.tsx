@@ -194,7 +194,7 @@ export function HomeLiveStats() {
     },
     {
       key: "experts",
-      label: "Experts assigned",
+      label: "Experts",
       value: totals.expertsAssigned,
       icon: GraduationCapIcon,
     },

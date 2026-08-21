@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.sponsors import SponsorOut
+
 
 class PeriodIn(BaseModel):
     start: date
@@ -69,6 +71,7 @@ class PublicSkillOut(BaseModel):
     description: str | None = None
     hasCriteriaDocument: bool = False
     criteriaFileName: str | None = None
+    sponsors: list[SponsorOut] = Field(default_factory=list)
 
 
 class PublicCompetitionOut(BaseModel):

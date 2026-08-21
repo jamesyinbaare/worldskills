@@ -12,12 +12,14 @@ import {
   ApiError,
   downloadPublicGeneralCriteriaDocument,
   downloadPublicSkillCriteriaDocument,
+  fetchPublicSponsorLogo,
   getPublicCompetition,
   isCompetitorRole,
   listMyRegistrations,
   triggerBrowserDownload,
   type PublicCompetitionOut,
   type PublicSkillOut,
+  type SponsorOut,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
@@ -33,6 +35,111 @@ import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+function SkillSponsorLogo({
+  sponsor,
+}: {
+  sponsor: SponsorOut;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sponsor.hasLogo) {
+      setSrc(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    void (async () => {
+      try {
+        const { blob } = await fetchPublicSponsorLogo(sponsor.sponsorId);
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch {
+        if (!cancelled) setSrc(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [sponsor.sponsorId, sponsor.hasLogo]);
+
+  if (!sponsor.hasLogo || !src) {
+    return (
+      <span
+        className="flex size-10 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground"
+        aria-hidden
+      >
+        {sponsor.name.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- blob: from public API
+    <img
+      src={src}
+      alt=""
+      className="size-10 rounded-lg bg-white object-contain ring-1 ring-border"
+    />
+  );
+}
+
+function SkillSponsorsStrip({ sponsors }: { sponsors: SponsorOut[] }) {
+  if (sponsors.length === 0) return null;
+
+  return (
+    <section
+      className="space-y-3"
+      aria-labelledby="skill-sponsors-heading"
+    >
+      <h2
+        id="skill-sponsors-heading"
+        className="text-lg font-semibold tracking-tight text-foreground"
+      >
+        Supported by
+      </h2>
+      <ul className="flex flex-wrap gap-3">
+        {sponsors.map((sponsor) => {
+          const inner = (
+            <>
+              <SkillSponsorLogo sponsor={sponsor} />
+              <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                {sponsor.name}
+              </span>
+            </>
+          );
+          const className =
+            "inline-flex max-w-full items-center gap-2.5 rounded-xl bg-card px-3 py-2 ring-1 ring-border transition hover:ring-brand-blue/30";
+
+          if (sponsor.website) {
+            return (
+              <li key={sponsor.sponsorId}>
+                <a
+                  href={sponsor.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={className}
+                  aria-label={`${sponsor.name} (opens website)`}
+                >
+                  {inner}
+                </a>
+              </li>
+            );
+          }
+
+          return (
+            <li key={sponsor.sponsorId}>
+              <div className={className}>{inner}</div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 export default function SkillAreaDetailPage() {
   const params = useParams<{ competitionId: string; skillId: string }>();
@@ -324,6 +431,8 @@ export default function SkillAreaDetailPage() {
                   </p>
                 )}
               </section>
+
+              <SkillSponsorsStrip sponsors={skill.sponsors ?? []} />
 
               <section
                 className="space-y-4 rounded-2xl bg-card p-5 ring-1 ring-border sm:p-6"

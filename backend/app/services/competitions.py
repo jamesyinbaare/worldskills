@@ -178,6 +178,7 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
 
     from app.models import RegistrationWindow
     from app.services import skills as skill_service
+    from app.services import sponsors as sponsor_service
 
     now = datetime.utcnow()
     result = await session.execute(
@@ -199,6 +200,14 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
         )
     cycle, window = row
     skills = await skill_service.list_available_skills(session, competition_id)
+    catalog_ids = [
+        skill_id
+        for skill_id in (s.get("catalogSkillId") for s in skills)
+        if skill_id is not None
+    ]
+    sponsors_by_catalog = await sponsor_service.active_sponsors_by_catalog_skill_ids(
+        session, catalog_ids
+    )
     return {
         "competitionId": cycle.id,
         "name": cycle.name,
@@ -222,6 +231,10 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
                 "description": s.get("description"),
                 "hasCriteriaDocument": bool(s.get("hasCriteriaDocument")),
                 "criteriaFileName": s.get("criteriaFileName"),
+                "sponsors": [
+                    sponsor_service.sponsor_out_kwargs(sp)
+                    for sp in sponsors_by_catalog.get(s.get("catalogSkillId"), [])
+                ],
             }
             for s in skills
         ],
