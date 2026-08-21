@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from fastapi import status
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -60,6 +61,37 @@ _PRIVILEGED_ADMIN_ROLES = {UserRole.SUPER_ADMIN, UserRole.ADMIN}
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def map_user_unique_violation(exc: IntegrityError) -> AppError | None:
+    """Map users-table unique violations to a client-safe AppError.
+
+    Returns None when the integrity error is not a known users unique constraint.
+    """
+    text = str(getattr(exc, "orig", None) or exc).lower()
+    if "ix_users_email" in text:
+        return AppError(
+            "DUPLICATE",
+            "Email already registered",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("email", "DUPLICATE")],
+        )
+    if "ix_users_phone_number" in text:
+        return AppError(
+            "DUPLICATE",
+            "Phone number already registered",
+            status_code=status.HTTP_409_CONFLICT,
+            fields=[FieldError("phoneNumber", "DUPLICATE")],
+        )
+    return None
+
+
+def raise_user_unique_violation(exc: IntegrityError) -> None:
+    """Raise a mapped AppError for known user unique violations; else re-raise."""
+    mapped = map_user_unique_violation(exc)
+    if mapped is not None:
+        raise mapped from exc
+    raise exc
 
 
 def assert_can_create_role(actor: User, target_role: UserRole) -> None:

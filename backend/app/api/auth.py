@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import AppError, FieldError
 from app.core.security import (
@@ -238,7 +239,11 @@ async def register(
         last_login=datetime.utcnow(),
     )
     session.add(user)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        users_service.raise_user_unique_violation(exc)
 
     await write_audit_event(
         session,
@@ -371,7 +376,11 @@ async def register_institution(
         last_login=datetime.utcnow(),
     )
     session.add(user)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        users_service.raise_user_unique_violation(exc)
 
     await write_audit_event(
         session,
