@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import status
@@ -13,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, FieldError
 from app.core.rbac import Capability, has_capability
 from app.models import (
+    Artefact,
     Competitor,
     ExpertAssignment,
     MarkingScheme,
@@ -24,6 +27,7 @@ from app.models import (
     User,
 )
 from app.schemas.assessment import (
+    AssessmentArtefactOut,
     AssessmentViewOut,
     BreakdownOut,
     CriterionMarkIn,
@@ -35,6 +39,7 @@ from app.schemas.assessment import (
 )
 from app.services.assignments import assert_can_score
 from app.services.audit import write_audit_event
+from app.services.storage import ObjectStorage, get_object_storage
 
 _SCOREABLE_STATES = {"ACCEPTED", "LATE"}
 
@@ -111,24 +116,73 @@ async def _resolve_scheme_for_submission(
 
 async def _ensure_assigned(
     session: AsyncSession, *, competition_id: uuid.UUID, expert: User, competitor: Competitor
-) -> ExpertAssignment:
+) -> ExpertAssignment | None:
+    """Authorize scoring via global catalog skill areas; optional competition assignment bookkeeping."""
+    from app.services import expert_skill_areas as expert_skill_areas_service
+
+    if competitor.skill_id is None:
+        raise AppError(
+            "NOT_ASSIGNED",
+            "Competitor has no skill area",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("expertId", "NOT_ASSIGNED")],
+        )
+
+    skill = await session.get(Skill, competitor.skill_id)
+    if skill is None or skill.competition_id != competition_id:
+        raise AppError(
+            "NOT_ASSIGNED",
+            "Competitor skill is invalid for this competition",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("expertId", "NOT_ASSIGNED")],
+        )
+
+    if skill.catalog_skill_id is None:
+        raise AppError(
+            "NOT_ASSIGNED",
+            "Skill area is not linked to the catalog; cannot authorize expert",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("expertId", "NOT_ASSIGNED")],
+        )
+
+    has_area = await expert_skill_areas_service.expert_has_catalog_skill(
+        session, expert_id=expert.id, catalog_skill_id=skill.catalog_skill_id
+    )
+    if not has_area:
+        raise AppError(
+            "NOT_ASSIGNED",
+            "Expert is not assigned to this skill area",
+            status_code=status.HTTP_403_FORBIDDEN,
+            fields=[FieldError("expertId", "NOT_ASSIGNED")],
+        )
+
+    # Optional zone restriction from competition bookkeeping
     result = await session.execute(
         select(ExpertAssignment).where(
             ExpertAssignment.competition_id == competition_id,
             ExpertAssignment.expert_id == expert.id,
             ExpertAssignment.skill_id == competitor.skill_id,
-            ExpertAssignment.zone_id == competitor.zone_id,
         )
     )
-    assignment = result.scalar_one_or_none()
-    if assignment is None:
-        raise AppError(
-            "NOT_ASSIGNED",
-            "Expert is not assigned to this skill/zone",
-            status_code=status.HTTP_403_FORBIDDEN,
-            fields=[FieldError("expertId", "NOT_ASSIGNED")],
-        )
-    return assignment
+    rows = list(result.scalars().all())
+    if rows:
+        allowed = False
+        matched: ExpertAssignment | None = None
+        for row in rows:
+            if row.zone_id is None or row.zone_id == competitor.zone_id:
+                allowed = True
+                matched = row
+                break
+        if not allowed:
+            raise AppError(
+                "NOT_ASSIGNED",
+                "Expert is not assigned to this skill/zone",
+                status_code=status.HTTP_403_FORBIDDEN,
+                fields=[FieldError("expertId", "NOT_ASSIGNED")],
+            )
+        return matched
+
+    return None
 
 
 def _ensure_anon_code(submission: Submission, competitor: Competitor) -> str:
@@ -138,6 +192,40 @@ def _ensure_anon_code(submission: Submission, competitor: Competitor) -> str:
     code = f"A-{competitor.ref_no[-8:].upper()}" if competitor.ref_no else f"A-{secrets.token_hex(4).upper()}"
     submission.anon_code = code
     return code
+
+
+_UNSAFE_FILENAME_CHARS = re.compile(r'[/\\:*?"<>|\r\n]+')
+_MULTI_SPACE = re.compile(r"\s+")
+_MAX_DOWNLOAD_NAME_LEN = 180
+
+
+def _sanitize_filename_segment(value: str, *, fallback: str = "file") -> str:
+    cleaned = _UNSAFE_FILENAME_CHARS.sub("-", (value or "").strip())
+    cleaned = _MULTI_SPACE.sub(" ", cleaned).strip(" .-_")
+    return cleaned or fallback
+
+
+def assessment_download_filename(
+    *,
+    anon_code: str,
+    deliverable_code: str,
+    original_filename: str,
+) -> str:
+    """Blind-safe download name: {anon}__{deliverable}__{original}."""
+    anon = _sanitize_filename_segment(anon_code, fallback="anon")
+    deliverable = _sanitize_filename_segment(deliverable_code, fallback="deliverable")
+    original = _sanitize_filename_segment(Path(original_filename or "").name, fallback="artefact")
+    name = f"{anon}__{deliverable}__{original}"
+    if len(name) <= _MAX_DOWNLOAD_NAME_LEN:
+        return name
+
+    stem = Path(original).stem
+    suffix = Path(original).suffix
+    prefix = f"{anon}__{deliverable}__"
+    budget = _MAX_DOWNLOAD_NAME_LEN - len(prefix) - len(suffix)
+    if budget < 1:
+        return (prefix + "file" + suffix)[:_MAX_DOWNLOAD_NAME_LEN]
+    return f"{prefix}{stem[:budget]}{suffix}"
 
 
 def compute_assessor_total(marks: list[Score], penalties: list[Score]) -> int:
@@ -219,7 +307,7 @@ async def get_assessment_view(
     if submission.state not in _SCOREABLE_STATES:
         raise AppError(
             "SUBMISSION_NOT_READY",
-            "Submission is not accepted for scoring",
+            f"Submission state is {submission.state}; only ACCEPTED or LATE can be scored",
             status_code=409,
             fields=[FieldError("state", "SUBMISSION_NOT_READY")],
         )
@@ -253,6 +341,19 @@ async def get_assessment_view(
         )
     ).scalars().all()
 
+    artefacts = (
+        await session.execute(
+            select(Artefact)
+            .where(
+                Artefact.submission_id == submission_id,
+                Artefact.complete.is_(True),
+                Artefact.quarantined.is_(False),
+                Artefact.scan_status == "CLEAN",
+            )
+            .order_by(Artefact.deliverable_code, Artefact.created_at)
+        )
+    ).scalars().all()
+
     return AssessmentViewOut(
         submissionId=submission.id,
         anonCode=anon,
@@ -278,7 +379,88 @@ async def get_assessment_view(
             for s in my_scores
         ],
         total=submission.score_total,
+        artefacts=[
+            AssessmentArtefactOut(
+                artefactId=a.id,
+                deliverableCode=a.deliverable_code,
+                filename=a.filename,
+                contentType=a.content_type,
+                size=int(a.size or 0),
+                scanStatus=a.scan_status,
+            )
+            for a in artefacts
+        ],
     )
+
+
+async def download_assessment_artefact(
+    session: AsyncSession,
+    submission_id: uuid.UUID,
+    artefact_id: uuid.UUID,
+    *,
+    actor: User,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    storage: ObjectStorage | None = None,
+) -> tuple[bytes, str, str]:
+    """Download a CLEAN artefact for an assigned expert scoring this submission."""
+    if not has_capability(actor.role, Capability.SCORE_SUBMISSION):
+        raise AppError("FORBIDDEN", "Missing score capability", status_code=403)
+
+    submission = await session.get(Submission, submission_id)
+    if submission is None:
+        raise AppError("SUBMISSION_NOT_FOUND", "Submission not found", status_code=404)
+    if submission.state not in _SCOREABLE_STATES:
+        raise AppError(
+            "SUBMISSION_NOT_READY",
+            f"Submission state is {submission.state}; only ACCEPTED or LATE can be scored",
+            status_code=409,
+            fields=[FieldError("state", "SUBMISSION_NOT_READY")],
+        )
+
+    competitor = await session.get(Competitor, submission.competitor_id)
+    assert competitor is not None
+    await _ensure_assigned(
+        session, competition_id=submission.competition_id, expert=actor, competitor=competitor
+    )
+    await assert_can_score(
+        session,
+        competition_id=submission.competition_id,
+        expert=actor,
+        competitor=competitor,
+        submission_id=submission.id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+    artefact = await session.get(Artefact, artefact_id)
+    if (
+        artefact is None
+        or artefact.submission_id != submission_id
+        or not artefact.complete
+        or artefact.quarantined
+        or artefact.scan_status != "CLEAN"
+        or not artefact.storage_key
+    ):
+        raise AppError(
+            "ARTEFACT_NOT_FOUND",
+            "Artefact not available for download",
+            status_code=404,
+            fields=[FieldError("artefactId", "ARTEFACT_NOT_FOUND")],
+        )
+
+    anon = _ensure_anon_code(submission, competitor)
+    await session.flush()
+
+    store = storage or get_object_storage()
+    data = store.get(artefact.storage_key)
+    content_type = artefact.content_type or "application/octet-stream"
+    download_name = assessment_download_filename(
+        anon_code=anon,
+        deliverable_code=artefact.deliverable_code,
+        original_filename=artefact.filename,
+    )
+    return data, download_name, content_type
 
 
 async def put_scores(
@@ -299,7 +481,7 @@ async def put_scores(
     if submission.state not in _SCOREABLE_STATES:
         raise AppError(
             "SUBMISSION_NOT_READY",
-            "Submission is not accepted for scoring",
+            f"Submission state is {submission.state}; only ACCEPTED or LATE can be scored",
             status_code=409,
         )
 

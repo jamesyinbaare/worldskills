@@ -55,23 +55,25 @@ def scheme_has_rubric_criteria(scheme: MarkingScheme | None) -> bool:
 
 def deliverables_to_submission_rules(ex: Exercise) -> dict[str, Any]:
     """Map Exercise deliverables to legacy submission_rules shape for US-SUB-02."""
+    allowed: list[dict[str, Any]] = []
     required: list[dict[str, Any]] = []
     for item in ex.deliverables or []:
         if not isinstance(item, dict):
             continue
-        if item.get("required") is False:
-            continue
         max_bytes = item.get("maxSizeBytes")
         max_mb = int(max_bytes / (1024 * 1024)) if max_bytes else None
-        required.append(
-            {
-                "code": item.get("code"),
-                "label": item.get("label"),
-                "formats": list(item.get("allowedTypes") or []),
-                "maxMb": max_mb,
-            }
-        )
+        entry = {
+            "code": item.get("code"),
+            "label": item.get("label"),
+            "formats": list(item.get("allowedTypes") or []),
+            "maxMb": max_mb,
+        }
+        allowed.append(entry)
+        if item.get("required") is False:
+            continue
+        required.append(entry)
     return {
+        "allowedDeliverables": allowed,
         "requiredDeliverables": required,
         "latePolicy": ex.late_policy or "block",
         "timedDurationSeconds": ex.timed_duration_seconds,

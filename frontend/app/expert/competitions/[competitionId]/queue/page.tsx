@@ -7,7 +7,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import {
   ApiError,
   fetchAssessorQueue,
-  isChiefExpertRole,
+  canModerateScores,
   listMyAssignments,
   type MyAssignmentOut,
   type QueueSubmissionOut,
@@ -140,7 +140,7 @@ function ExpertQueueContent() {
     );
   }
 
-  const canModerate = me?.role ? isChiefExpertRole(me.role) : false;
+  const canModerate = me?.role ? canModerateScores(me.role) : false;
 
   return (
     <PageShell width="wide" className="space-y-6">

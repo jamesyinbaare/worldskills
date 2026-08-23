@@ -7,7 +7,7 @@ class AssignmentCreate(BaseModel):
     expertId: UUID
     skillId: UUID | None = None
     cycleSkillId: UUID | None = None
-    zoneId: UUID
+    zoneId: UUID | None = None
 
     @model_validator(mode="after")
     def require_skill(self) -> "AssignmentCreate":
@@ -32,7 +32,7 @@ class AssignmentOut(BaseModel):
     expertId: UUID
     skillId: UUID
     cycleSkillId: UUID | None = None
-    zoneId: UUID
+    zoneId: UUID | None = None
     coiFlags: list[CoiFlagOut]
 
 
@@ -48,7 +48,7 @@ class MyAssignmentOut(BaseModel):
     competitionName: str
     skillId: UUID
     skillName: str
-    zoneId: UUID
+    zoneId: UUID | None = None
     zoneName: str
 
 

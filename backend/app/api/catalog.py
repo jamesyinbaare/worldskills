@@ -17,7 +17,9 @@ from app.schemas.catalog import (
     FamilyOut,
     FamilyPatch,
 )
+from app.schemas.users import UserOut
 from app.services import catalog as catalog_service
+from app.services import expert_skill_areas as expert_skill_areas_service
 
 router = APIRouter(tags=["catalog"])
 
@@ -123,3 +125,32 @@ async def patch_catalog_skill(
         session, skill_id, payload, actor=admin, ip=ip, user_agent=ua
     )
     return _catalog_skill_out(skill)
+
+
+@router.get("/skills/{skill_id}/experts", response_model=list[UserOut])
+async def list_catalog_skill_experts(
+    skill_id: uuid.UUID,
+    session: DBSessionDep,
+    _admin: AdminUserDep,
+) -> list[dict]:
+    catalog = await session.get(CatalogSkill, skill_id)
+    if catalog is None:
+        from app.core.errors import AppError
+
+        raise AppError("SKILL_NOT_FOUND", "Catalog skill not found", status_code=404)
+    experts = await expert_skill_areas_service.list_experts_for_catalog_skill(
+        session, skill_id
+    )
+    return [
+        {
+            "userId": str(u.id),
+            "email": u.email or "",
+            "fullName": u.full_name,
+            "role": u.role.value,
+            "institutionId": str(u.institution_id) if u.institution_id else None,
+            "isActive": u.is_active,
+            "mustChangePassword": u.must_change_password,
+            "phoneNumber": u.phone_number,
+        }
+        for u in experts
+    ]

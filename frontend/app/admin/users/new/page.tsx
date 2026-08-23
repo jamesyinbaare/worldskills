@@ -5,10 +5,12 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
+  CatalogSkillOut,
   CreateUserResponse,
   InstitutionListItem,
   createUser,
   isSuperAdminRole,
+  listCatalogSkills,
   listInstitutions,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -27,6 +29,7 @@ import {
   CardDescription,
   CardHeader,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -51,6 +54,10 @@ const BASE_ROLES = [
 
 const NO_INSTITUTION = "__none__";
 
+function skillLabel(skill: CatalogSkillOut) {
+  return skill.number ? `${skill.name} (${skill.number})` : skill.name;
+}
+
 export default function NewUserPage() {
   const router = useRouter();
   const { me } = useAuth();
@@ -72,6 +79,8 @@ export default function NewUserPage() {
   );
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [institutions, setInstitutions] = useState<InstitutionListItem[]>([]);
+  const [catalogSkills, setCatalogSkills] = useState<CatalogSkillOut[]>([]);
+  const [catalogSkillIds, setCatalogSkillIds] = useState<string[]>([]);
   const [created, setCreated] = useState<CreateUserResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -79,11 +88,36 @@ export default function NewUserPage() {
 
   const expertRole = role === "EXPERT" || role === "CHIEF_EXPERT";
 
+  const skillsByFamily = useMemo(() => {
+    const map = new Map<string, { familyName: string; skills: CatalogSkillOut[] }>();
+    for (const skill of catalogSkills) {
+      const key = skill.familyId;
+      const bucket = map.get(key) ?? {
+        familyName: skill.familyName ?? "Family",
+        skills: [],
+      };
+      bucket.skills.push(skill);
+      map.set(key, bucket);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.familyName.localeCompare(b.familyName),
+    );
+  }, [catalogSkills]);
+
   useEffect(() => {
     void listInstitutions()
       .then(setInstitutions)
       .catch(() => setInstitutions([]));
+    void listCatalogSkills({ active: true })
+      .then(setCatalogSkills)
+      .catch(() => setCatalogSkills([]));
   }, []);
+
+  function toggleSkill(skillId: string, checked: boolean) {
+    setCatalogSkillIds((prev) =>
+      checked ? [...prev, skillId] : prev.filter((id) => id !== skillId),
+    );
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -109,6 +143,7 @@ export default function NewUserPage() {
         credentialMode,
         temporaryPassword:
           credentialMode === "TEMP_PASSWORD" ? temporaryPassword : undefined,
+        catalogSkillIds: expertRole ? catalogSkillIds : undefined,
       });
       setCreated(out);
     } catch (err) {
@@ -149,9 +184,9 @@ export default function NewUserPage() {
               type="button"
               variant="outline"
               className="min-h-11"
-              onClick={() => router.push("/admin/users")}
+              onClick={() => router.push(`/admin/users/${created.userId}`)}
             >
-              Back to list
+              Open account
             </Button>
           </AlertDescription>
         </Alert>
@@ -241,23 +276,69 @@ export default function NewUserPage() {
                 </Select>
               </div>
               {expertRole ? (
-                <div className="space-y-2">
-                  <Label htmlFor="institutionId">Institution (COI, optional)</Label>
-                  <Select value={institutionId} onValueChange={setInstitutionId}>
-                    <SelectTrigger id="institutionId" className="min-h-11 w-full">
-                      <SelectValue placeholder="Select institution" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_INSTITUTION}>None</SelectItem>
-                      {institutions.map((i) => (
-                        <SelectItem key={i.institutionId} value={i.institutionId}>
-                          {i.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FieldMessage message={fieldErrors.institutionId} />
-                </div>
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="institutionId">Institution (COI, optional)</Label>
+                    <Select value={institutionId} onValueChange={setInstitutionId}>
+                      <SelectTrigger id="institutionId" className="min-h-11 w-full">
+                        <SelectValue placeholder="Select institution" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_INSTITUTION}>None</SelectItem>
+                        {institutions.map((i) => (
+                          <SelectItem key={i.institutionId} value={i.institutionId}>
+                            {i.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FieldMessage message={fieldErrors.institutionId} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Skill areas</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Experts are global — pick one or more catalog skill areas
+                      (including multiple under the same family).
+                    </p>
+                    {skillsByFamily.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No active catalog skill areas yet.
+                      </p>
+                    ) : (
+                      <div className="max-h-56 space-y-3 overflow-y-auto rounded-lg border border-border p-3">
+                        {skillsByFamily.map((group) => (
+                          <div key={group.familyName} className="space-y-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              {group.familyName}
+                            </p>
+                            {group.skills.map((skill) => {
+                              const checked = catalogSkillIds.includes(skill.skillId);
+                              const inputId = `create-skill-${skill.skillId}`;
+                              return (
+                                <label
+                                  key={skill.skillId}
+                                  htmlFor={inputId}
+                                  className="flex cursor-pointer items-start gap-2.5 text-sm"
+                                >
+                                  <Checkbox
+                                    id={inputId}
+                                    checked={checked}
+                                    onCheckedChange={(value) =>
+                                      toggleSkill(skill.skillId, value === true)
+                                    }
+                                    className="mt-0.5"
+                                  />
+                                  <span>{skillLabel(skill)}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <FieldMessage message={fieldErrors.catalogSkillIds} />
+                  </div>
+                </>
               ) : null}
               <div className="space-y-2">
                 <Label htmlFor="credentialMode">Credentials</Label>

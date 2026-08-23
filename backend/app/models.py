@@ -119,6 +119,11 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     created_by = relationship("User", remote_side=[id], foreign_keys=[created_by_id])
     institution = relationship("Institution", foreign_keys=[institution_id])
+    skill_areas = relationship(
+        "ExpertSkillArea",
+        back_populates="expert",
+        cascade="all, delete-orphan",
+    )
 
 
 class Institution(Base):
@@ -248,6 +253,36 @@ class CatalogSkill(Base):
         secondary=sponsor_catalog_skills,
         back_populates="catalog_skills",
     )
+    expert_assignments = relationship("ExpertSkillArea", back_populates="catalog_skill")
+
+
+class ExpertSkillArea(Base):
+    """Global expert ↔ catalog skill area binding (not competition-scoped)."""
+
+    __tablename__ = "expert_skill_areas"
+    __table_args__ = (
+        UniqueConstraint(
+            "expert_id",
+            "catalog_skill_id",
+            name="uq_expert_skill_areas_expert_catalog_skill",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    expert_id = Column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    catalog_skill_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("catalog_skills.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    expert = relationship("User", back_populates="skill_areas")
+    catalog_skill = relationship("CatalogSkill", back_populates="expert_assignments")
+
 
 class AgeRule(Base):
     __tablename__ = "age_rules"
@@ -336,7 +371,7 @@ class Skill(Base):
 
 
 class Zone(Base):
-    """Cycle-scoped zone stub (full US-ZON-01 later). Required for expert assignment."""
+    """Cycle-scoped zone stub (full US-ZON-01 later). Optional on competition expert assignment."""
 
     __tablename__ = "zones"
     __table_args__ = (UniqueConstraint("competition_id", "name", name="uq_zones_competition_id_name"),)
@@ -362,18 +397,15 @@ class CompetitionRegionZone(Base):
 
 
 class ExpertAssignment(Base):
+    """Optional competition bookkeeping; eligibility is via ExpertSkillArea."""
+
     __tablename__ = "expert_assignments"
-    __table_args__ = (
-        UniqueConstraint(
-            "competition_id", "expert_id", "skill_id", "zone_id", name="uq_expert_assignments_competition_expert_skill_zone"
-        ),
-    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     competition_id = Column(UUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False, index=True)
     expert_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(UUID(as_uuid=True), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True)
-    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=False, index=True)
+    zone_id = Column(UUID(as_uuid=True), ForeignKey("zones.id", ondelete="CASCADE"), nullable=True, index=True)
     coi_flags = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

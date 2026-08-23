@@ -535,3 +535,53 @@ async def test_resubmit_blocked_after_deadline(
     reopen = await client.post(f"/submissions/{sub_id}:reopen", headers=headers)
     assert reopen.status_code == 409, reopen.text
     assert reopen.json()["error"]["code"] == "DEADLINE_PASSED"
+
+
+@pytest.mark.asyncio
+async def test_finalize_uses_live_stage_deadline_after_extension(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+    competitor_user: User,
+) -> None:
+    """Stale submission.deadline_at must not block finalize when stage.closes_at is extended."""
+    competition_id = await _create_draft_cycle(client, auth_headers)
+    stage_id, _ = await _seed_submission_world(
+        session_manager, competition_id, competitor_user, closes_in_hours=24
+    )
+    headers = await _competitor_headers(client, competitor_user)
+    sub_id = await _open_submission(client, headers, competition_id, stage_id)
+
+    assert (
+        await _upload(client, headers, sub_id, code="main", filename="work.pdf", data=b"%PDF-a")
+    ).status_code == 202
+    assert (
+        await _upload(client, headers, sub_id, code="photo", filename="shot.jpg", data=b"\xff\xd8jpeg")
+    ).status_code == 202
+
+    new_closes = datetime.utcnow() + timedelta(days=7)
+    async with session_manager.session() as session:
+        stage = await session.get(Stage, stage_id)
+        sub = await session.get(Submission, sub_id)
+        assert stage is not None and sub is not None
+        # Simulate admin having originally set a short window that was snapshotted
+        sub.deadline_at = datetime.utcnow() - timedelta(days=1)
+        # Then admin extended the stage window
+        stage.closes_at = new_closes
+        await session.commit()
+
+    fin = await client.post(f"/submissions/{sub_id}:finalise", headers=headers)
+    # With live stage preference, finalize must succeed despite stale snapshot
+    assert fin.status_code == 200, fin.text
+    assert fin.json()["state"] == "ACCEPTED"
+
+    # Idempotent open returns effective deadline from live stage closes_at
+    opened = await client.post(
+        f"/competitions/{competition_id}/stages/{stage_id}/submissions",
+        headers=headers,
+    )
+    assert opened.status_code == 201, opened.text
+    deadline_raw = opened.json()["deadlineAt"]
+    assert deadline_raw is not None
+    deadline_at = datetime.fromisoformat(deadline_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    assert deadline_at >= new_closes - timedelta(seconds=2)

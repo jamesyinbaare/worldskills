@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, FieldError
@@ -15,6 +15,9 @@ from app.models import Competition, Exercise, Skill, Stage, StageSelectionMode, 
 from app.schemas.stages import PathwayPut, StagePathwayItem
 from app.services.audit import write_audit_event
 from app.services.pathway_engine import StageNode, compute_finalists_per_skill
+
+# Match submissions.IMMUTABLE_STATES — avoid importing submissions (circular).
+_IMMUTABLE_SUBMISSION_STATES = ("ACCEPTED", "LATE", "ACCEPTED_PENDING_SCAN")
 
 
 def _as_naive(value: datetime) -> datetime:
@@ -305,6 +308,18 @@ async def put_skill_pathway(
         created.append(stage)
 
     await session.flush()
+
+    # Keep open submissions on the live stage window when admins extend/shorten closes_at
+    for stage in created:
+        await session.execute(
+            update(Submission)
+            .where(
+                Submission.stage_id == stage.id,
+                Submission.state.notin_(_IMMUTABLE_SUBMISSION_STATES),
+            )
+            .values(deadline_at=stage.closes_at)
+        )
+
     finalists = compute_finalists_per_skill(_nodes_from_payload(payload.stages))
     after = [stage_to_dict(s) for s in created]
 

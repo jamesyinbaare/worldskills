@@ -53,6 +53,15 @@ class ScorePutOut(BaseModel):
     breakdown: BreakdownOut
 
 
+class AssessmentArtefactOut(BaseModel):
+    artefactId: UUID
+    deliverableCode: str
+    filename: str
+    contentType: str | None = None
+    size: int
+    scanStatus: str
+
+
 class AssessmentViewOut(BaseModel):
     submissionId: UUID
     anonCode: str
@@ -68,3 +77,4 @@ class AssessmentViewOut(BaseModel):
     penalties: list[dict]
     myMarks: list[ScoreMarkOut] = Field(default_factory=list)
     total: int | None = None
+    artefacts: list[AssessmentArtefactOut] = Field(default_factory=list)

@@ -15,7 +15,10 @@ from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import (
     AgeRule,
     AuditEvent,
+    CatalogSkill,
     Competitor,
+    ExpertSkillArea,
+    Family,
     Institution,
     MarkingScheme,
     Pathway,
@@ -38,7 +41,18 @@ async def _create_competition(client: AsyncClient, headers: dict[str, str]) -> u
 
 async def _seed_skill_zone(
     session: AsyncSession, competition_id: uuid.UUID
-) -> tuple[uuid.UUID, uuid.UUID]:
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Returns skill_id, zone_id, catalog_skill_id."""
+    family = Family(name=f"Family {uuid.uuid4().hex[:6]}", active=True)
+    session.add(family)
+    await session.flush()
+    catalog = CatalogSkill(
+        name=f"Web Dev {uuid.uuid4().hex[:6]}",
+        family_id=family.id,
+        active=True,
+    )
+    session.add(catalog)
+    await session.flush()
     age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
     path = Pathway(competition_id=competition_id, name="National")
     scheme = MarkingScheme(competition_id=competition_id, name="CIS")
@@ -47,19 +61,25 @@ async def _seed_skill_zone(
     skill = Skill(
         competition_id=competition_id,
         name="Web Development",
+        catalog_skill_id=catalog.id,
+        family_id=str(family.id),
         age_rule_id=age.id,
         pathway_id=path.id,
-            scheme_id=scheme.id,
+        scheme_id=scheme.id,
         active=True,
     )
     zone = Zone(competition_id=competition_id, name="Greater Accra", active=True)
     session.add_all([skill, zone])
     await session.flush()
-    return skill.id, zone.id
+    return skill.id, zone.id, catalog.id
 
 
 async def _make_expert(
-    session: AsyncSession, *, institution_id: uuid.UUID | None, label: str
+    session: AsyncSession,
+    *,
+    institution_id: uuid.UUID | None,
+    label: str,
+    catalog_skill_id: uuid.UUID | None = None,
 ) -> User:
     user = User(
         email=f"{label}-{uuid.uuid4().hex[:8]}@example.com",
@@ -71,6 +91,11 @@ async def _make_expert(
     )
     session.add(user)
     await session.flush()
+    if catalog_skill_id is not None:
+        session.add(
+            ExpertSkillArea(expert_id=user.id, catalog_skill_id=catalog_skill_id)
+        )
+        await session.flush()
     return user
 
 
@@ -87,8 +112,10 @@ async def test_US_SEC_01_AC1_coi_at_assignment_and_queue_filter(
         inst_y = Institution(name=f"Inst Y {uuid.uuid4().hex[:6]}")
         session.add_all([inst_x, inst_y])
         await session.flush()
-        skill_id, zone_id = await _seed_skill_zone(session, competition_id)
-        expert = await _make_expert(session, institution_id=inst_x.id, label="coi")
+        skill_id, zone_id, catalog_id = await _seed_skill_zone(session, competition_id)
+        expert = await _make_expert(
+            session, institution_id=inst_x.id, label="coi", catalog_skill_id=catalog_id
+        )
         conflicted = Competitor(
             competition_id=competition_id,
             skill_id=skill_id,
@@ -147,7 +174,7 @@ async def test_US_SEC_01_AC1_invalid_assignment(
 ) -> None:
     competition_id = await _create_competition(client, auth_headers)
     async with session_manager.session() as session:
-        skill_id, zone_id = await _seed_skill_zone(session, competition_id)
+        skill_id, zone_id, _catalog_id = await _seed_skill_zone(session, competition_id)
         inactive = await _make_expert(session, institution_id=None, label="inactive")
         inactive.is_active = False
         await session.commit()
@@ -188,8 +215,10 @@ async def test_US_SEC_01_AC2_coi_blocks_scoring(
         )
         session.add(cycle)
         await session.flush()
-        skill_id, zone_id = await _seed_skill_zone(session, cycle.id)
-        expert = await _make_expert(session, institution_id=inst.id, label="scorer")
+        skill_id, zone_id, catalog_id = await _seed_skill_zone(session, cycle.id)
+        expert = await _make_expert(
+            session, institution_id=inst.id, label="scorer", catalog_skill_id=catalog_id
+        )
         competitor = Competitor(
             competition_id=cycle.id,
             skill_id=skill_id,
@@ -249,8 +278,10 @@ async def test_US_SEC_01_AC3_segregation_of_duties(
         )
         session.add(cycle)
         await session.flush()
-        skill_id, zone_id = await _seed_skill_zone(session, cycle.id)
-        expert = await _make_expert(session, institution_id=None, label="sod")
+        skill_id, zone_id, catalog_id = await _seed_skill_zone(session, cycle.id)
+        expert = await _make_expert(
+            session, institution_id=None, label="sod", catalog_skill_id=catalog_id
+        )
         competitor = Competitor(
             competition_id=cycle.id,
             skill_id=skill_id,
@@ -306,9 +337,13 @@ async def test_US_SEC_01_AC4_reassignment_audited_and_coi_rechecked(
         inst_b = Institution(name=f"Inst B {uuid.uuid4().hex[:6]}")
         session.add_all([inst_a, inst_b])
         await session.flush()
-        skill_id, zone_id = await _seed_skill_zone(session, competition_id)
-        expert_a = await _make_expert(session, institution_id=inst_a.id, label="a")
-        expert_b = await _make_expert(session, institution_id=inst_b.id, label="b")
+        skill_id, zone_id, catalog_id = await _seed_skill_zone(session, competition_id)
+        expert_a = await _make_expert(
+            session, institution_id=inst_a.id, label="a", catalog_skill_id=catalog_id
+        )
+        expert_b = await _make_expert(
+            session, institution_id=inst_b.id, label="b", catalog_skill_id=catalog_id
+        )
         conflicted_for_b = Competitor(
             competition_id=competition_id,
             skill_id=skill_id,

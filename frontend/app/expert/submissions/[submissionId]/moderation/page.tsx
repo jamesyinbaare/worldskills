@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useAuth } from "@/components/auth/AuthProvider";
 import {
   ApiError,
   analyseModeration,
   applyModeration,
+  canModerateScores,
   fetchScoringDetail,
   resolveSubmissionTotal,
   type ModerationAnalyseOut,
@@ -55,6 +57,8 @@ type ApplyMethod = "STANDARDISE" | "MANUAL" | "SELECT_ASSESSOR";
 export default function ExpertModerationPage() {
   const params = useParams<{ submissionId: string }>();
   const submissionId = params.submissionId;
+  const { me, status: authStatus } = useAuth();
+  const canModerate = me?.role != null ? canModerateScores(me.role) : false;
 
   const [detail, setDetail] = useState<ScoringDetailOut | null>(null);
   const [analyse, setAnalyse] = useState<ModerationAnalyseOut | null>(null);
@@ -75,19 +79,46 @@ export default function ExpertModerationPage() {
   const [resolveAssessorId, setResolveAssessorId] = useState("");
 
   async function loadDetail() {
+    if (!canModerate) return;
     try {
       const out = await fetchScoringDetail(submissionId);
       setDetail(out);
       setResolveAssessorId(out.assessorTotals[0]?.assessorId ?? "");
     } catch {
-      // Chief may still analyse without detail if capability differs — ignore soft fail
+      // Soft-fail detail; analyse/apply still available when capability allows
     }
   }
 
   useEffect(() => {
+    if (authStatus !== "authenticated" || !canModerate) return;
     void loadDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submissionId]);
+  }, [submissionId, authStatus, canModerate]);
+
+  if (authStatus === "authenticated" && me && !canModerate) {
+    return (
+      <PageShell width="narrow" className="space-y-6">
+        <PageHeader
+          title="Score moderation"
+          description="Compare assessor totals and standardise criterion marks."
+          backHref={`/expert/submissions/${submissionId}`}
+          backLabel="Back to scoring"
+        />
+        <Alert data-testid="moderation-forbidden">
+          <AlertTitle>Moderation not available</AlertTitle>
+          <AlertDescription>
+            Scoring experts cannot moderate. Ask a chief expert or moderator to
+            review disagreements and standardise marks.
+          </AlertDescription>
+        </Alert>
+        <Button asChild className="min-h-11 rounded-2xl">
+          <Link href={`/expert/submissions/${submissionId}`}>
+            Back to scoring
+          </Link>
+        </Button>
+      </PageShell>
+    );
+  }
 
   async function onAnalyse() {
     setError(null);

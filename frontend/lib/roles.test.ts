@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fieldErrorMap } from "@/components/forms/ApiErrorAlert";
 import {
+  canModerateScores,
   homeForRole,
   isAdminRole,
   roleMatches,
@@ -23,6 +24,14 @@ describe("role helpers", () => {
     expect(roleMatches("ADMIN", "admin")).toBe(true);
     expect(roleMatches("EXPERT", "expert")).toBe(true);
     expect(roleMatches("COMPETITOR", "admin")).toBe(false);
+  });
+
+  it("gates moderate_score capability roles", () => {
+    expect(canModerateScores("EXPERT")).toBe(false);
+    expect(canModerateScores("CHIEF_EXPERT")).toBe(true);
+    expect(canModerateScores("MODERATOR")).toBe(true);
+    expect(canModerateScores("ADMIN")).toBe(true);
+    expect(canModerateScores("SUPER_ADMIN")).toBe(true);
   });
 });
 
