@@ -12,7 +12,7 @@ from app.models import (
     Competitor,
     Competition,
     CompetitionStatus,
-    ExpertAssignment,
+    ExpertSkillArea,
     Skill,
     User,
 )
@@ -102,14 +102,16 @@ async def get_public_stats(session: AsyncSession) -> PublicStatsOut:
 
     experts_result = await session.execute(
         select(
-            ExpertAssignment.competition_id,
-            ExpertAssignment.skill_id,
-            ExpertAssignment.expert_id,
+            Skill.competition_id,
+            Skill.id,
+            ExpertSkillArea.expert_id,
             User.full_name,
         )
-        .join(User, User.id == ExpertAssignment.expert_id)
+        .join(ExpertSkillArea, ExpertSkillArea.catalog_skill_id == Skill.catalog_skill_id)
+        .join(User, User.id == ExpertSkillArea.expert_id)
         .where(
-            ExpertAssignment.competition_id.in_(competition_ids),
+            Skill.competition_id.in_(competition_ids),
+            Skill.catalog_skill_id.is_not(None),
             User.is_active.is_(True),
         )
         .order_by(User.full_name)

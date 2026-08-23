@@ -15,6 +15,7 @@ from app.models import (
     Competition,
     Competitor,
     ExpertAssignment,
+    ExpertSkillArea,
     Score,
     Skill,
     Submission,
@@ -48,7 +49,7 @@ async def list_assignments(
 
 
 async def list_my_assignments(session: AsyncSession, *, actor: User) -> list[MyAssignmentOut]:
-    """Named assignments for the signed-in expert (portal discovery)."""
+    """Named assignments for the signed-in expert (portal discovery via catalog skill areas)."""
     if actor.role not in _ASSIGNABLE_ROLES:
         raise AppError(
             "FORBIDDEN",
@@ -56,34 +57,48 @@ async def list_my_assignments(session: AsyncSession, *, actor: User) -> list[MyA
             status_code=status.HTTP_403_FORBIDDEN,
         )
 
-    rows = (
+    catalog_ids = (
         await session.execute(
-            select(ExpertAssignment)
-            .where(ExpertAssignment.expert_id == actor.id)
-            .order_by(ExpertAssignment.created_at.desc())
+            select(ExpertSkillArea.catalog_skill_id).where(ExpertSkillArea.expert_id == actor.id)
+        )
+    ).scalars().all()
+    if not catalog_ids:
+        return []
+
+    skills = (
+        await session.execute(
+            select(Skill)
+            .where(
+                Skill.catalog_skill_id.in_(list(catalog_ids)),
+                Skill.active.is_(True),
+            )
+            .order_by(Skill.name)
         )
     ).scalars().all()
 
     out: list[MyAssignmentOut] = []
-    for assignment in rows:
-        competition = await session.get(Competition, assignment.competition_id)
-        skill = await session.get(Skill, assignment.skill_id)
-        zone = await session.get(Zone, assignment.zone_id)
-        if competition is None or skill is None or zone is None:
+    for skill in skills:
+        competition = await session.get(Competition, skill.competition_id)
+        if competition is None:
             continue
+        # Synthetic id: stable per competition+skill for portal keys
+        synthetic = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"expert-skill:{actor.id}:{skill.competition_id}:{skill.id}",
+        )
         out.append(
             MyAssignmentOut(
-                assignmentId=assignment.id,
+                assignmentId=synthetic,
                 competitionId=competition.id,
                 competitionName=competition.name,
                 skillId=skill.id,
                 skillName=skill.name,
-                zoneId=zone.id,
-                zoneName=zone.name,
+                zoneId=None,
+                zoneName="All zones",
             )
         )
 
-    out.sort(key=lambda a: (a.competitionName.lower(), a.skillName.lower(), a.zoneName.lower()))
+    out.sort(key=lambda a: (a.competitionName.lower(), a.skillName.lower()))
     return out
 
 
@@ -93,7 +108,7 @@ def _assignment_to_dict(assignment: ExpertAssignment) -> dict[str, Any]:
         "competitionId": str(assignment.competition_id),
         "expertId": str(assignment.expert_id),
         "skillId": str(assignment.skill_id),
-        "zoneId": str(assignment.zone_id),
+        "zoneId": str(assignment.zone_id) if assignment.zone_id else None,
         "coiFlags": assignment.coi_flags or [],
     }
 
@@ -103,20 +118,20 @@ async def _compute_coi_flags(
     *,
     competition_id: uuid.UUID,
     skill_id: uuid.UUID,
-    zone_id: uuid.UUID,
+    zone_id: uuid.UUID | None,
     expert: User,
 ) -> list[dict[str, Any]]:
     if expert.institution_id is None:
         return []
 
-    result = await session.execute(
-        select(Competitor).where(
-            Competitor.competition_id == competition_id,
-            Competitor.skill_id == skill_id,
-            Competitor.zone_id == zone_id,
-            Competitor.institution_id == expert.institution_id,
-        )
+    stmt = select(Competitor).where(
+        Competitor.competition_id == competition_id,
+        Competitor.skill_id == skill_id,
+        Competitor.institution_id == expert.institution_id,
     )
+    if zone_id is not None:
+        stmt = stmt.where(Competitor.zone_id == zone_id)
+    result = await session.execute(stmt)
     conflicted = list(result.scalars().all())
     if not conflicted:
         # Still persist the institutional COI relationship even if no competitors yet
@@ -200,24 +215,49 @@ async def create_assignment(
     user_agent: str | None = None,
 ) -> ExpertAssignment:
     expert = await _load_assignable_expert(session, payload.expertId)
-    await _load_active_skill(session, competition_id, payload.resolved_skill_id)
-    await _load_active_zone(session, competition_id, payload.zoneId)
+    skill = await _load_active_skill(session, competition_id, payload.resolved_skill_id)
+    if payload.zoneId is not None:
+        await _load_active_zone(session, competition_id, payload.zoneId)
 
-    existing = await session.execute(
-        select(ExpertAssignment).where(
-            ExpertAssignment.competition_id == competition_id,
-            ExpertAssignment.expert_id == payload.expertId,
-            ExpertAssignment.skill_id == payload.resolved_skill_id,
-            ExpertAssignment.zone_id == payload.zoneId,
+    if skill.catalog_skill_id is not None:
+        from app.services import expert_skill_areas as expert_skill_areas_service
+
+        has_area = await expert_skill_areas_service.expert_has_catalog_skill(
+            session, expert_id=expert.id, catalog_skill_id=skill.catalog_skill_id
         )
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise AppError(
-            "INVALID_ASSIGNMENT",
-            "Assignment already exists",
-            status_code=status.HTTP_409_CONFLICT,
-            fields=[FieldError("expertId", "DUPLICATE")],
+        if not has_area:
+            raise AppError(
+                "INVALID_ASSIGNMENT",
+                "Expert is not assigned to this catalog skill area",
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                fields=[FieldError("expertId", "INVALID_ASSIGNMENT")],
+            )
+
+    # Reject mixing all-zones with a specific zone for the same expert+skill
+    existing_rows = (
+        await session.execute(
+            select(ExpertAssignment).where(
+                ExpertAssignment.competition_id == competition_id,
+                ExpertAssignment.expert_id == payload.expertId,
+                ExpertAssignment.skill_id == payload.resolved_skill_id,
+            )
         )
+    ).scalars().all()
+    for row in existing_rows:
+        if row.zone_id == payload.zoneId:
+            raise AppError(
+                "INVALID_ASSIGNMENT",
+                "Assignment already exists",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("expertId", "DUPLICATE")],
+            )
+        if row.zone_id is None or payload.zoneId is None:
+            raise AppError(
+                "INVALID_ASSIGNMENT",
+                "Cannot mix all-zones and zone-specific assignments for the same skill",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("zoneId", "CONFLICT")],
+            )
 
     flags = await _compute_coi_flags(
         session,
@@ -310,7 +350,27 @@ async def get_assessor_queue(
     expert_id: uuid.UUID,
 ) -> AssessorQueueOut:
     from app.models import MarkingScheme, Skill, Stage
+    from app.services import expert_skill_areas as expert_skill_areas_service
 
+    catalog_ids = await expert_skill_areas_service.list_catalog_skill_ids_for_expert(
+        session, expert_id
+    )
+    if not catalog_ids:
+        return AssessorQueueOut(submissions=[], items=[])
+
+    skills = (
+        await session.execute(
+            select(Skill).where(
+                Skill.competition_id == competition_id,
+                Skill.catalog_skill_id.in_(catalog_ids),
+                Skill.active.is_(True),
+            )
+        )
+    ).scalars().all()
+    if not skills:
+        return AssessorQueueOut(submissions=[], items=[])
+
+    # Optional zone restrictions from competition bookkeeping assignments
     assignments = (
         await session.execute(
             select(ExpertAssignment).where(
@@ -319,38 +379,40 @@ async def get_assessor_queue(
             )
         )
     ).scalars().all()
-    if not assignments:
-        return AssessorQueueOut(submissions=[], items=[])
+    zone_by_skill: dict[uuid.UUID, set[uuid.UUID | None]] = {}
+    for a in assignments:
+        zone_by_skill.setdefault(a.skill_id, set()).add(a.zone_id)
 
     expert = await session.get(User, expert_id)
     expert_institution = expert.institution_id if expert else None
 
-    skill_zone_pairs = {(a.skill_id, a.zone_id) for a in assignments}
     submissions_out: list[QueueSubmissionOut] = []
 
-    for skill_id, zone_id in skill_zone_pairs:
-        skill = await session.get(Skill, skill_id)
+    for skill in skills:
+        skill_id = skill.id
         blind = False
-        if skill and skill.scheme_id:
+        if skill.scheme_id:
             scheme = await session.get(MarkingScheme, skill.scheme_id)
             if scheme and isinstance(scheme.rubric, dict):
                 blind = bool(scheme.rubric.get("blindMode", False))
 
-        comps = (
-            await session.execute(
-                select(Competitor).where(
-                    Competitor.competition_id == competition_id,
-                    Competitor.skill_id == skill_id,
-                    Competitor.zone_id == zone_id,
-                )
-            )
-        ).scalars().all()
+        allowed_zones = zone_by_skill.get(skill_id)
+        comps_stmt = select(Competitor).where(
+            Competitor.competition_id == competition_id,
+            Competitor.skill_id == skill_id,
+        )
+        comps = (await session.execute(comps_stmt)).scalars().all()
         for comp in comps:
+            if allowed_zones is not None:
+                # None in set means all zones; otherwise require exact zone match
+                if None not in allowed_zones and comp.zone_id not in allowed_zones:
+                    continue
             if check_conflict_of_interest(
                 expert_institution_id=str(expert_institution) if expert_institution else None,
                 competitor_institution_id=str(comp.institution_id) if comp.institution_id else None,
             ):
                 continue
+            # Only scoreable states — must match assessment._SCOREABLE_STATES
             subs = (
                 await session.execute(
                     select(Submission).where(
@@ -360,16 +422,6 @@ async def get_assessor_queue(
                     )
                 )
             ).scalars().all()
-            # Fall back: include any submission when no ACCEPTED yet (SEC-01 stubs often set ACCEPTED)
-            if not subs:
-                subs = (
-                    await session.execute(
-                        select(Submission).where(
-                            Submission.competition_id == competition_id,
-                            Submission.competitor_id == comp.id,
-                        )
-                    )
-                ).scalars().all()
             for sub in subs:
                 anon = sub.anon_code
                 if not anon:

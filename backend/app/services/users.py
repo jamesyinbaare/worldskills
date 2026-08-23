@@ -372,8 +372,32 @@ async def create_user(
             user_agent=user_agent,
         )
 
+    skill_area_ids: list[uuid.UUID] = []
+    if payload.catalog_skill_ids:
+        if target_role not in {UserRole.EXPERT, UserRole.CHIEF_EXPERT}:
+            raise AppError(
+                "INVALID_ROLE",
+                "Skill areas can only be set for expert accounts",
+                status_code=422,
+                fields=[FieldError("catalogSkillIds", "INVALID_ROLE")],
+            )
+        skill_area_ids = [uuid.UUID(sid) for sid in payload.catalog_skill_ids]
+
     await session.commit()
     await session.refresh(user)
+
+    if skill_area_ids:
+        from app.services import expert_skill_areas as expert_skill_areas_service
+
+        await expert_skill_areas_service.set_expert_skill_areas(
+            session,
+            actor=actor,
+            user_id=user.id,
+            catalog_skill_ids=skill_area_ids,
+            ip=ip,
+            user_agent=user_agent,
+        )
+
     out = _user_out(user)
     out["temporaryPassword"] = response_temp
     out["inviteSent"] = invite_sent

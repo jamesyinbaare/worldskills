@@ -24,14 +24,15 @@ router = APIRouter(tags=["submissions"])
 CompetitorUserDep = Annotated[User, Depends(require_capability(Capability.REGISTER_SUBMIT))]
 
 
-def _submission_out(sub) -> SubmissionOut:
+def _submission_out(sub, *, stage: Stage | None = None) -> SubmissionOut:
+    deadline = submission_service.effective_deadline_at(stage, sub)
     return SubmissionOut(
         submissionId=sub.id,
         competitionId=sub.competition_id,
         stageId=sub.stage_id,
         competitorId=sub.competitor_id,
         state=sub.state,
-        deadlineAt=sub.deadline_at,
+        deadlineAt=deadline,
         timedExpiresAt=sub.timed_expires_at,
         uploadLocked=sub.upload_locked,
         late=sub.late,
@@ -39,6 +40,15 @@ def _submission_out(sub) -> SubmissionOut:
         receipt=sub.receipt,
         submittedAt=sub.submitted_at,
     )
+
+
+async def _submission_out_with_stage(session, sub) -> SubmissionOut:
+    stage = None
+    if sub.stage_id is not None:
+        from app.models import Stage
+
+        stage = await session.get(Stage, sub.stage_id)
+    return _submission_out(sub, stage=stage)
 
 
 @router.post(
@@ -58,7 +68,7 @@ async def open_submission(
         session, competition_id=competition_id, stage_id=stage_id, actor=actor, ip=ip, user_agent=ua
     )
     # Idempotent reopen returns 200 semantics via same body; keep 201 for create-or-get
-    return _submission_out(sub)
+    return await _submission_out_with_stage(session, sub)
 
 
 @router.post("/submissions/{submission_id}/artefacts", status_code=status.HTTP_202_ACCEPTED)
@@ -191,7 +201,7 @@ async def reopen_submission(
     sub = await submission_service.reopen_submission(
         session, submission_id, actor=actor, ip=ip, user_agent=ua
     )
-    return _submission_out(sub)
+    return await _submission_out_with_stage(session, sub)
 
 
 @router.post("/submissions/{submission_id}:expire-timer", response_model=FinaliseOut)

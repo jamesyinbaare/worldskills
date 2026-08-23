@@ -6,16 +6,21 @@ import { useParams, useSearchParams } from "next/navigation";
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
+  DownloadIcon,
   EyeOffIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
   ApiError,
+  canModerateScores,
+  downloadAssessmentArtefact,
   fetchAssessment,
   putScores,
+  triggerBrowserDownload,
   type AssessmentViewOut,
   type ScorePutOut,
 } from "@/lib/api";
+import { useAuth } from "@/components/auth/AuthProvider";
 import {
   ApiErrorAlert,
   FieldMessage,
@@ -80,6 +85,8 @@ export default function ExpertScorePage() {
     ? `/expert/competitions/${fromCompetitionId}/queue`
     : "/expert";
   const backLabel = fromCompetitionId ? "Back to queue" : "Assessor portal";
+  const { me } = useAuth();
+  const canModerate = me?.role ? canModerateScores(me.role) : false;
 
   const [view, setView] = useState<AssessmentViewOut | null>(null);
   const [marks, setMarks] = useState<Record<string, MarkDraft>>({});
@@ -90,6 +97,9 @@ export default function ExpertScorePage() {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [downloadPendingId, setDownloadPendingId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -205,6 +215,36 @@ export default function ExpertScorePage() {
     selectedPenalties,
     view?.total,
   ]);
+
+  async function onDownloadArtefact(artefactId: string, fallbackName: string) {
+    setError(null);
+    setDownloadPendingId(artefactId);
+    try {
+      const { blob, filename } = await downloadAssessmentArtefact(
+        submissionId,
+        artefactId,
+      );
+      triggerBrowserDownload(blob, filename || fallbackName);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err);
+        setFieldErrors(fieldErrorMap(err.fields));
+      } else {
+        setError(
+          new ApiError(0, {
+            error: {
+              code: "HTTP_ERROR",
+              message: "Could not download deliverable",
+              fields: [],
+              traceId: "",
+            },
+          }),
+        );
+      }
+    } finally {
+      setDownloadPendingId(null);
+    }
+  }
 
   async function save(finalize: boolean) {
     if (!view) return;
@@ -406,6 +446,76 @@ export default function ExpertScorePage() {
                   </div>
                   <Progress value={progressPct} className="h-2" />
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card
+              className="rounded-3xl border-border/70 shadow-sm"
+              data-testid="assessment-deliverables"
+            >
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Deliverables</CardTitle>
+                <CardDescription>
+                  Download the competitor’s submitted files to assess against
+                  the rubric.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {(view.artefacts ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No clean deliverables are available for this submission.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <ul className="space-y-3">
+                      {(view.artefacts ?? []).map((a) => (
+                        <li
+                          key={a.artefactId}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-muted/40 px-4 py-3"
+                          data-testid="assessment-artefact"
+                        >
+                          <div className="min-w-0 space-y-0.5">
+                            <p className="truncate text-sm font-medium">
+                              {a.filename}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {humanizeCode(a.deliverableCode)}
+                              {a.size > 0
+                                ? ` · ${(a.size / 1024).toFixed(1)} KB`
+                                : ""}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="min-h-11 shrink-0 rounded-2xl"
+                            disabled={downloadPendingId === a.artefactId}
+                            onClick={() =>
+                              void onDownloadArtefact(a.artefactId, a.filename)
+                            }
+                            data-testid="assessment-artefact-download"
+                          >
+                            <DownloadIcon className="size-4" />
+                            {downloadPendingId === a.artefactId
+                              ? "Downloading…"
+                              : "Download"}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                    <p
+                      className="text-xs text-muted-foreground"
+                      data-testid="assessment-download-naming-hint"
+                    >
+                      Downloads are named{" "}
+                      <span className="font-mono">
+                        {view.anonCode || "anon"}
+                        __deliverable__filename
+                      </span>{" "}
+                      so files from different competitors stay identifiable.
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -653,14 +763,16 @@ export default function ExpertScorePage() {
               </Card>
             ) : null}
 
-            <p className="text-sm text-muted-foreground lg:hidden">
-              <Link
-                href={`/expert/submissions/${submissionId}/moderation`}
-                className="underline underline-offset-2"
-              >
-                Open moderation
-              </Link>
-            </p>
+            {canModerate ? (
+              <p className="text-sm text-muted-foreground lg:hidden">
+                <Link
+                  href={`/expert/submissions/${submissionId}/moderation`}
+                  className="underline underline-offset-2"
+                >
+                  Open moderation
+                </Link>
+              </p>
+            ) : null}
           </div>
 
           <aside className="lg:sticky lg:top-20 lg:self-start">
@@ -722,17 +834,19 @@ export default function ExpertScorePage() {
                   ) : null}
                 </div>
 
-                <Button
-                  asChild
-                  variant="ghost"
-                  className="hidden min-h-10 w-full rounded-2xl lg:inline-flex"
-                >
-                  <Link
-                    href={`/expert/submissions/${submissionId}/moderation`}
+                {canModerate ? (
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="hidden min-h-10 w-full rounded-2xl lg:inline-flex"
                   >
-                    Open moderation
-                  </Link>
-                </Button>
+                    <Link
+                      href={`/expert/submissions/${submissionId}/moderation`}
+                    >
+                      Open moderation
+                    </Link>
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           </aside>

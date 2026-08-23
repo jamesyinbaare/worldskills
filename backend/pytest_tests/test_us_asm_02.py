@@ -13,8 +13,11 @@ from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import (
     AgeRule,
     AuditEvent,
+    CatalogSkill,
     Competitor,
     ExpertAssignment,
+    ExpertSkillArea,
+    Family,
     Institution,
     MarkingScheme,
     ModerationFlag,
@@ -76,9 +79,22 @@ async def _seed_moderation_world(
         session.add_all([age, path, scheme, zone])
         await session.flush()
 
+        family = Family(name=f"Family-{uuid.uuid4().hex[:6]}", active=True)
+        session.add(family)
+        await session.flush()
+        catalog = CatalogSkill(
+            name=f"Web Dev {uuid.uuid4().hex[:6]}",
+            family_id=family.id,
+            active=True,
+        )
+        session.add(catalog)
+        await session.flush()
+
         skill = Skill(
             competition_id=competition_id,
             name="Web Development",
+            catalog_skill_id=catalog.id,
+            family_id=str(family.id),
             age_rule_id=age.id,
             pathway_id=path.id,
             scheme_id=scheme.id,
@@ -123,6 +139,7 @@ async def _seed_moderation_world(
             )
             session.add(expert)
             await session.flush()
+            session.add(ExpertSkillArea(expert_id=expert.id, catalog_skill_id=catalog.id))
             session.add(
                 ExpertAssignment(
                     competition_id=competition_id,

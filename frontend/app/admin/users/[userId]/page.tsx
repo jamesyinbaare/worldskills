@@ -5,13 +5,18 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   ApiError,
+  CatalogSkillOut,
+  ExpertSkillAreaOut,
   InstitutionListItem,
   UserOut,
   isSuperAdminRole,
+  listCatalogSkills,
+  listExpertSkillAreas,
   listInstitutions,
   listUsers,
   patchUser,
   resetUserPassword,
+  setExpertSkillAreas,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
@@ -58,6 +63,10 @@ import {
 
 const NO_INSTITUTION = "__none__";
 
+function skillLabel(skill: CatalogSkillOut) {
+  return skill.number ? `${skill.name} (${skill.number})` : skill.name;
+}
+
 export default function EditUserPage() {
   const params = useParams<{ userId: string }>();
   const userId = params.userId;
@@ -85,11 +94,36 @@ export default function EditUserPage() {
   const [sendViaSms, setSendViaSms] = useState(false);
   const [smsPhone, setSmsPhone] = useState("");
   const [copied, setCopied] = useState(false);
+  const [catalogSkills, setCatalogSkills] = useState<CatalogSkillOut[]>([]);
+  const [skillAreaIds, setSkillAreaIds] = useState<string[]>([]);
+  const [assignedAreas, setAssignedAreas] = useState<ExpertSkillAreaOut[]>([]);
+  const [skillsPending, setSkillsPending] = useState(false);
+  const [skillsSaved, setSkillsSaved] = useState(false);
+  const [skillsError, setSkillsError] = useState<ApiError | null>(null);
+  const [skillsFieldErrors, setSkillsFieldErrors] = useState<
+    Record<string, string>
+  >({});
 
   const expertRole = useMemo(() => {
     if (!user) return false;
     return user.role === "EXPERT" || user.role === "CHIEF_EXPERT";
   }, [user]);
+
+  const skillsByFamily = useMemo(() => {
+    const map = new Map<string, { familyName: string; skills: CatalogSkillOut[] }>();
+    for (const skill of catalogSkills) {
+      const key = skill.familyId;
+      const bucket = map.get(key) ?? {
+        familyName: skill.familyName ?? "Family",
+        skills: [],
+      };
+      bucket.skills.push(skill);
+      map.set(key, bucket);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.familyName.localeCompare(b.familyName),
+    );
+  }, [catalogSkills]);
 
   const canEditAdmin = me && isSuperAdminRole(me.role);
 
@@ -105,18 +139,26 @@ export default function EditUserPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [allUsers, inst] = await Promise.all([
+        const [allUsers, inst, skills] = await Promise.all([
           listUsers(),
           listInstitutions(),
+          listCatalogSkills({ active: true }),
         ]);
         if (cancelled) return;
         setInstitutions(inst);
+        setCatalogSkills(skills);
         const found = allUsers.find((u) => u.userId === userId) ?? null;
         setUser(found);
         if (found) {
           setFullName(found.fullName);
           setInstitutionId(found.institutionId ?? NO_INSTITUTION);
           setSmsPhone(found.phoneNumber ?? "");
+          if (found.role === "EXPERT" || found.role === "CHIEF_EXPERT") {
+            const areas = await listExpertSkillAreas(userId);
+            if (cancelled) return;
+            setAssignedAreas(areas);
+            setSkillAreaIds(areas.map((a) => a.catalogSkillId));
+          }
         }
       } catch (err) {
         if (!cancelled && err instanceof ApiError) setLoadError(err);
@@ -128,6 +170,33 @@ export default function EditUserPage() {
       cancelled = true;
     };
   }, [userId]);
+
+  function toggleSkillArea(skillId: string, checked: boolean) {
+    setSkillAreaIds((prev) =>
+      checked ? [...prev, skillId] : prev.filter((id) => id !== skillId),
+    );
+  }
+
+  async function onSaveSkillAreas(e: FormEvent) {
+    e.preventDefault();
+    setSkillsError(null);
+    setSkillsFieldErrors({});
+    setSkillsSaved(false);
+    setSkillsPending(true);
+    try {
+      const areas = await setExpertSkillAreas(userId, skillAreaIds);
+      setAssignedAreas(areas);
+      setSkillAreaIds(areas.map((a) => a.catalogSkillId));
+      setSkillsSaved(true);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setSkillsError(err);
+        setSkillsFieldErrors(fieldErrorMap(err.fields));
+      }
+    } finally {
+      setSkillsPending(false);
+    }
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -341,6 +410,90 @@ export default function EditUserPage() {
           </form>
         </CardContent>
       </Card>
+
+      {expertRole ? (
+        <Card>
+          <CardHeader className="px-4 sm:px-6">
+            <CardTitle className="text-base">Skill areas</CardTitle>
+            <CardDescription>
+              Experts are global. Assign one or more catalog skill areas,
+              including multiple under the same family. Zone is not required.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-4 sm:px-6">
+            <form onSubmit={onSaveSkillAreas} className="space-y-4" noValidate>
+              {assignedAreas.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {assignedAreas.map((area) => (
+                    <Badge key={area.catalogSkillId} variant="secondary">
+                      {area.familyName ? `${area.familyName}: ` : ""}
+                      {area.name}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No skill areas assigned yet.
+                </p>
+              )}
+              {skillsByFamily.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No active catalog skill areas yet.
+                </p>
+              ) : (
+                <div className="max-h-56 space-y-3 overflow-y-auto rounded-lg border border-border p-3">
+                  {skillsByFamily.map((group) => (
+                    <div key={group.familyName} className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {group.familyName}
+                      </p>
+                      {group.skills.map((skill) => {
+                        const checked = skillAreaIds.includes(skill.skillId);
+                        const inputId = `edit-skill-${skill.skillId}`;
+                        return (
+                          <label
+                            key={skill.skillId}
+                            htmlFor={inputId}
+                            className="flex cursor-pointer items-start gap-2.5 text-sm"
+                          >
+                            <Checkbox
+                              id={inputId}
+                              checked={checked}
+                              onCheckedChange={(value) =>
+                                toggleSkillArea(skill.skillId, value === true)
+                              }
+                              className="mt-0.5"
+                            />
+                            <span>{skillLabel(skill)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <FieldMessage message={skillsFieldErrors.catalogSkillIds} />
+              <ApiErrorAlert
+                error={skillsError}
+                title="Could not update skill areas"
+              />
+              <Button
+                type="submit"
+                className="min-h-11"
+                disabled={skillsPending}
+              >
+                {skillsPending ? "Saving…" : "Save skill areas"}
+              </Button>
+              {skillsSaved ? (
+                <Alert>
+                  <AlertTitle>Saved</AlertTitle>
+                  <AlertDescription>Skill areas updated.</AlertDescription>
+                </Alert>
+              ) : null}
+            </form>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {canResetPassword ? (
         <Card>

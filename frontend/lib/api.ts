@@ -589,7 +589,7 @@ export type AssignmentOut = {
   expertId: string;
   skillId: string;
   cycleSkillId?: string | null;
-  zoneId: string;
+  zoneId?: string | null;
   coiFlags: {
     institutionId: string;
     reason: string;
@@ -601,7 +601,7 @@ export type AssignmentCreateInput = {
   expertId: string;
   skillId?: string;
   cycleSkillId?: string;
-  zoneId: string;
+  zoneId?: string | null;
 };
 
 export type AgeRuleOut = {
@@ -761,6 +761,12 @@ export async function listCatalogSkills(opts?: {
   if (opts?.active === true) params.set("active", "true");
   const q = params.toString();
   return apiFetch<CatalogSkillOut[]>(`/skills${q ? `?${q}` : ""}`);
+}
+
+export async function listCatalogSkillExperts(
+  catalogSkillId: string,
+): Promise<UserOut[]> {
+  return apiFetch<UserOut[]>(`/skills/${catalogSkillId}/experts`);
 }
 
 export async function createCatalogSkill(payload: {
@@ -2325,7 +2331,7 @@ export type MyAssignmentOut = {
   competitionName: string;
   skillId: string;
   skillName: string;
-  zoneId: string;
+  zoneId?: string | null;
   zoneName: string;
 };
 
@@ -2383,6 +2389,15 @@ export type AssessmentCriterion = {
   [key: string]: unknown;
 };
 
+export type AssessmentArtefactOut = {
+  artefactId: string;
+  deliverableCode: string;
+  filename: string;
+  contentType?: string | null;
+  size: number;
+  scanStatus: string;
+};
+
 export type AssessmentViewOut = {
   submissionId: string;
   anonCode: string;
@@ -2397,6 +2412,7 @@ export type AssessmentViewOut = {
   penalties: { code?: string; deduction?: number; [key: string]: unknown }[];
   myMarks: ScoreMarkOut[];
   total?: number | null;
+  artefacts?: AssessmentArtefactOut[];
 };
 
 export type ModerationFlagOut = {
@@ -2533,6 +2549,20 @@ export async function fetchAssessment(
   return apiFetch<AssessmentViewOut>(
     `/submissions/${submissionId}/assessment`,
   );
+}
+
+export async function downloadAssessmentArtefact(
+  submissionId: string,
+  artefactId: string,
+): Promise<{ blob: Blob; filename: string; contentType?: string }> {
+  const { blob, filename, contentType } = await apiFetchBlob(
+    `/submissions/${submissionId}/artefacts/${artefactId}/download`,
+  );
+  return {
+    blob,
+    filename: filename || "artefact",
+    contentType: contentType ?? undefined,
+  };
 }
 
 export async function putScores(
@@ -3457,11 +3487,44 @@ export async function createUser(payload: {
   institutionId?: string;
   credentialMode: "TEMP_PASSWORD" | "INVITE";
   temporaryPassword?: string;
+  catalogSkillIds?: string[];
 }): Promise<CreateUserResponse> {
   return apiFetch<CreateUserResponse>("/users", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export type ExpertSkillAreaOut = {
+  catalogSkillId: string;
+  name: string;
+  number?: string | null;
+  familyId: string;
+  familyName?: string | null;
+  active: boolean;
+};
+
+export async function listExpertSkillAreas(
+  userId: string,
+): Promise<ExpertSkillAreaOut[]> {
+  const out = await apiFetch<{ items: ExpertSkillAreaOut[] }>(
+    `/users/${userId}/skill-areas`,
+  );
+  return out.items;
+}
+
+export async function setExpertSkillAreas(
+  userId: string,
+  catalogSkillIds: string[],
+): Promise<ExpertSkillAreaOut[]> {
+  const out = await apiFetch<{ items: ExpertSkillAreaOut[] }>(
+    `/users/${userId}/skill-areas`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ catalogSkillIds }),
+    },
+  );
+  return out.items;
 }
 
 export async function patchUser(
@@ -3611,6 +3674,16 @@ export function isExpertRole(role: string): boolean {
 
 export function isChiefExpertRole(role: string): boolean {
   return role === "CHIEF_EXPERT";
+}
+
+/** Matches backend Capability.MODERATE_SCORE role matrix. */
+export function canModerateScores(role: string): boolean {
+  return (
+    role === "CHIEF_EXPERT" ||
+    role === "MODERATOR" ||
+    role === "ADMIN" ||
+    role === "SUPER_ADMIN"
+  );
 }
 
 export type AppRole =

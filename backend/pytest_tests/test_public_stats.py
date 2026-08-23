@@ -12,10 +12,12 @@ from app.core.security import get_password_hash
 from app.dependencies.database import TestingDatabaseSessionManager as DBManager
 from app.models import (
     AgeRule,
+    CatalogSkill,
     Competitor,
     Competition,
     CompetitionStatus,
-    ExpertAssignment,
+    ExpertSkillArea,
+    Family,
     MarkingScheme,
     Pathway,
     RegistrationFormDefinition,
@@ -46,6 +48,16 @@ async def _seed_open_cycle(
     capacity: int | None = 40,
 ) -> dict:
     async with session_manager.session() as session:
+        family = Family(name=f"Family {uuid.uuid4().hex[:6]}", active=True)
+        session.add(family)
+        await session.flush()
+        catalog = CatalogSkill(
+            name=f"{skill_name} {uuid.uuid4().hex[:6]}",
+            family_id=family.id,
+            active=True,
+        )
+        session.add(catalog)
+        await session.flush()
         age = AgeRule(competition_id=competition_id, name="U25", max_age=25)
         path = Pathway(competition_id=competition_id, name="National")
         scheme = MarkingScheme(competition_id=competition_id, name="CIS")
@@ -55,6 +67,8 @@ async def _seed_open_cycle(
         skill = Skill(
             competition_id=competition_id,
             name=skill_name,
+            catalog_skill_id=catalog.id,
+            family_id=str(family.id),
             age_rule_id=age.id,
             pathway_id=path.id,
             scheme_id=scheme.id,
@@ -87,7 +101,11 @@ async def _seed_open_cycle(
             assert cycle is not None
             cycle.status = CompetitionStatus.ACTIVE
         await session.commit()
-        return {"skill_id": skill.id, "zone_id": zone.id}
+        return {
+            "skill_id": skill.id,
+            "zone_id": zone.id,
+            "catalog_skill_id": catalog.id,
+        }
 
 
 async def _add_competitor(
@@ -122,6 +140,7 @@ async def _add_expert_assignment(
     skill_id: uuid.UUID,
     zone_id: uuid.UUID,
     full_name: str = "Portal Expert",
+    catalog_skill_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     async with session_manager.session() as session:
         expert = User(
@@ -133,14 +152,13 @@ async def _add_expert_assignment(
         )
         session.add(expert)
         await session.flush()
+        catalog_id = catalog_skill_id
+        if catalog_id is None:
+            skill = await session.get(Skill, skill_id)
+            assert skill is not None and skill.catalog_skill_id is not None
+            catalog_id = skill.catalog_skill_id
         session.add(
-            ExpertAssignment(
-                competition_id=competition_id,
-                expert_id=expert.id,
-                skill_id=skill_id,
-                zone_id=zone_id,
-                coi_flags=[],
-            )
+            ExpertSkillArea(expert_id=expert.id, catalog_skill_id=catalog_id)
         )
         await session.commit()
         return expert.id
@@ -249,11 +267,8 @@ async def test_public_stats_dedupes_experts_across_zones(
     competition_id = await _create_competition(client, auth_headers)
     seed = await _seed_open_cycle(session_manager, competition_id)
     skill_id = seed["skill_id"]
-    zone_a = seed["zone_id"]
 
     async with session_manager.session() as session:
-        zone_b = Zone(competition_id=competition_id, name="Ashanti", active=True)
-        session.add(zone_b)
         expert = User(
             email=f"expert-multi-{uuid.uuid4().hex[:8]}@example.com",
             full_name="Shared Expert",
@@ -263,23 +278,10 @@ async def test_public_stats_dedupes_experts_across_zones(
         )
         session.add(expert)
         await session.flush()
-        session.add_all(
-            [
-                ExpertAssignment(
-                    competition_id=competition_id,
-                    expert_id=expert.id,
-                    skill_id=skill_id,
-                    zone_id=zone_a,
-                    coi_flags=[],
-                ),
-                ExpertAssignment(
-                    competition_id=competition_id,
-                    expert_id=expert.id,
-                    skill_id=skill_id,
-                    zone_id=zone_b.id,
-                    coi_flags=[],
-                ),
-            ]
+        skill = await session.get(Skill, skill_id)
+        assert skill is not None and skill.catalog_skill_id is not None
+        session.add(
+            ExpertSkillArea(expert_id=expert.id, catalog_skill_id=skill.catalog_skill_id)
         )
         await session.commit()
         expert_id = expert.id
@@ -288,7 +290,7 @@ async def test_public_stats_dedupes_experts_across_zones(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     skill = next(s for s in body["skills"] if s["skillId"] == str(skill_id))
-    # Same expert assigned to two zones must appear once on the skill.
+    # Catalog skill area binding appears once per skill regardless of zones.
     assert len(skill["experts"]) == 1
     assert skill["experts"][0]["expertId"] == str(expert_id)
     assert skill["experts"][0]["fullName"] == "Shared Expert"

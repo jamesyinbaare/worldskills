@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.rbac import Capability
 from app.dependencies.auth import CurrentUserDep, client_meta, require_capability
@@ -27,6 +27,11 @@ router = APIRouter(tags=["assessment"])
 
 ScorerDep = Annotated[User, Depends(require_capability(Capability.SCORE_SUBMISSION))]
 ModeratorDep = Annotated[User, Depends(require_capability(Capability.MODERATE_SCORE))]
+
+
+def _attachment_filename(filename: str) -> str:
+    safe = filename.replace('"', "").replace("\r", "").replace("\n", "") or "download"
+    return safe
 
 
 @router.get("/assessors/me/assignments", response_model=list[MyAssignmentOut])
@@ -118,6 +123,31 @@ async def get_assessment(
     ip, ua = client_meta(request)
     return await assessment_service.get_assessment_view(
         session, submission_id, actor=actor, ip=ip, user_agent=ua
+    )
+
+
+@router.get("/submissions/{submission_id}/artefacts/{artefact_id}/download")
+async def download_assessment_artefact(
+    submission_id: uuid.UUID,
+    artefact_id: uuid.UUID,
+    session: DBSessionDep,
+    actor: ScorerDep,
+    request: Request,
+) -> Response:
+    ip, ua = client_meta(request)
+    data, filename, content_type = await assessment_service.download_assessment_artefact(
+        session,
+        submission_id,
+        artefact_id,
+        actor=actor,
+        ip=ip,
+        user_agent=ua,
+    )
+    safe_name = _attachment_filename(filename)
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
     )
 
 

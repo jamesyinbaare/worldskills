@@ -69,7 +69,9 @@ async def _rules(session: AsyncSession, stage: Stage) -> dict[str, Any]:
 
 
 def _deliverable_rule(rules: dict[str, Any], code: str) -> dict[str, Any]:
-    for item in rules.get("requiredDeliverables") or []:
+    # Prefer allowedDeliverables (includes optional); fall back for legacy stage rules.
+    candidates = rules.get("allowedDeliverables") or rules.get("requiredDeliverables") or []
+    for item in candidates:
         if item.get("code") == code:
             return item
     raise AppError(
@@ -140,7 +142,9 @@ def _assert_uploadable(submission: Submission) -> None:
 
 
 def _effective_deadline(stage: Stage, submission: Submission, rules: dict[str, Any]) -> datetime:
-    deadline = submission.deadline_at or stage.closes_at
+    """Live stage window is source of truth; timed exam expiry can tighten it."""
+    _ = rules
+    deadline = stage.closes_at or submission.deadline_at
     if submission.timed_expires_at and (
         deadline is None or submission.timed_expires_at < deadline
     ):
@@ -152,6 +156,16 @@ def _effective_deadline(stage: Stage, submission: Submission, rules: dict[str, A
             status_code=409,
             fields=[FieldError("closesAt", "CONFIG_INCOMPLETE")],
         )
+    return deadline
+
+
+def effective_deadline_at(stage: Stage | None, submission: Submission) -> datetime | None:
+    """Deadline exposed to clients — prefer live stage.closes_at over frozen snapshot."""
+    deadline = (stage.closes_at if stage is not None else None) or submission.deadline_at
+    if submission.timed_expires_at and (
+        deadline is None or submission.timed_expires_at < deadline
+    ):
+        return submission.timed_expires_at
     return deadline
 
 
@@ -221,6 +235,12 @@ async def open_submission(
     )
     prior = existing.scalar_one_or_none()
     if prior is not None:
+        # Keep open submissions aligned with the current stage window
+        if prior.state not in IMMUTABLE_STATES and stage.closes_at is not None:
+            if prior.deadline_at != stage.closes_at:
+                prior.deadline_at = stage.closes_at
+                await session.commit()
+                await session.refresh(prior)
         return prior
 
     now = _utcnow()

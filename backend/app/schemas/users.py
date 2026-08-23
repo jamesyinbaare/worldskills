@@ -16,6 +16,7 @@ class CreateUserRequest(BaseModel):
     institution_id: str | None = Field(default=None, alias="institutionId")
     credential_mode: CredentialMode = Field(alias="credentialMode")
     temporary_password: str | None = Field(default=None, alias="temporaryPassword")
+    catalog_skill_ids: list[str] | None = Field(default=None, alias="catalogSkillIds")
 
     model_config = {"populate_by_name": True}
 

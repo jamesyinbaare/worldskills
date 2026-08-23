@@ -28,6 +28,7 @@ import {
   exportAdminCompetitorsExcel,
   listAdminCompetitors,
   listAssignments,
+  listCatalogSkillExperts,
   listCycleZones,
   listSkills,
   listUsers,
@@ -146,7 +147,7 @@ export default function CycleSkillDetailPage() {
   const criteriaInputRef = useRef<HTMLInputElement>(null);
 
   const [expertId, setExpertId] = useState("");
-  const [zoneId, setZoneId] = useState("");
+  const [zoneId, setZoneId] = useState("__all__");
   const [zones, setZones] = useState<ZoneOut[]>([]);
   const [assignError, setAssignError] = useState<ApiError | null>(null);
   const [assignFieldErrors, setAssignFieldErrors] = useState<
@@ -189,7 +190,16 @@ export default function CycleSkillDetailPage() {
       const found = skills.find((s) => s.skillId === skillId) ?? null;
       setSkill(found);
       setAssignments(assigns);
-      setExperts(expertList);
+      if (found?.catalogSkillId) {
+        try {
+          const matched = await listCatalogSkillExperts(found.catalogSkillId);
+          setExperts(matched);
+        } catch {
+          setExperts([]);
+        }
+      } else {
+        setExperts(expertList);
+      }
       setZones(cycleZones.filter((z) => z.active));
       setCompetitors(skillCompetitors);
       setSelectedIds(new Set());
@@ -487,11 +497,11 @@ export default function CycleSkillDetailPage() {
       const out = await createAssignment(competitionId, {
         expertId: expertId.trim(),
         cycleSkillId: skillId,
-        zoneId: zoneId.trim(),
+        zoneId: zoneId === "__all__" || !zoneId.trim() ? null : zoneId.trim(),
       });
       setAssignCreated(out);
       setExpertId("");
-      setZoneId("");
+      setZoneId("__all__");
       const assigns = await listAssignments(competitionId, {
         cycleSkillId: skillId,
       });
@@ -509,8 +519,10 @@ export default function CycleSkillDetailPage() {
   const expertName = (id: string) =>
     experts.find((e) => e.userId === id)?.fullName ?? id;
 
-  const zoneNameById = (id: string) =>
-    zones.find((z) => z.zoneId === id)?.name ?? id;
+  const zoneNameById = (id: string | null | undefined) => {
+    if (!id) return "All zones";
+    return zones.find((z) => z.zoneId === id)?.name ?? id;
+  };
 
   if (loading) {
     return (
@@ -1155,8 +1167,10 @@ export default function CycleSkillDetailPage() {
                 Expert assignments
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Assign experts to this skill and zone. Conflict-of-interest
-                flags are returned when detected.
+                Experts are scoped globally by catalog skill area. Optionally
+                record a zone here for bookkeeping; leave as All zones when
+                unrestricted. Conflict-of-interest flags are returned when
+                detected.
               </p>
             </div>
 
@@ -1203,15 +1217,23 @@ export default function CycleSkillDetailPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {experts.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {skill?.catalogSkillId
+                        ? "No experts have this catalog skill area yet. Assign skill areas on the staff account."
+                        : "No active expert accounts found."}
+                    </p>
+                  ) : null}
                   <FieldMessage message={assignFieldErrors.expertId} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="zoneId">Zone</Label>
+                  <Label htmlFor="zoneId">Zone (optional)</Label>
                   <Select value={zoneId} onValueChange={setZoneId}>
                     <SelectTrigger id="zoneId" className="min-h-11 w-full">
-                      <SelectValue placeholder="Select zone" />
+                      <SelectValue placeholder="All zones" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="__all__">All zones</SelectItem>
                       {zones.map((z) => (
                         <SelectItem key={z.zoneId} value={z.zoneId}>
                           {z.name}
@@ -1228,7 +1250,7 @@ export default function CycleSkillDetailPage() {
                       >
                         Configure zones
                       </Link>
-                      .
+                      . Assignments default to all zones.
                     </p>
                   ) : null}
                   <FieldMessage message={assignFieldErrors.zoneId} />
