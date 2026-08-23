@@ -43,6 +43,7 @@ import {
   FieldMessage,
   fieldErrorMap,
 } from "@/components/forms/ApiErrorAlert";
+import { CompetitorDetailDialog } from "@/components/admin/CompetitorDetailDialog";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
 import { StatusBadge } from "@/components/layout/StatusBadge";
@@ -72,6 +73,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 type CompetitorRow = AdminCompetitorItem & { displayName: string };
 
@@ -159,6 +161,9 @@ export default function CycleSkillDetailPage() {
   );
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [detailCompetitorId, setDetailCompetitorId] = useState<string | null>(
+    null,
+  );
   const [tableSearch, setTableSearch] = useState("");
   const [zoneFilter, setZoneFilter] = useState<string>("all");
 
@@ -237,6 +242,25 @@ export default function CycleSkillDetailPage() {
     }
     return competitorRows.filter((r) => r.zoneId === zoneFilter);
   }, [competitorRows, zoneFilter]);
+
+  const browseCompetitors = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return filteredRows;
+    return filteredRows.filter((r) => {
+      const haystack = [
+        r.displayName,
+        r.refNo,
+        r.institutionName,
+        r.zoneName,
+        r.status,
+        r.eligibilityStatus,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [filteredRows, tableSearch]);
 
   const zoneOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -318,7 +342,7 @@ export default function CycleSkillDetailPage() {
         ),
         cell: ({ row }) => (
           <div>
-            <p className="font-medium text-foreground">
+            <p className="font-medium text-foreground underline-offset-2 group-hover/row:underline">
               {row.original.displayName}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
@@ -649,8 +673,8 @@ export default function CycleSkillDetailPage() {
                   Registered competitors
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Select rows to target SMS, or leave empty to message everyone
-                  listed for this skill.
+                  Click a competitor to view details. Select rows to target SMS,
+                  or leave empty to message everyone listed for this skill.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -680,6 +704,13 @@ export default function CycleSkillDetailPage() {
               initialPageSize={10}
               globalFilter={tableSearch}
               onGlobalFilterChange={setTableSearch}
+              onRowClick={(row) => setDetailCompetitorId(row.competitorId)}
+              getRowClassName={(row) =>
+                cn(
+                  "group/row",
+                  detailCompetitorId === row.competitorId && "bg-muted/40",
+                )
+              }
               toolbar={
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <div className="relative min-w-0 flex-1">
@@ -707,6 +738,17 @@ export default function CycleSkillDetailPage() {
                   </Select>
                 </div>
               }
+            />
+
+            <CompetitorDetailDialog
+              open={detailCompetitorId != null}
+              onOpenChange={(open) => {
+                if (!open) setDetailCompetitorId(null);
+              }}
+              competitors={browseCompetitors}
+              activeId={detailCompetitorId}
+              onActiveIdChange={setDetailCompetitorId}
+              competitionId={competitionId}
             />
           </div>
 

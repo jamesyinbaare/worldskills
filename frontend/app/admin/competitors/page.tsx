@@ -13,6 +13,7 @@ import {
   verifyConsentForm,
 } from "@/lib/api";
 import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
+import { CompetitorDetailDialog } from "@/components/admin/CompetitorDetailDialog";
 import {
   RunCompetitionFilterBar,
   useCompetitionSkillQuery,
@@ -48,6 +49,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 function displayName(row: AdminCompetitorItem): string {
   const parts = [row.givenNames, row.familyName].filter(Boolean);
@@ -74,8 +76,19 @@ function CompetitorsPageInner() {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectCompetitorId, setRejectCompetitorId] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  function openCompetitor(competitorId: string) {
+    setSelectedId(competitorId);
+  }
+
+  function openReject(competitorId: string) {
+    setRejectCompetitorId(competitorId);
+    setRejectReason("");
+    setRejectOpen(true);
+  }
 
   useEffect(() => {
     if (!competitionId) {
@@ -237,7 +250,23 @@ function CompetitorsPageInner() {
                 </TableRow>
               ) : (
                 rows.map((row) => (
-                  <TableRow key={row.competitorId}>
+                  <TableRow
+                    key={row.competitorId}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`View details for ${displayName(row)}`}
+                    className={cn(
+                      "cursor-pointer transition-colors hover:bg-muted/50",
+                      selectedId === row.competitorId && "bg-muted/40",
+                    )}
+                    onClick={() => openCompetitor(row.competitorId)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openCompetitor(row.competitorId);
+                      }
+                    }}
+                  >
                     <TableCell className="font-mono text-xs">
                       {row.refNo}
                     </TableCell>
@@ -263,7 +292,10 @@ function CompetitorsPageInner() {
                         "—"
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -277,6 +309,12 @@ function CompetitorsPageInner() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem
+                            onClick={() => openCompetitor(row.competitorId)}
+                          >
+                            View details
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem asChild>
                             <Link
                               href={`/admin/competitions/${competitionId}/competitors/${row.competitorId}/eligibility`}
@@ -308,11 +346,7 @@ function CompetitorsPageInner() {
                               ) : null}
                               {row.consentVerificationStatus !== "REJECTED" ? (
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setRejectCompetitorId(row.competitorId);
-                                    setRejectReason("");
-                                    setRejectOpen(true);
-                                  }}
+                                  onClick={() => openReject(row.competitorId)}
                                 >
                                   Reject consent
                                 </DropdownMenuItem>
@@ -329,6 +363,23 @@ function CompetitorsPageInner() {
           </Table>
         </div>
       )}
+
+      {competitionId ? (
+        <CompetitorDetailDialog
+          open={selectedId != null}
+          onOpenChange={(open) => {
+            if (!open) setSelectedId(null);
+          }}
+          competitors={rows}
+          activeId={selectedId}
+          onActiveIdChange={setSelectedId}
+          competitionId={competitionId}
+          pending={pending}
+          onViewConsent={onViewConsent}
+          onVerify={(id) => void onVerify(id)}
+          onReject={openReject}
+        />
+      ) : null}
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent>

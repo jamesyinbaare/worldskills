@@ -96,18 +96,6 @@ function SkillDetailRow({ skill }: { skill: PublicStatsSkillOut }) {
               </span>
             </p>
           </div>
-          {skill.experts.length > 0 ? (
-            <ul className="flex flex-wrap gap-1.5">
-              {skill.experts.map((expert) => (
-                <li
-                  key={expert.expertId}
-                  className="rounded-md bg-brand-blue/6 px-2 py-0.5 text-xs font-medium text-foreground/80"
-                >
-                  {expert.fullName}
-                </li>
-              ))}
-            </ul>
-          ) : null}
           <Link
             href={href}
             className="inline-flex items-center gap-1 text-sm font-semibold text-brand-blue underline-offset-4 hover:underline"
@@ -279,7 +267,7 @@ export function HomeLiveStats() {
                           By skill area
                         </SheetTitle>
                         <SheetDescription>
-                          Registered competitors and assigned experts, ranked by
+                          Registered competitors by skill area, ranked by
                           registration count.
                         </SheetDescription>
                       </SheetHeader>
