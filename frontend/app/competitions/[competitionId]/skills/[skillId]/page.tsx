@@ -352,7 +352,7 @@ export default function SkillAreaDetailPage() {
           <Alert variant="destructive" className="mt-4">
             <AlertTitle>Not available</AlertTitle>
             <AlertDescription>
-              This skill area is not open for registration right now.
+              This skill area is not publicly available right now.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -405,9 +405,11 @@ export default function SkillAreaDetailPage() {
                 </h1>
                 <p className="text-sm text-muted-foreground sm:text-base">
                   {cycle.name}
-                  {cycle.window?.closesAt
-                    ? ` · Registration closes ${formatCompetitionDate(cycle.window.closesAt)}`
-                    : null}
+                  {cycle.registrationOpen === false
+                    ? " · Registration is closed"
+                    : cycle.window?.closesAt
+                      ? ` · Registration closes ${formatCompetitionDate(cycle.window.closesAt)}`
+                      : null}
                 </p>
                 {meta ? (
                   <p className="text-sm font-medium text-foreground/80">{meta}</p>
@@ -522,28 +524,41 @@ export default function SkillAreaDetailPage() {
                     id="register-heading"
                     className="text-lg font-semibold tracking-tight text-foreground"
                   >
-                    Ready to compete?
+                    {cycle.registrationOpen === false && !alreadyRegistered
+                      ? "Registration closed"
+                      : "Ready to compete?"}
                   </h2>
                   <p className="text-sm text-muted-foreground">
                     {alreadyRegistered
                       ? `Open your competitor dashboard for ${skill.name}.`
-                      : status === "authenticated" &&
-                          isCompetitorRole(me?.role ?? "")
-                        ? `Continue registration for ${skill.name}.`
-                        : `Create a competitor account to register for ${skill.name}.`}
+                      : cycle.registrationOpen === false
+                        ? `Registration for ${skill.name} is closed. You can still review criteria documents above.`
+                        : status === "authenticated" &&
+                            isCompetitorRole(me?.role ?? "")
+                          ? `Continue registration for ${skill.name}.`
+                          : `Create a competitor account to register for ${skill.name}.`}
                   </p>
                 </div>
-                <Button
-                  size="lg"
-                  className="min-h-11 w-full gap-2 sm:w-auto"
-                  asChild
-                  data-testid="start-registration"
-                >
-                  <Link href={startRegistrationHref}>
-                    {startRegistrationLabel}
-                    <ArrowRightIcon className="size-4 opacity-80" aria-hidden />
-                  </Link>
-                </Button>
+                {alreadyRegistered || cycle.registrationOpen !== false ? (
+                  <Button
+                    size="lg"
+                    className="min-h-11 w-full gap-2 sm:w-auto"
+                    asChild
+                    data-testid="start-registration"
+                  >
+                    <Link href={startRegistrationHref}>
+                      {startRegistrationLabel}
+                      <ArrowRightIcon className="size-4 opacity-80" aria-hidden />
+                    </Link>
+                  </Button>
+                ) : (
+                  <Alert data-testid="registration-closed">
+                    <AlertTitle>Registration is closed</AlertTitle>
+                    <AlertDescription>
+                      Competitors can no longer register for this competition.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </section>
 
               {cycle.skills.length > 1 ? (

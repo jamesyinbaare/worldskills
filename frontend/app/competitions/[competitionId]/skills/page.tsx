@@ -20,10 +20,16 @@ import { cn } from "@/lib/utils";
 
 function formatWindow(
   window?: { opensAt: string; closesAt: string } | null,
+  registrationOpen?: boolean,
 ): string | null {
-  if (!window?.closesAt) return null;
+  if (!window?.closesAt) {
+    return registrationOpen === false ? "Registration is closed" : null;
+  }
   const closes = new Date(window.closesAt);
   if (Number.isNaN(closes.getTime())) return null;
+  if (registrationOpen === false) {
+    return "Registration is closed";
+  }
   return `Registration closes ${closes.toLocaleDateString(undefined, {
     day: "numeric",
     month: "short",
@@ -87,10 +93,11 @@ export default function CompetitionSkillsBrowsePage() {
   }, [cycle, query]);
 
   const blurb = previewText(cycle?.description, 180);
-  const windowLabel = formatWindow(cycle?.window);
+  const windowLabel = formatWindow(cycle?.window, cycle?.registrationOpen);
   const skillCount = cycle?.skills.length ?? 0;
   const filteredCount = filtered.length;
   const searching = query.trim().length > 0;
+  const registrationOpen = cycle?.registrationOpen !== false;
 
   return (
     <div className="bg-competitions-atmosphere min-h-[calc(100dvh-var(--site-header-height))]">
@@ -111,10 +118,9 @@ export default function CompetitionSkillsBrowsePage() {
 
         {error && !cycle ? (
           <Alert variant="destructive" className="mt-4">
-            <AlertTitle>Not open for registration</AlertTitle>
+            <AlertTitle>Competition unavailable</AlertTitle>
             <AlertDescription>
-              This competition is not available for public registration right
-              now.
+              This competition is not publicly available right now.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -139,17 +145,29 @@ export default function CompetitionSkillsBrowsePage() {
           <div className="space-y-10 sm:space-y-12">
             <header className="animate-comp-fade mx-auto max-w-2xl space-y-4 text-center">
               <p className="text-xs font-semibold tracking-[0.16em] text-brand-blue/70 uppercase">
-                {skillCount} open · {cycle.name}
+                {skillCount} skill {skillCount === 1 ? "area" : "areas"} ·{" "}
+                {cycle.name}
               </p>
               <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl lg:text-5xl">
                 Choose your skill area
               </h1>
               <p className="mx-auto max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
                 {blurb ||
-                  "Select a skill to review criteria and start registration."}
+                  (registrationOpen
+                    ? "Select a skill to review criteria and start registration."
+                    : "Select a skill to review criteria. Registration is closed.")}
               </p>
               {windowLabel ? (
                 <p className="text-sm text-muted-foreground">{windowLabel}</p>
+              ) : null}
+              {!registrationOpen ? (
+                <Alert className="mx-auto max-w-lg text-left">
+                  <AlertTitle>Registration is closed</AlertTitle>
+                  <AlertDescription>
+                    You can still browse skill areas and criteria for this
+                    competition.
+                  </AlertDescription>
+                </Alert>
               ) : null}
             </header>
 
@@ -219,6 +237,7 @@ export default function CompetitionSkillsBrowsePage() {
                           competitionId={competitionId}
                           skill={skill}
                           index={index}
+                          registrationOpen={registrationOpen}
                         />
                       </li>
                     ))}

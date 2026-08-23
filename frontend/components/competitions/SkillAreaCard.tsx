@@ -18,6 +18,7 @@ type SkillAreaCardProps = {
   competitionId: string;
   skill: PublicSkillOut;
   index?: number;
+  registrationOpen?: boolean;
 };
 
 function skillMonogram(name: string): string {
@@ -31,6 +32,7 @@ export function SkillAreaCard({
   competitionId,
   skill,
   index = 0,
+  registrationOpen = true,
 }: SkillAreaCardProps) {
   const href = skillDetailHref(competitionId, skill.skillId);
   const palette = skillCoverPalette(skill.skillId, index);
@@ -126,7 +128,11 @@ export function SkillAreaCard({
         </div>
 
         <div className="mt-auto space-y-4 pt-8">
-          {hasCriteria ? (
+          {registrationOpen === false ? (
+            <span className="inline-flex items-center rounded-full border border-white/20 bg-white/8 px-2.5 py-1 text-[0.7rem] font-medium text-white/75 backdrop-blur-sm">
+              Registration closed
+            </span>
+          ) : hasCriteria ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[0.7rem] font-medium text-white/90 backdrop-blur-sm">
               <FileTextIcon className="size-3.5 shrink-0" aria-hidden />
               Criteria available

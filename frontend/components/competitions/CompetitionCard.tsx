@@ -71,11 +71,34 @@ function windowYear(
   return String(opens.getFullYear());
 }
 
+function registrationStatusLabel(
+  cycle: OpenCompetitionOut,
+): { title: string; detail: string } {
+  if (cycle.registrationOpen) {
+    return {
+      title: "Registration",
+      detail: formatWindow(cycle.window) ?? "Open for registration",
+    };
+  }
+  if (cycle.window) {
+    return {
+      title: "Registration",
+      detail: formatWindow(cycle.window)
+        ? `Closed · ${formatWindow(cycle.window)}`
+        : "Registration closed",
+    };
+  }
+  return {
+    title: "Registration",
+    detail: "Registration closed",
+  };
+}
+
 export function CompetitionCard({ cycle, index = 0 }: CompetitionCardProps) {
   const preview = previewText(cycle.description);
-  const windowLabel = formatWindow(cycle.window);
   const year = windowYear(cycle.window);
   const palette = coverPalette(cycle.competitionId);
+  const registration = registrationStatusLabel(cycle);
 
   return (
     <Link
@@ -141,30 +164,19 @@ export function CompetitionCard({ cycle, index = 0 }: CompetitionCardProps) {
 
         <div className="flex flex-1 flex-col gap-4 p-5">
           <dl className="space-y-3 text-sm">
-            {windowLabel ? (
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-blue/10 text-brand-blue">
-                  <CalendarDaysIcon className="size-4" aria-hidden />
-                </span>
-                <div className="min-w-0">
-                  <dt className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Registration window
-                  </dt>
-                  <dd className="mt-0.5 font-medium text-foreground">
-                    {windowLabel}
-                  </dd>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-2xl bg-muted/70 px-3.5 py-3">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-blue/10 text-brand-blue">
+                <CalendarDaysIcon className="size-4" aria-hidden />
+              </span>
+              <div className="min-w-0">
                 <dt className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Registration
+                  {registration.title}
                 </dt>
                 <dd className="mt-0.5 font-medium text-foreground">
-                  Open for registration
+                  {registration.detail}
                 </dd>
               </div>
-            )}
+            </div>
           </dl>
 
           {preview ? (
@@ -173,7 +185,9 @@ export function CompetitionCard({ cycle, index = 0 }: CompetitionCardProps) {
             </p>
           ) : (
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Explore skill areas and begin registration.
+              {cycle.registrationOpen
+                ? "Explore skill areas and begin registration."
+                : "Explore skill areas. Registration is closed."}
             </p>
           )}
 

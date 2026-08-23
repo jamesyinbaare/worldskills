@@ -83,11 +83,11 @@ export function CompetitionsBrowse() {
         >
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue/70">
             {skillMode
-              ? `${activeCompetition.skills.length} open · ${activeCompetition.name}`
+              ? `${activeCompetition.skills.length} skill ${activeCompetition.skills.length === 1 ? "area" : "areas"} · ${activeCompetition.name}`
               : "WorldSkills Ghana"}
           </p>
           <h1 className="text-3xl font-bold tracking-tight text-primary sm:text-4xl lg:text-5xl">
-            {skillMode ? "Choose your skill area" : "Open competitions"}
+            {skillMode ? "Choose your skill area" : "Competitions"}
           </h1>
           <p
             className={cn(
@@ -96,8 +96,10 @@ export function CompetitionsBrowse() {
             )}
           >
             {skillMode
-              ? "Select a skill to review criteria and start registration."
-              : "Choose a competition, pick your skill area, then enter as a competitor."}
+              ? activeCompetition.registrationOpen
+                ? "Select a skill to review criteria and start registration."
+                : "Select a skill to review criteria. Registration is closed."
+              : "Browse competitions and skill areas. Register when the window is open."}
           </p>
         </header>
 
@@ -137,8 +139,8 @@ export function CompetitionsBrowse() {
             )}
           >
             <p className="text-base text-muted-foreground">
-              No competitions are open for registration right now. Check back
-              soon, or sign in if you already have an account.
+              No active competitions are available right now. Check back soon,
+              or sign in if you already have an account.
             </p>
             <div
               className={cn(
@@ -162,6 +164,7 @@ export function CompetitionsBrowse() {
               competitionId={activeCompetition.competitionId}
               skills={activeCompetition.skills}
               footerHref={`/competitions/${activeCompetition.competitionId}/skills`}
+              registrationOpen={activeCompetition.registrationOpen !== false}
             />
           </div>
         ) : null}

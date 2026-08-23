@@ -138,8 +138,25 @@ async def list_competitions(session: AsyncSession) -> list[Competition]:
     return list(result.scalars().all())
 
 
+def _registration_open(window, now) -> bool:
+    if window is None:
+        return False
+    return window.opens_at <= now <= window.closes_at
+
+
+def _public_visibility_filter(*, competition_id: uuid.UUID | None = None):
+    """ACTIVE competitions whose competition period has not ended yet."""
+    clauses = [
+        Competition.status == CompetitionStatus.ACTIVE,
+        Competition.period_end >= date.today(),
+    ]
+    if competition_id is not None:
+        clauses.append(Competition.id == competition_id)
+    return clauses
+
+
 async def list_open_for_registration(session: AsyncSession) -> list[dict]:
-    """ACTIVE cycles whose registration window is currently open."""
+    """ACTIVE cycles still within their competition period (public browse list)."""
     from datetime import datetime
 
     from app.models import RegistrationWindow
@@ -147,12 +164,8 @@ async def list_open_for_registration(session: AsyncSession) -> list[dict]:
     now = datetime.utcnow()
     result = await session.execute(
         select(Competition, RegistrationWindow)
-        .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
-        .where(
-            Competition.status == CompetitionStatus.ACTIVE,
-            RegistrationWindow.opens_at <= now,
-            RegistrationWindow.closes_at >= now,
-        )
+        .outerjoin(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
+        .where(*_public_visibility_filter())
         .order_by(Competition.name)
     )
     out: list[dict] = []
@@ -163,17 +176,22 @@ async def list_open_for_registration(session: AsyncSession) -> list[dict]:
                 "name": competition.name,
                 "status": competition.status.value,
                 "description": competition.description,
-                "window": {
-                    "opensAt": window.opens_at.isoformat(),
-                    "closesAt": window.closes_at.isoformat(),
-                },
+                "window": (
+                    {
+                        "opensAt": window.opens_at.isoformat(),
+                        "closesAt": window.closes_at.isoformat(),
+                    }
+                    if window is not None
+                    else None
+                ),
+                "registrationOpen": _registration_open(window, now),
             }
         )
     return out
 
 
 async def get_public_competition(session: AsyncSession, competition_id: uuid.UUID) -> dict:
-    """Public about payload for an ACTIVE cycle with an open registration window."""
+    """Public about payload for an ACTIVE cycle still within its competition period."""
     from datetime import datetime
 
     from app.models import RegistrationWindow
@@ -183,19 +201,14 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
     now = datetime.utcnow()
     result = await session.execute(
         select(Competition, RegistrationWindow)
-        .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
-        .where(
-            Competition.id == competition_id,
-            Competition.status == CompetitionStatus.ACTIVE,
-            RegistrationWindow.opens_at <= now,
-            RegistrationWindow.closes_at >= now,
-        )
+        .outerjoin(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
+        .where(*_public_visibility_filter(competition_id=competition_id))
     )
     row = result.one_or_none()
     if row is None:
         raise AppError(
             "COMPETITION_NOT_FOUND",
-            "Competition not found or not open for registration",
+            "Competition not found or not publicly available",
             status_code=404,
         )
     cycle, window = row
@@ -214,10 +227,15 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
         "description": cycle.description,
         "period": {"start": cycle.period_start, "end": cycle.period_end},
         "timeZone": cycle.time_zone,
-        "window": {
-            "opensAt": window.opens_at.isoformat(),
-            "closesAt": window.closes_at.isoformat(),
-        },
+        "window": (
+            {
+                "opensAt": window.opens_at.isoformat(),
+                "closesAt": window.closes_at.isoformat(),
+            }
+            if window is not None
+            else None
+        ),
+        "registrationOpen": _registration_open(window, now),
         "hasGeneralCriteriaDocument": bool(
             cycle.general_criteria_object_key and cycle.general_criteria_file_name
         ),
@@ -239,6 +257,19 @@ async def get_public_competition(session: AsyncSession, competition_id: uuid.UUI
             for s in skills
         ],
     }
+
+
+async def assert_publicly_visible(session: AsyncSession, competition_id: uuid.UUID) -> None:
+    """Raise 404 unless the competition is ACTIVE and still within its period."""
+    result = await session.execute(
+        select(Competition.id).where(*_public_visibility_filter(competition_id=competition_id))
+    )
+    if result.scalar_one_or_none() is None:
+        raise AppError(
+            "COMPETITION_NOT_FOUND",
+            "Competition not found or not publicly available",
+            status_code=404,
+        )
 
 
 async def update_competition_public_profile(
@@ -765,12 +796,56 @@ async def update_competition_structural(
     competition_id: uuid.UUID,
     *,
     name: str | None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    time_zone: str | None = None,
     actor: User,
 ) -> Competition:
     _ = actor
     cycle = await get_competition(session, competition_id)
+
+    new_name = name if name is not None else cycle.name
+    new_start = period_start if period_start is not None else cycle.period_start
+    new_end = period_end if period_end is not None else cycle.period_end
+
+    if period_start is not None or period_end is not None:
+        if new_end <= new_start:
+            raise AppError(
+                "VALIDATION_ERROR",
+                "Invalid period",
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                fields=[FieldError("period.end", "BEFORE_START")],
+            )
+
+    if (
+        name is not None
+        or period_start is not None
+        or period_end is not None
+    ):
+        dup = await _find_duplicate(
+            session,
+            name=new_name,
+            period_start=new_start,
+            period_end=new_end,
+            exclude_id=cycle.id,
+        )
+        if dup is not None:
+            raise AppError(
+                "COMPETITION_DUPLICATE",
+                "A competition with this name already exists in an overlapping period",
+                status_code=status.HTTP_409_CONFLICT,
+                fields=[FieldError("name", "DUPLICATE")],
+            )
+
     if name is not None:
         cycle.name = name
+    if period_start is not None:
+        cycle.period_start = period_start
+    if period_end is not None:
+        cycle.period_end = period_end
+    if time_zone is not None:
+        cycle.time_zone = time_zone
+
     await session.commit()
     await session.refresh(cycle)
     return cycle
@@ -937,31 +1012,10 @@ async def download_public_general_criteria_document(
     session: AsyncSession,
     competition_id: uuid.UUID,
 ) -> tuple[bytes, str, str]:
-    """General criteria download for open-registration competitions (no auth)."""
-    from datetime import datetime
-
-    from app.models import RegistrationWindow
+    """General criteria download for publicly visible competitions (no auth)."""
     from app.services.storage import get_object_storage
 
-    now = datetime.utcnow()
-    open_row = (
-        await session.execute(
-            select(Competition.id)
-            .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
-            .where(
-                Competition.id == competition_id,
-                Competition.status == CompetitionStatus.ACTIVE,
-                RegistrationWindow.opens_at <= now,
-                RegistrationWindow.closes_at >= now,
-            )
-        )
-    ).scalar_one_or_none()
-    if open_row is None:
-        raise AppError(
-            "COMPETITION_NOT_FOUND",
-            "Competition not found or not open for registration",
-            status_code=404,
-        )
+    await assert_publicly_visible(session, competition_id)
 
     cycle = await get_competition(session, competition_id)
     if not cycle.general_criteria_object_key or not cycle.general_criteria_file_name:

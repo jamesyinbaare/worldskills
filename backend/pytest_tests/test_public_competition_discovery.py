@@ -105,10 +105,11 @@ async def test_public_open_cycles_anonymous(
     match = next(c for c in body if c["competitionId"] == str(open_id))
     assert match["description"] == "National finals about text"
     assert match["window"] is not None
+    assert match["registrationOpen"] is True
 
 
 @pytest.mark.asyncio
-async def test_public_cycle_detail_and_404_when_closed(
+async def test_public_cycle_detail_visible_when_registration_closed(
     client: AsyncClient,
     auth_headers: dict[str, str],
     session_manager: DBManager,
@@ -125,9 +126,10 @@ async def test_public_cycle_detail_and_404_when_closed(
     assert data["description"] == "Read about this competition"
     assert data["period"]["start"]
     assert data["window"]["closesAt"]
+    assert data["registrationOpen"] is True
     assert str(skill_id) in {s["skillId"] for s in data["skills"]}
 
-    # Close window → 404
+    # Close registration window → still publicly visible, registrationOpen false
     async with session_manager.session() as session:
         from sqlalchemy import select
 
@@ -140,8 +142,75 @@ async def test_public_cycle_detail_and_404_when_closed(
         window.closes_at = datetime.utcnow() - timedelta(hours=1)
         await session.commit()
 
-    closed = await client.get(f"/competitions/{competition_id}/public")
-    assert closed.status_code == 404
+    closed_reg = await client.get(f"/competitions/{competition_id}/public")
+    assert closed_reg.status_code == 200, closed_reg.text
+    closed_body = closed_reg.json()
+    assert closed_body["registrationOpen"] is False
+    assert str(skill_id) in {s["skillId"] for s in closed_body["skills"]}
+
+    listed = await client.get("/competitions:open-for-registration")
+    assert listed.status_code == 200
+    match = next(c for c in listed.json() if c["competitionId"] == str(competition_id))
+    assert match["registrationOpen"] is False
+
+
+@pytest.mark.asyncio
+async def test_public_cycle_404_when_period_ended(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    competition_id = await _create_competition(client, auth_headers)
+    await _seed_open_cycle(session_manager, competition_id)
+
+    async with session_manager.session() as session:
+        from datetime import date, timedelta as td
+
+        from app.models import Competition
+
+        cycle = await session.get(Competition, competition_id)
+        assert cycle is not None
+        cycle.period_start = date.today() - td(days=60)
+        cycle.period_end = date.today() - td(days=1)
+        await session.commit()
+
+    ended = await client.get(f"/competitions/{competition_id}/public")
+    assert ended.status_code == 404
+
+    listed = await client.get("/competitions:open-for-registration")
+    assert str(competition_id) not in {c["competitionId"] for c in listed.json()}
+
+
+@pytest.mark.asyncio
+async def test_admin_patch_competition_period(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    session_manager: DBManager,
+) -> None:
+    from datetime import date, timedelta as td
+
+    competition_id = await _create_competition(client, auth_headers)
+    await _seed_open_cycle(session_manager, competition_id)
+
+    new_start = (date.today() + td(days=1)).isoformat()
+    new_end = (date.today() + td(days=90)).isoformat()
+    patched = await client.patch(
+        f"/competitions/{competition_id}",
+        json={"period": {"start": new_start, "end": new_end}, "timeZone": "Africa/Accra"},
+        headers=auth_headers,
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["period"]["start"] == new_start
+    assert body["period"]["end"] == new_end
+    assert body["timeZone"] == "Africa/Accra"
+
+    invalid = await client.patch(
+        f"/competitions/{competition_id}",
+        json={"period": {"start": new_end, "end": new_start}},
+        headers=auth_headers,
+    )
+    assert invalid.status_code == 422
 
 
 @pytest.mark.asyncio
