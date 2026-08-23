@@ -49,6 +49,10 @@ type DataTableProps<TData, TValue> = {
   onColumnFiltersChange?: (
     updater: ColumnFiltersState | ((prev: ColumnFiltersState) => ColumnFiltersState),
   ) => void;
+  /** Called when a data row is clicked (ignores interactive controls). */
+  onRowClick?: (row: TData) => void;
+  /** Optional class for a data row (e.g. selected highlight). */
+  getRowClassName?: (row: TData) => string | undefined;
 };
 
 export function DataTable<TData, TValue>({
@@ -63,6 +67,8 @@ export function DataTable<TData, TValue>({
   onGlobalFilterChange,
   columnFilters: controlledColumnFilters,
   onColumnFiltersChange,
+  onRowClick,
+  getRowClassName,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [internalColumnFilters, setInternalColumnFilters] =
@@ -140,7 +146,41 @@ export function DataTable<TData, TValue>({
           <TableBody>
             {table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className={cn(
+                    onRowClick && "cursor-pointer",
+                    getRowClassName?.(row.original),
+                  )}
+                  onClick={
+                    onRowClick
+                      ? (e) => {
+                          const target = e.target as HTMLElement;
+                          if (
+                            target.closest(
+                              'button, a, input, label, [role="checkbox"], [role="menuitem"], [data-no-row-click]',
+                            )
+                          ) {
+                            return;
+                          }
+                          onRowClick(row.original);
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          const target = e.target as HTMLElement;
+                          if (target !== e.currentTarget) return;
+                          e.preventDefault();
+                          onRowClick(row.original);
+                        }
+                      : undefined
+                  }
+                  tabIndex={onRowClick ? 0 : undefined}
+                  role={onRowClick ? "button" : undefined}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} className="px-4 py-3">
                       {flexRender(
