@@ -1,14 +1,15 @@
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from http.client import HTTPException
 from typing import Annotated, Any
 from urllib.parse import parse_qs, urlparse
 import os
 
 from alembic_utils.replaceable_entity import registry
-from fastapi import Depends
+from fastapi import Depends, status
 from pydantic_settings import BaseSettings
+
+from app.core.errors import AppError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
@@ -299,9 +300,17 @@ else:
     sessionmanager = None
 
 
+def _database_not_configured() -> AppError:
+    return AppError(
+        "DATABASE_NOT_CONFIGURED",
+        "Database is not configured",
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     if sessionmanager is None:
-        raise HTTPException(512, "Database is not configured")
+        raise _database_not_configured()
 
     async with sessionmanager.session() as session:
         yield session
@@ -309,14 +318,14 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 
 async def get_db() -> AsyncIterator[DatabaseSessionManager]:
     if sessionmanager is None:
-        raise HTTPException(512, "Database is not configured")
+        raise _database_not_configured()
 
     yield sessionmanager
 
 
 def get_sessionmanager() -> DatabaseSessionManager:
     if sessionmanager is None:
-        raise Exception("Database is not configured")
+        raise _database_not_configured()
 
     return sessionmanager
 

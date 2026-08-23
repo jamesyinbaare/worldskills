@@ -328,7 +328,7 @@ async def create_skill(
             raise AppError(
                 "VALIDATION_ERROR",
                 "ageRule is required when associating a catalog skill",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("ageRule", "REQUIRED")],
             )
         return await associate_skill(
@@ -350,7 +350,7 @@ async def create_skill(
         raise AppError(
             "VALIDATION_ERROR",
             "Name is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("name", "REQUIRED")],
         )
 
@@ -358,7 +358,7 @@ async def create_skill(
         raise AppError(
             "VALIDATION_ERROR",
             "Invalid capacity",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("capacity", "INVALID_CAPACITY")],
         )
 

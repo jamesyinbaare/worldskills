@@ -60,8 +60,8 @@ Root files:
    |------|------|-------|
    | SPA | `worldskills.jamesyin.com` | Required |
    | API | `worldskills-api.jamesyin.com` | Required |
-   | SPA | `worldskills.ctvet.gov.gh` | Optional — enable routers in `traefik/dynamic.staging.ctvet.snippet.yml` after DNS exists |
-   | API | `worldskills-api.ctvet.gov.gh` | Optional — same as above |
+   | SPA | `worldskills.ctvet.gov.gh` | Active when DNS A/AAAA points at the VM |
+   | API | `worldskills-api.ctvet.gov.gh` | Active when DNS A/AAAA points at the VM |
    | Traefik dashboard | `traefik-worldskills-staging.jamesyin.com` | Optional |
 
    Host rules live in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml); the dashboard Host is a Traefik label in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml). **Do not** put undeployed DNS names on the same Traefik router as live hosts — ACME will fail for the whole bundle and browsers will reject API calls.
@@ -101,7 +101,26 @@ Symptoms: `/health` is 200 but `/settings`, `/auth/register`, etc. hang or fail 
 4. Check Cloud SQL connection count / `max_connections` if both apps share the instance.
 5. After fixing env, recreate proxy + backend:  
    `docker compose -f compose.staging.gcp.yaml up -d --force-recreate cloud-sql-proxy world-skills-backend`
-6. Prefer `/ready` (runs `SELECT 1`) over `/health` when checking whether the API can serve traffic.
+6. Prefer `/ready` (runs `SELECT 1`) for deploy/smoke checks that the API can serve traffic. Docker **liveness** uses `/health` only (see below).
+
+### API hung / SPA loads but login fails
+
+Symptoms: SPA returns 200; `https://worldskills-api…/health` times out; backend container shows `unhealthy` but stays up.
+
+Cause: single-worker FastAPI event loop wedged. Compose `restart: unless-stopped` does **not** recycle on failed healthchecks.
+
+Mitigations in [`compose.staging.gcp.yaml`](../../compose.staging.gcp.yaml):
+
+1. Backend healthcheck probes **`/health`** (no DB) every 15s.
+2. Backend has label `autoheal=true`; the **`autoheal`** service restarts labeled containers when healthchecks fail.
+3. Request logging uses pure ASGI middleware (not Starlette `BaseHTTPMiddleware`) to avoid known hang modes.
+
+Manual recovery if needed:
+
+```bash
+docker compose --env-file .env.staging.gcp -f compose.staging.gcp.yaml \
+  up -d --force-recreate world-skills-backend
+```
 
 ## Frontend API URL
 
@@ -111,7 +130,7 @@ Staging bakes `NEXT_PUBLIC_API_BASE_URL` (default `https://worldskills-api.james
 
 Traefik routers are **one Host per router** in [`traefik/dynamic.staging.yml`](../../traefik/dynamic.staging.yml). Bundling `jamesyin.com` and `ctvet.gov.gh` in a single `Host() || Host()` rule makes ACME request a SAN certificate for both; if either domain is NXDOMAIN, **neither** gets a cert and Traefik serves `TRAEFIK DEFAULT CERT` (browsers then block API `fetch` → competitions/login fail).
 
-Active staging routes cover `worldskills(.|-api).jamesyin.com` only. After ctvet DNS exists, merge routers from [`traefik/dynamic.staging.ctvet.snippet.yml`](../../traefik/dynamic.staging.ctvet.snippet.yml) and recreate Traefik.
+Active staging routes cover `worldskills(.|-api).jamesyin.com` and `worldskills(.|-api).ctvet.gov.gh`. If ctvet DNS is removed, drop those routers (keep a copy in [`traefik/dynamic.staging.ctvet.snippet.yml`](../../traefik/dynamic.staging.ctvet.snippet.yml)) and recreate Traefik so ACME does not fail for the remaining hosts.
 
 ## Frontend build note
 

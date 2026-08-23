@@ -278,7 +278,7 @@ async def upsert_competition_school_quotas(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Invalid skill for competition",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("skillId", "INVALID")],
             )
         skill.school_quota = item.maxNominations
@@ -422,7 +422,7 @@ async def upsert_institution_nomination_limits(
         raise AppError(
             "VALIDATION_ERROR",
             "Invalid zone for competition",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("zoneId", "INVALID")],
         )
 
@@ -460,7 +460,7 @@ async def upsert_institution_nomination_limits(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Invalid skill for competition",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("skillId", "INVALID")],
             )
         # Global per-skill school quota (applies to every institution)

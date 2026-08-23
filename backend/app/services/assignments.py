@@ -160,7 +160,7 @@ async def _load_assignable_expert(session: AsyncSession, expert_id: uuid.UUID) -
         raise AppError(
             "INVALID_ASSIGNMENT",
             "Expert account is invalid or inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("expertId", "INVALID_ASSIGNMENT")],
         )
     return expert
@@ -172,7 +172,7 @@ async def _load_active_skill(session: AsyncSession, competition_id: uuid.UUID, s
         raise AppError(
             "INVALID_ASSIGNMENT",
             "Skill is invalid or inactive in this competition",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillId", "INVALID_ASSIGNMENT")],
         )
     return skill
@@ -184,7 +184,7 @@ async def _load_active_zone(session: AsyncSession, competition_id: uuid.UUID, zo
         raise AppError(
             "INVALID_ASSIGNMENT",
             "Zone is invalid or inactive in this competition",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("zoneId", "INVALID_ASSIGNMENT")],
         )
     return zone

@@ -81,7 +81,7 @@ async def create_age_rule(
         raise AppError(
             "VALIDATION_ERROR",
             "Name is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("name", "REQUIRED")],
         )
 
@@ -135,7 +135,7 @@ async def create_pathway(
         raise AppError(
             "VALIDATION_ERROR",
             "Name is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("name", "REQUIRED")],
         )
 
@@ -185,7 +185,7 @@ async def create_marking_scheme(
         raise AppError(
             "VALIDATION_ERROR",
             "Name is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("name", "REQUIRED")],
         )
 

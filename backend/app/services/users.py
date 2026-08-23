@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 import string
 import uuid
@@ -132,7 +133,7 @@ def validate_password_policy(password: str) -> None:
         raise AppError(
             "PASSWORD_TOO_WEAK",
             f"Password must be at least {min_len} characters",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("password", "PASSWORD_TOO_WEAK")],
         )
 
@@ -143,14 +144,14 @@ def require_ghana_phone(raw: str | None, *, field: str = "phoneNumber") -> str:
         raise AppError(
             "PHONE_REQUIRED",
             "A phone number is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError(field, "PHONE_REQUIRED")],
         )
     if not is_valid_ghana_phone(phone):
         raise AppError(
             "INVALID_PHONE",
             "Phone number must be a valid Ghana mobile number",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError(field, "INVALID_PHONE")],
         )
     return to_local_ghana_phone(phone)
@@ -212,7 +213,7 @@ async def _load_institution(session: AsyncSession, institution_id: uuid.UUID) ->
         raise AppError(
             "INSTITUTION_NOT_FOUND",
             "Institution not found or inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("institutionId", "INSTITUTION_NOT_FOUND")],
         )
     return inst
@@ -631,7 +632,7 @@ async def reset_password(
             raise AppError(
                 "SMS_DISABLED",
                 "SMS delivery is not enabled",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("sendViaSms", "SMS_DISABLED")],
             )
         raw_phone = (payload.phone_number or user.phone_number or "").strip() or None
@@ -639,7 +640,7 @@ async def reset_password(
             raise AppError(
                 "PHONE_REQUIRED",
                 "A phone number is required to send the temporary password by SMS",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("phoneNumber", "PHONE_REQUIRED")],
             )
         phone_for_sms = require_ghana_phone(raw_phone)
@@ -676,7 +677,12 @@ async def reset_password(
         )
         sms_sent = bool(result.sent)
         if not sms_sent:
-            sms_error = result.error or "SMS delivery failed"
+            if result.error:
+                logging.getLogger("app").warning(
+                    "SMS delivery failed during password reset",
+                    extra={"user_id": str(user.id), "detail": result.error},
+                )
+            sms_error = "Could not send the message. Please try again."
 
     await write_audit_event(
         session,
@@ -809,7 +815,7 @@ async def request_password_reset(
         raise AppError(
             "VALIDATION_ERROR",
             "Provide either an email address or a phone number",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("email", "REQUIRED"), FieldError("phoneNumber", "REQUIRED")],
         )
 

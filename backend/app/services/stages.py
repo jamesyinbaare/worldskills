@@ -95,7 +95,7 @@ def _validate_orders(stages: list[StagePathwayItem]) -> None:
         raise AppError(
             "ORDER_INVALID",
             "Stage orders must be unique and contiguous starting at 1",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("stages.order", "ORDER_INVALID")],
         )
 
@@ -115,7 +115,7 @@ def _validate_branch_targets(stages: list[StagePathwayItem]) -> None:
                 raise AppError(
                     "BRANCH_TARGET_MISSING",
                     f"Branch target order {target} is not in the pathway",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     fields=[FieldError("stages.branch", "BRANCH_TARGET_MISSING")],
                 )
 
@@ -182,14 +182,14 @@ async def put_skill_pathway(
             raise AppError(
                 "INVALID_TYPE",
                 "Stage type must be VIRTUAL or PHYSICAL",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("type", "INVALID_TYPE")],
             )
         if item.minScore is not None and (item.minScore < 0 or item.minScore > 100):
             raise AppError(
                 "SCORE_RANGE",
                 "minScore must be between 0 and 100",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("minScore", "SCORE_RANGE")],
             )
         if item.opensAt is not None and item.closesAt is not None:
@@ -199,7 +199,7 @@ async def put_skill_pathway(
                 raise AppError(
                     "BEFORE_OPENS",
                     "closesAt must be after opensAt",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     fields=[FieldError("closesAt", "BEFORE_OPENS")],
                 )
         mode = item.selectionMode
@@ -208,7 +208,7 @@ async def put_skill_pathway(
                 raise AppError(
                     "QUOTA_INVALID",
                     "quotaByZone is required for PER_ZONE stages",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     fields=[FieldError("quotaByZone", "QUOTA_INVALID")],
                 )
             for amount in item.quotaByZone.values():
@@ -216,7 +216,7 @@ async def put_skill_pathway(
                     raise AppError(
                         "QUOTA_INVALID",
                         "quota must be an integer >= 0 per zone",
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         fields=[FieldError("quotaByZone", "QUOTA_INVALID")],
                     )
             await _resolve_zones(session, competition_id=competition_id, quota_by_zone=item.quotaByZone)
@@ -225,7 +225,7 @@ async def put_skill_pathway(
                 raise AppError(
                     "QUOTA_INVALID",
                     "quota is required for NATIONAL_POOL stages",
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     fields=[FieldError("quota", "QUOTA_INVALID")],
                 )
 

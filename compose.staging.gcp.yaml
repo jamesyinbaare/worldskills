@@ -46,6 +46,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
+    labels:
+      - autoheal=true
     command: >
       sh -c "
         if [ -f app/scripts/prestart.sh ]; then
@@ -58,12 +60,13 @@ services:
       cloud-sql-proxy:
         condition: service_healthy
     healthcheck:
-      # /ready runs SELECT 1; /health stays liveness-only for probes that must not depend on DB
-      test: ["CMD-SHELL", "curl -f http://localhost:80/ready || exit 1"]
-      interval: 30s
-      timeout: 15s
+      # Liveness only — do not depend on DB (use /ready for smoke/deploy checks).
+      # Autoheal restarts this container when the probe fails (wedged event loop).
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 15s
+      timeout: 5s
       retries: 3
-      start_period: 90s
+      start_period: 120s
     networks:
       - world-skills-network
 
@@ -115,6 +118,21 @@ services:
     networks:
       - world-skills-network
     restart: unless-stopped
+
+  # Restarts containers with label autoheal=true when their Docker healthcheck fails
+  # (e.g. wedged FastAPI event loop). Compose restart policies do not cover "unhealthy".
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    container_name: world-skills-autoheal-staging
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "10"
+      AUTOHEAL_START_PERIOD: "120"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - world-skills-network
 
 volumes:
   traefik_certs:

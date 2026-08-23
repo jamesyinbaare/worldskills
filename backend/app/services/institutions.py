@@ -110,7 +110,7 @@ async def lookup_by_code(session: AsyncSession, code: str) -> dict[str, str]:
         raise AppError(
             "SCHOOL_INACTIVE",
             "School is inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("code", "SCHOOL_INACTIVE")],
         )
     return {"code": inst.code, "name": inst.name, "institutionId": str(inst.id)}
@@ -141,7 +141,7 @@ async def get_active_by_code(session: AsyncSession, code: str) -> Institution:
         raise AppError(
             "SCHOOL_INACTIVE",
             "School is inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("schoolCode", "SCHOOL_INACTIVE")],
         )
     return inst
@@ -155,7 +155,7 @@ async def _load_region(session: AsyncSession, region_id: uuid.UUID) -> Region:
         raise AppError(
             "INVALID",
             "Region not found or inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("regionId", "INVALID")],
         )
     return region

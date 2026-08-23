@@ -281,7 +281,7 @@ async def _assert_publishable(session: AsyncSession, ex: Exercise) -> None:
         raise AppError(
             "VALIDATION_ERROR",
             "Exercise is incomplete for publish",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=fields,
         )
 

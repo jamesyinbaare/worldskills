@@ -75,7 +75,7 @@ def _deliverable_rule(rules: dict[str, Any], code: str) -> dict[str, Any]:
     raise AppError(
         "DELIVERABLE_UNKNOWN",
         f"Unknown deliverable '{code}'",
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         fields=[FieldError("deliverableCode", "DELIVERABLE_UNKNOWN")],
     )
 
@@ -93,7 +93,7 @@ def _validate_file_against_rule(rule: dict[str, Any], *, filename: str, size: in
         raise AppError(
             "FILE_TYPE",
             f"File type '.{ext}' is not allowed for {rule.get('code')}",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("filename", "FILE_TYPE")],
         )
     max_mb = rule.get("maxMb")
@@ -101,7 +101,7 @@ def _validate_file_against_rule(rule: dict[str, Any], *, filename: str, size: in
         raise AppError(
             "FILE_TOO_LARGE",
             f"File exceeds {max_mb}MB limit",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("size", "FILE_TOO_LARGE")],
         )
 

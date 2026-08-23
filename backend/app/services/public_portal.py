@@ -164,7 +164,7 @@ def _decode_cursor(cursor: str | None) -> uuid.UUID | None:
         raise AppError(
             "INVALID_CURSOR",
             "Pagination cursor is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("cursor", "INVALID_CURSOR")],
         ) from exc
 
