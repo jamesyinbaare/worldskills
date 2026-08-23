@@ -157,7 +157,7 @@ async def test_unhandled_route_uses_envelope(
         data = resp.json()
         assert data["error"]["code"] == "INTERNAL_ERROR"
         assert "traceId" in data["error"]
-        # BaseHTTPMiddleware logs the failure; handler also logs when it runs.
+        # Exception handlers return INTERNAL_ERROR; unhandled_error_handler logs the boom.
         assert "intentional boom" in caplog.text
     finally:
         app.router.routes[:] = [

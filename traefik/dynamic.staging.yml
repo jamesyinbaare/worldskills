@@ -1,9 +1,9 @@
 # File-provider routes for world-skills (avoids duplicate routers vs compose labels).
 # One Host per router so Let's Encrypt can issue when only some DNS records exist.
-# (Bundling jamesyin + ctvet in one Host() OR rule fails ACME entirely if ctvet NXDOMAIN.)
-#
-# ctvet.gov.gh hosts are omitted until A/AAAA records exist — enable the block at the
-# bottom of this file once DNS points at the VM, then recreate Traefik.
+# (Bundling jamesyin + ctvet in one Host() OR rule fails ACME entirely if either NXDOMAIN.)
+# jamesyin.com and ctvet.gov.gh hosts are both active (DNS A records point at the staging VM).
+# If ctvet DNS is removed, drop those routers (see dynamic.staging.ctvet.snippet.yml) before
+# recreating Traefik so ACME does not fail for the remaining hosts.
 http:
   routers:
     worldskills-frontend-jamesyin:
@@ -77,7 +77,6 @@ http:
       service: worldskills-backend-staging
       middlewares:
         - worldskills-security-headers
-
 
   services:
     worldskills-frontend-staging:

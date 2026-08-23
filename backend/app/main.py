@@ -6,12 +6,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, status
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 from sqlalchemy import text
 
 from app.api import appeals as appeals_api
@@ -58,6 +57,7 @@ from app.dependencies.database import get_sessionmanager, initialize_db
 from app.initial_data import ensure_super_admin_user
 
 SENSITIVE_KEYS = {"password", "token", "authorization"}
+_SKIP_LOG_PATHS = frozenset({"/health", "/ready", "/metrics"})
 
 
 class CustomFormatter(logging.Formatter):
@@ -127,62 +127,89 @@ app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # typ
 app.add_exception_handler(Exception, unhandled_error_handler)
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp):
-        super().__init__(app)
+class RequestLoggingMiddleware:
+    """Pure ASGI request logger — avoids BaseHTTPMiddleware task/hang issues."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
         self.logger = logging.getLogger("http")
 
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path in {"/health", "/ready", "/metrics"}:
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "") or ""
+        if path in _SKIP_LOG_PATHS:
+            await self.app(scope, receive, send)
+            return
 
         start_time = time.monotonic()
+        status_code = 500
+        method = scope.get("method", "")
+        response_started = False
+
+        async def send_wrapper(message: dict[str, Any]) -> None:
+            nonlocal status_code, response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+                status_code = int(message["status"])
+            await send(message)
+
         try:
-            response = await call_next(request)
-            duration_ms = (time.monotonic() - start_time) * 1000
-            self.logger.info(
-                "request completed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status": response.status_code,
-                    "duration_ms": round(duration_ms, 2),
-                },
-            )
-            return response
+            await self.app(scope, receive, send_wrapper)
         except AppError as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
             self.logger.warning(
                 "request domain error",
                 extra={
-                    "method": request.method,
-                    "path": request.url.path,
+                    "method": method,
+                    "path": path,
                     "code": exc.code,
                     "detail": exc.message,
                     "duration_ms": round(duration_ms, 2),
                 },
             )
-            return envelope_response(
-                code=exc.code,
-                message=public_message(exc.code, exc.status_code, exc.message),
-                status_code=exc.status_code,
-                fields=[f.to_dict() for f in exc.fields],
-            )
-        except Exception as exc:
+            if not response_started:
+                response = envelope_response(
+                    code=exc.code,
+                    message=public_message(exc.code, exc.status_code, exc.message),
+                    status_code=exc.status_code,
+                    fields=[f.to_dict() for f in exc.fields],
+                )
+                await response(scope, receive, send)
+            return
+        except Exception:
             duration_ms = (time.monotonic() - start_time) * 1000
             self.logger.error(
                 "request failed",
-                exc_info=exc,
+                exc_info=True,
                 extra={
-                    "method": request.method,
-                    "path": request.url.path,
+                    "method": method,
+                    "path": path,
                     "duration_ms": round(duration_ms, 2),
                 },
             )
-            return envelope_response(
-                code="INTERNAL_ERROR",
-                message=public_message("INTERNAL_ERROR", 500, "Internal server error"),
-                status_code=500,
+            # Do not re-raise: ServerErrorMiddleware would re-raise after handling and
+            # break ASGI test clients; keep a single INTERNAL_ERROR envelope for clients.
+            if not response_started:
+                response = envelope_response(
+                    code="INTERNAL_ERROR",
+                    message=public_message("INTERNAL_ERROR", 500, "Internal server error"),
+                    status_code=500,
+                )
+                await response(scope, receive, send)
+            return
+        else:
+            duration_ms = (time.monotonic() - start_time) * 1000
+            self.logger.info(
+                "request completed",
+                extra={
+                    "method": method,
+                    "path": path,
+                    "status": status_code,
+                    "duration_ms": round(duration_ms, 2),
+                },
             )
 
 
