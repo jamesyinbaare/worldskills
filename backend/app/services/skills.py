@@ -612,31 +612,11 @@ async def download_public_skill_criteria_document(
     competition_id: uuid.UUID,
     skill_id: uuid.UUID,
 ) -> tuple[bytes, str, str]:
-    """Criteria download for open-registration competitions (no auth)."""
-    from datetime import datetime
-
-    from app.models import Competition, CompetitionStatus, RegistrationWindow
+    """Criteria download for publicly visible competitions (no auth)."""
+    from app.services import competitions as competition_service
     from app.services.storage import get_object_storage
 
-    now = datetime.utcnow()
-    open_row = (
-        await session.execute(
-            select(Competition.id)
-            .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
-            .where(
-                Competition.id == competition_id,
-                Competition.status == CompetitionStatus.ACTIVE,
-                RegistrationWindow.opens_at <= now,
-                RegistrationWindow.closes_at >= now,
-            )
-        )
-    ).scalar_one_or_none()
-    if open_row is None:
-        raise AppError(
-            "COMPETITION_NOT_FOUND",
-            "Competition not found or not open for registration",
-            status_code=404,
-        )
+    await competition_service.assert_publicly_visible(session, competition_id)
 
     skill = await _load_cycle_skill(session, competition_id, skill_id)
     if not skill.active:

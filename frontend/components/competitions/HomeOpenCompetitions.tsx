@@ -81,8 +81,8 @@ export function HomeOpenCompetitions() {
         >
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue/70">
             {skillMode
-              ? `${activeCompetition.skills.length} open · ${activeCompetition.name}`
-              : "Open now"}
+              ? `${activeCompetition.skills.length} skill ${activeCompetition.skills.length === 1 ? "area" : "areas"} · ${activeCompetition.name}`
+              : "Competitions"}
           </p>
           <h2 className="text-2xl font-bold tracking-tight text-primary sm:text-3xl lg:text-4xl">
             {skillMode ? "Choose your skill area" : "Active competitions"}
@@ -94,8 +94,10 @@ export function HomeOpenCompetitions() {
             )}
           >
             {skillMode
-              ? "Select a skill to review criteria and start registration."
-              : "Choose a competition, pick your skill area, then register as a competitor."}
+              ? activeCompetition.registrationOpen
+                ? "Select a skill to review criteria and start registration."
+                : "Select a skill to review criteria. Registration is closed."
+              : "Browse competitions and skill areas. Register when the window is open."}
           </p>
         </header>
 
@@ -135,8 +137,8 @@ export function HomeOpenCompetitions() {
             )}
           >
             <p className="text-base text-muted-foreground">
-              No competitions are open for registration right now. Check back
-              soon, or sign in if you already have an account.
+              No active competitions are available right now. Check back soon,
+              or sign in if you already have an account.
             </p>
             <div
               className={cn(
@@ -160,6 +162,7 @@ export function HomeOpenCompetitions() {
               competitionId={activeCompetition.competitionId}
               skills={activeCompetition.skills}
               footerHref={`/competitions/${activeCompetition.competitionId}/skills`}
+              registrationOpen={activeCompetition.registrationOpen !== false}
             />
           </div>
         ) : null}
@@ -177,7 +180,7 @@ export function HomeOpenCompetitions() {
         {!loading && !skillMode && cycles.length > 0 ? (
           <div className="mt-10">
             <Button variant="outline" className="min-h-11" asChild>
-              <Link href="/competitions">Browse open competitions</Link>
+              <Link href="/competitions">Browse competitions</Link>
             </Button>
           </div>
         ) : null}

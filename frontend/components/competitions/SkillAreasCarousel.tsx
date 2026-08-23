@@ -19,6 +19,7 @@ type SkillAreasCarouselProps = {
   /** Optional link under the showcase (e.g. browse-all). */
   footerHref?: string;
   footerLabel?: string;
+  registrationOpen?: boolean;
 };
 
 export const SKILL_COVER_PALETTES = [
@@ -87,6 +88,7 @@ export function SkillAreasCarousel({
   className,
   footerHref,
   footerLabel = "Browse all skill areas",
+  registrationOpen = true,
 }: SkillAreasCarouselProps) {
   if (skills.length === 0) return null;
 
@@ -98,9 +100,17 @@ export function SkillAreasCarousel({
       data-testid="skill-areas-carousel"
     >
       {useGrid ? (
-        <SkillAreasGrid competitionId={competitionId} skills={skills} />
+        <SkillAreasGrid
+          competitionId={competitionId}
+          skills={skills}
+          registrationOpen={registrationOpen}
+        />
       ) : (
-        <SkillAreasTrack competitionId={competitionId} skills={skills} />
+        <SkillAreasTrack
+          competitionId={competitionId}
+          skills={skills}
+          registrationOpen={registrationOpen}
+        />
       )}
 
       {footerHref ? (
@@ -128,9 +138,11 @@ export function SkillAreasCarousel({
 function SkillAreasGrid({
   competitionId,
   skills,
+  registrationOpen,
 }: {
   competitionId: string;
   skills: PublicSkillOut[];
+  registrationOpen: boolean;
 }) {
   const count = skills.length;
   return (
@@ -152,6 +164,7 @@ function SkillAreasGrid({
             index={index}
             focused
             size={count <= 2 ? "lg" : "md"}
+            registrationOpen={registrationOpen}
           />
         </li>
       ))}
@@ -162,9 +175,11 @@ function SkillAreasGrid({
 function SkillAreasTrack({
   competitionId,
   skills,
+  registrationOpen,
 }: {
   competitionId: string;
   skills: PublicSkillOut[];
+  registrationOpen: boolean;
 }) {
   const trackRef = useRef<HTMLUListElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -281,6 +296,7 @@ function SkillAreasTrack({
                 index={index}
                 focused={focused}
                 size="md"
+                registrationOpen={registrationOpen}
               />
             </li>
           );
@@ -363,12 +379,14 @@ function SkillShowcaseCard({
   index,
   focused,
   size,
+  registrationOpen,
 }: {
   competitionId: string;
   skill: PublicSkillOut;
   index: number;
   focused: boolean;
   size: "md" | "lg";
+  registrationOpen: boolean;
 }) {
   const href = skillDetailHref(competitionId, skill.skillId);
   const palette = skillCoverPalette(skill.skillId, index);
@@ -481,7 +499,11 @@ function SkillShowcaseCard({
         </div>
 
         <div className="mt-auto space-y-4">
-          {hasCriteria ? (
+          {registrationOpen === false ? (
+            <span className="inline-flex items-center rounded-full border border-white/20 bg-white/8 px-2.5 py-1 text-[0.7rem] font-medium text-white/75 backdrop-blur-sm">
+              Registration closed
+            </span>
+          ) : hasCriteria ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[0.7rem] font-medium text-white/90 backdrop-blur-sm">
               <FileTextIcon className="size-3.5 shrink-0" aria-hidden />
               Criteria available

@@ -61,10 +61,9 @@ export default function CompetitionRouterPage() {
         <ApiErrorAlert error={error} title="Competition unavailable" />
         {error ? (
           <Alert variant="destructive">
-            <AlertTitle>Not open for registration</AlertTitle>
+            <AlertTitle>Competition unavailable</AlertTitle>
             <AlertDescription>
-              This competition is not available for public registration right
-              now.
+              This competition is not publicly available right now.
             </AlertDescription>
           </Alert>
         ) : null}

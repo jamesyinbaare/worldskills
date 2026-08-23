@@ -61,6 +61,7 @@ class OpenCompetitionOut(BaseModel):
     status: str
     description: str | None = None
     window: dict[str, str] | None = None
+    registrationOpen: bool = False
 
 
 class PublicSkillOut(BaseModel):
@@ -81,6 +82,7 @@ class PublicCompetitionOut(BaseModel):
     period: PeriodIn
     timeZone: str
     window: dict[str, str] | None = None
+    registrationOpen: bool = False
     hasGeneralCriteriaDocument: bool = False
     generalCriteriaFileName: str | None = None
     skills: list[PublicSkillOut] = Field(default_factory=list)
@@ -115,7 +117,22 @@ class CloneOut(BaseModel):
 
 
 class CompetitionUpdateStructural(BaseModel):
-    """Direct structural competition edit (e.g. rename)."""
+    """Direct structural competition edit (name, period, timezone)."""
 
     name: str | None = Field(default=None, min_length=3, max_length=120)
+    period: PeriodIn | None = None
+    timeZone: str | None = None
+
+    @field_validator("timeZone")
+    @classmethod
+    def validate_timezone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, KeyError) as exc:
+            raise ValueError("INVALID_TIMEZONE") from exc
+        return v
 

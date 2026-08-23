@@ -1440,6 +1440,7 @@ export type OpenCompetitionOut = {
   status: string;
   description?: string | null;
   window?: { opensAt: string; closesAt: string } | null;
+  registrationOpen?: boolean;
 };
 
 export type PublicSkillOut = {
@@ -1460,6 +1461,7 @@ export type PublicCompetitionOut = {
   period: { start: string; end: string };
   timeZone: string;
   window?: { opensAt: string; closesAt: string } | null;
+  registrationOpen?: boolean;
   hasGeneralCriteriaDocument?: boolean;
   generalCriteriaFileName?: string | null;
   skills: PublicSkillOut[];
@@ -1706,6 +1708,20 @@ export async function updateCompetitionPublicProfile(
   payload: { description: string | null },
 ): Promise<CompetitionOut> {
   return apiFetch<CompetitionOut>(`/competitions/${competitionId}/public-profile`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCompetitionStructural(
+  competitionId: string,
+  payload: {
+    name?: string;
+    period?: { start: string; end: string };
+    timeZone?: string;
+  },
+): Promise<CompetitionOut> {
+  return apiFetch<CompetitionOut>(`/competitions/${competitionId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

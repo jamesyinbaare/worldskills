@@ -161,7 +161,7 @@ export default function NewCompetitionPage() {
                 value={description}
                 maxLength={20000}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional public description shown when registration is open."
+                placeholder="Optional public description shown while the competition is active."
               />
             </div>
             <ApiErrorAlert error={error} />

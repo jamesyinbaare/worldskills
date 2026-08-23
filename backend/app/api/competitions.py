@@ -48,7 +48,7 @@ def _cycle_out(cycle) -> CompetitionOut:
 async def list_open_for_registration(
     session: DBSessionDep,
 ) -> list[OpenCompetitionOut]:
-    """Public list of ACTIVE cycles with an open registration window."""
+    """Public list of ACTIVE cycles still within their competition period."""
     items = await competition_service.list_open_for_registration(session)
     return [OpenCompetitionOut(**item) for item in items]
 
@@ -95,7 +95,7 @@ async def create_competition(
 
 @router.get("/{competition_id}/public", response_model=PublicCompetitionOut)
 async def get_public_competition(competition_id: uuid.UUID, session: DBSessionDep) -> PublicCompetitionOut:
-    """Public competition about page — only when registration is open."""
+    """Public competition about page — ACTIVE cycles within their competition period."""
     item = await competition_service.get_public_competition(session, competition_id)
     return PublicCompetitionOut(**item)
 
@@ -106,7 +106,7 @@ async def download_public_skill_criteria_document(
     skill_id: uuid.UUID,
     session: DBSessionDep,
 ) -> Response:
-    """Public criteria download while registration is open (no auth)."""
+    """Public criteria download while the competition is publicly visible (no auth)."""
     data, filename, content_type = (
         await skill_service.download_public_skill_criteria_document(
             session, competition_id, skill_id
@@ -124,7 +124,7 @@ async def download_public_general_criteria_document(
     competition_id: uuid.UUID,
     session: DBSessionDep,
 ) -> Response:
-    """Public general criteria download while registration is open (no auth)."""
+    """Public general criteria download while the competition is publicly visible (no auth)."""
     data, filename, content_type = (
         await competition_service.download_public_general_criteria_document(
             session, competition_id
@@ -281,6 +281,12 @@ async def update_cycle(
     admin: AdminUserDep,
 ) -> CompetitionOut:
     cycle = await competition_service.update_competition_structural(
-        session, competition_id, name=payload.name, actor=admin
+        session,
+        competition_id,
+        name=payload.name,
+        period_start=payload.period.start if payload.period else None,
+        period_end=payload.period.end if payload.period else None,
+        time_zone=payload.timeZone,
+        actor=admin,
     )
     return _cycle_out(cycle)

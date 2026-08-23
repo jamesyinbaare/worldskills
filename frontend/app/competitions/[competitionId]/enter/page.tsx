@@ -141,6 +141,16 @@ function EnterContent() {
       router.replace(`/competitions/${competitionId}/skills`);
       return;
     }
+    if (cycle.registrationOpen === false && !alreadyRegistered) {
+      if (effectiveSkillId) {
+        router.replace(
+          `/competitions/${competitionId}/skills/${encodeURIComponent(effectiveSkillId)}`,
+        );
+      } else {
+        router.replace(`/competitions/${competitionId}/skills`);
+      }
+      return;
+    }
     router.replace(destination);
   }, [
     loading,
@@ -148,6 +158,7 @@ function EnterContent() {
     cycle,
     status,
     checkedRegistration,
+    alreadyRegistered,
     effectiveSkillId,
     competitionId,
     destination,
@@ -185,10 +196,9 @@ function EnterContent() {
 
         {error && !cycle ? (
           <Alert variant="destructive" className="mt-6">
-            <AlertTitle>Not open for registration</AlertTitle>
+            <AlertTitle>Competition unavailable</AlertTitle>
             <AlertDescription>
-              This competition is not available for public registration right
-              now.
+              This competition is not publicly available right now.
             </AlertDescription>
           </Alert>
         ) : null}

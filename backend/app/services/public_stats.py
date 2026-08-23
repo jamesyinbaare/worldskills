@@ -13,7 +13,6 @@ from app.models import (
     Competition,
     CompetitionStatus,
     ExpertAssignment,
-    RegistrationWindow,
     Skill,
     User,
 )
@@ -44,15 +43,14 @@ STATS_RATE_LIMIT_PER_MINUTE = 120
 async def _open_competitions(
     session: AsyncSession,
 ) -> list[tuple[uuid.UUID, str]]:
-    """ACTIVE cycles whose registration window is currently open."""
-    now = datetime.utcnow()
+    """ACTIVE cycles still within their competition period (public stats scope)."""
+    from datetime import date
+
     result = await session.execute(
         select(Competition.id, Competition.name)
-        .join(RegistrationWindow, RegistrationWindow.competition_id == Competition.id)
         .where(
             Competition.status == CompetitionStatus.ACTIVE,
-            RegistrationWindow.opens_at <= now,
-            RegistrationWindow.closes_at >= now,
+            Competition.period_end >= date.today(),
         )
         .order_by(Competition.name)
     )

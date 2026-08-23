@@ -4,14 +4,19 @@ import Link from "next/link";
 import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ChevronRightIcon } from "lucide-react";
-import { ApiError, CompetitionOut, ValidateOut, apiFetch, deleteGeneralCriteriaDocument, downloadGeneralCriteriaDocument, triggerBrowserDownload, updateCompetitionPublicProfile, uploadGeneralCriteriaDocument } from "@/lib/api";
+import { ApiError, CompetitionOut, ValidateOut, apiFetch, deleteGeneralCriteriaDocument, downloadGeneralCriteriaDocument, triggerBrowserDownload, updateCompetitionPublicProfile, updateCompetitionStructural, uploadGeneralCriteriaDocument } from "@/lib/api";
 import { RegistrationConfigCard } from "@/components/admin/RegistrationConfigCard";
-import { ApiErrorAlert } from "@/components/forms/ApiErrorAlert";
+import {
+  ApiErrorAlert,
+  FieldMessage,
+  fieldErrorMap,
+} from "@/components/forms/ApiErrorAlert";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
 import { StatusBadge } from "@/components/layout/StatusBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -71,6 +76,139 @@ function CycleMetaLine({
       >
         {copied ? "Copied" : "Copy ID"}
       </Button>
+    </div>
+  );
+}
+
+function PeriodConfigPanel({
+  competitionId,
+  cycle,
+  onSaved,
+}: {
+  competitionId: string;
+  cycle: CompetitionOut;
+  onSaved: (cycle: CompetitionOut) => void;
+}) {
+  const [start, setStart] = useState(cycle.period?.start ?? "");
+  const [end, setEnd] = useState(cycle.period?.end ?? "");
+  const [timeZone, setTimeZone] = useState(cycle.timeZone ?? "Africa/Accra");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStart(cycle.period?.start ?? "");
+    setEnd(cycle.period?.end ?? "");
+    setTimeZone(cycle.timeZone ?? "Africa/Accra");
+  }, [cycle.period?.start, cycle.period?.end, cycle.timeZone]);
+
+  async function onSave(e: FormEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    setFieldErrors({});
+    setMessage(null);
+    try {
+      const updated = await updateCompetitionStructural(competitionId, {
+        period: { start, end },
+        timeZone,
+      });
+      onSaved(updated);
+      setMessage("Competition period saved.");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err);
+        setFieldErrors(fieldErrorMap(err.fields));
+      } else {
+        setError(
+          new ApiError(0, {
+            error: {
+              code: "HTTP_ERROR",
+              message: "Could not save competition period",
+              fields: [],
+              traceId: "",
+            },
+          }),
+        );
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="admin-panel space-y-5 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:p-7">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+          Competition period
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Calendar span of the competition. The public site shows this
+          competition and its skill areas until the period ends, even after
+          registration closes.
+        </p>
+      </div>
+      <form onSubmit={onSave} className="space-y-4" noValidate>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="period-start">Period start</Label>
+            <Input
+              id="period-start"
+              type="date"
+              required
+              className="min-h-11"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              aria-invalid={Boolean(fieldErrors["period.start"])}
+              data-testid="competition-period-start"
+            />
+            <FieldMessage message={fieldErrors["period.start"]} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="period-end">Period end</Label>
+            <Input
+              id="period-end"
+              type="date"
+              required
+              className="min-h-11"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              aria-invalid={Boolean(fieldErrors["period.end"])}
+              data-testid="competition-period-end"
+            />
+            <FieldMessage message={fieldErrors["period.end"]} />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="time-zone">Time zone</Label>
+          <Input
+            id="time-zone"
+            required
+            className="min-h-11"
+            value={timeZone}
+            onChange={(e) => setTimeZone(e.target.value)}
+            placeholder="Africa/Accra"
+            aria-invalid={Boolean(fieldErrors.timeZone)}
+            data-testid="competition-time-zone"
+          />
+          <FieldMessage message={fieldErrors.timeZone} />
+        </div>
+        <ApiErrorAlert error={error} title="Could not save" />
+        {message ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            {message}
+          </p>
+        ) : null}
+        <Button
+          type="submit"
+          disabled={pending}
+          className="min-h-11"
+          data-testid="competition-period-save"
+        >
+          {pending ? "Saving…" : "Save competition period"}
+        </Button>
+      </form>
     </div>
   );
 }
@@ -663,6 +801,12 @@ function CompetitionWorkspacePageInner() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-5 outline-none">
+          <PeriodConfigPanel
+            competitionId={competitionId}
+            cycle={cycle}
+            onSaved={setCycle}
+          />
+
           <div className="admin-panel space-y-5 overflow-hidden rounded-[1.5rem] bg-card p-5 shadow-sm ring-1 ring-foreground/5 sm:p-7">
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-foreground">
