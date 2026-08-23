@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
@@ -48,6 +49,8 @@ from app.core.errors import (
     AppError,
     app_error_handler,
     envelope_response,
+    http_exception_handler,
+    public_message,
     unhandled_error_handler,
     validation_error_handler,
 )
@@ -120,6 +123,7 @@ app = FastAPI(title="Skills Competition Management System", lifespan=lifespan)
 
 app.add_exception_handler(AppError, app_error_handler)  # type: ignore[arg-type]
 app.add_exception_handler(RequestValidationError, validation_error_handler)  # type: ignore[arg-type]
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
 app.add_exception_handler(Exception, unhandled_error_handler)
 
 
@@ -154,12 +158,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     "method": request.method,
                     "path": request.url.path,
                     "code": exc.code,
+                    "detail": exc.message,
                     "duration_ms": round(duration_ms, 2),
                 },
             )
             return envelope_response(
                 code=exc.code,
-                message=exc.message,
+                message=public_message(exc.code, exc.status_code, exc.message),
                 status_code=exc.status_code,
                 fields=[f.to_dict() for f in exc.fields],
             )
@@ -174,11 +179,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     "duration_ms": round(duration_ms, 2),
                 },
             )
-            if logging_settings.ENV == "dev":
-                raise
             return envelope_response(
                 code="INTERNAL_ERROR",
-                message="Internal server error",
+                message=public_message("INTERNAL_ERROR", 500, "Internal server error"),
                 status_code=500,
             )
 
@@ -241,10 +244,13 @@ async def ready() -> dict[str, str]:
         manager = get_sessionmanager()
         async with manager.session() as session:
             await session.execute(text("SELECT 1"))
+    except AppError:
+        raise
     except Exception as exc:
-        raise HTTPException(
+        raise AppError(
+            "SERVICE_UNAVAILABLE",
+            "database unavailable",
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="database unavailable",
         ) from exc
     return {"status": "ready"}
 

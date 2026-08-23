@@ -183,7 +183,7 @@ async def create_consent_request(
         raise AppError(
             "GUARDIAN_REQUIRED",
             "Guardian identity and contact are required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("guardianName", "GUARDIAN_REQUIRED")],
         )
 
@@ -237,7 +237,7 @@ async def grant_consent(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             "At least one consent scope is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
     unknown = [s for s in scopes if s not in _VALID_SCOPES]
@@ -245,7 +245,7 @@ async def grant_consent(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             f"Unknown scopes: {', '.join(unknown)}",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
 
@@ -273,7 +273,7 @@ async def grant_consent(
             raise AppError(
                 "CONSENT_SCOPE_MISSING",
                 "Participation consent is required before or with public-display consent",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
             )
         competitor.consent_public_at = now
@@ -375,7 +375,7 @@ def _normalize_scopes(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             "At least one consent scope is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
     unknown = [s for s in normalized if s not in _VALID_SCOPES]
@@ -383,7 +383,7 @@ def _normalize_scopes(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             f"Unknown scopes: {', '.join(unknown)}",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
     if (
@@ -394,7 +394,7 @@ def _normalize_scopes(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             "Participation consent is required before or with public-display consent",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
     return normalized
@@ -422,7 +422,7 @@ def _apply_scopes(
             raise AppError(
                 "CONSENT_SCOPE_MISSING",
                 "Participation consent is required before or with public-display consent",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
             )
         competitor.consent_public_at = now
@@ -552,7 +552,7 @@ async def upload_signed_consent_form(
         raise AppError(
             "CONSENT_SCOPE_MISSING",
             "Participation scope is required when uploading a signed consent form",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("scopes", "CONSENT_SCOPE_MISSING")],
         )
 
@@ -563,14 +563,14 @@ async def upload_signed_consent_form(
             raise AppError(
                 "INVALID_FILE_TYPE",
                 "Signed consent form must be a PDF",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("file", "INVALID_FILE_TYPE")],
             )
     if not data.startswith(_PDF_MAGIC):
         raise AppError(
             "INVALID_FILE_TYPE",
             "Signed consent form must be a PDF",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("file", "INVALID_FILE_TYPE")],
         )
 
@@ -695,14 +695,14 @@ async def verify_consent_form(
         raise AppError(
             "VALIDATION_ERROR",
             "outcome must be VERIFIED or REJECTED",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("outcome", "INVALID")],
         )
     if outcome == "REJECTED" and not (payload.reason or "").strip():
         raise AppError(
             "REASON_REQUIRED",
             "Reason is required when rejecting a consent form",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
 

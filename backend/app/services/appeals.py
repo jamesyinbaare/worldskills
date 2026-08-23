@@ -177,7 +177,7 @@ async def lodge_appeal(
         raise AppError(
             "REASON_REQUIRED",
             "Appeal reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
     reason = str(reason).strip()
@@ -518,7 +518,7 @@ async def rule_appeal(
         raise AppError(
             "REASON_REQUIRED",
             "Ruling reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
     reason = str(reason).strip()
@@ -606,7 +606,7 @@ async def disqualify_competitor(
         raise AppError(
             "REASON_REQUIRED",
             "Disqualification reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
     reason = str(reason).strip()
@@ -621,7 +621,7 @@ async def disqualify_competitor(
         raise AppError(
             "INVALID_DQ_REASON",
             "Disqualification reason is not in the configured set",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "INVALID_DQ_REASON")],
         )
     reason = reason.upper()

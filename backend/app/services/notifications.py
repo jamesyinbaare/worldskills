@@ -119,7 +119,7 @@ async def emit(
         raise AppError(
             "NO_CONTACT_CHANNEL",
             "Recipient has no notification preferences / channels",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("recipientId", "NO_CONTACT_CHANNEL")],
         )
 
@@ -190,7 +190,7 @@ async def emit(
         raise AppError(
             "NO_CONTACT_CHANNEL",
             "Recipient has no valid contact on preferred/fallback channels",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("recipientId", "NO_CONTACT_CHANNEL")],
         )
 

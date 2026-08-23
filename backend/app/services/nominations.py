@@ -98,14 +98,14 @@ async def create_nomination(
         raise AppError(
             "SKILL_INACTIVE",
             "Skill not found in this competition",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillId", "SKILL_INACTIVE")],
         )
     if not skill.active:
         raise AppError(
             "SKILL_INACTIVE",
             "Skill is inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillId", "SKILL_INACTIVE")],
         )
 
@@ -137,7 +137,7 @@ async def create_nomination(
         raise AppError(
             "SKILL_INACTIVE",
             "Skill not found in this competition",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillId", "SKILL_INACTIVE")],
         )
     if skill_locked.school_quota is None:
@@ -301,7 +301,7 @@ async def reject_nomination(
         raise AppError(
             "REASON_REQUIRED",
             "Rejection reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
 

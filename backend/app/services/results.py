@@ -297,7 +297,7 @@ async def _template_for(
         raise AppError(
             "TEMPLATE_MISSING",
             f"Certificate template missing for outcome {outcome}",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("certificateTemplate", "TEMPLATE_MISSING")],
         )
     return tmpl

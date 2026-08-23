@@ -257,7 +257,7 @@ async def patch_catalog_skill(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Family is required",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("familyId", "REQUIRED")],
             )
         family = await _require_active_family(session, data["familyId"])

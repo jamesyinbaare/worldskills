@@ -161,14 +161,14 @@ async def create_session(
         raise AppError(
             "INVALID_WINDOW",
             "Session endsAt must be after startsAt",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("endsAt", "INVALID_WINDOW")],
         )
     if workstations < 1:
         raise AppError(
             "INVALID_WORKSTATIONS",
             "workstations must be >= 1",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("workstations", "INVALID_WORKSTATIONS")],
         )
     if workstations > venue.capacity:
@@ -230,7 +230,7 @@ async def assign_slot(
         raise AppError(
             "INVALID_WORKSTATION",
             "Workstation is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("workstation", "INVALID_WORKSTATION")],
         )
 
@@ -441,7 +441,7 @@ async def record_incident(
         raise AppError(
             "REASON_REQUIRED",
             "Incident summary is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("summary", "REASON_REQUIRED")],
         )
     summary = str(summary).strip()

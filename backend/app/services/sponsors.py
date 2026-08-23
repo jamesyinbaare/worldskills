@@ -108,7 +108,7 @@ async def _resolve_active_catalog_skills(
         raise AppError(
             "CATALOG_SKILL_INVALID",
             "One or more catalog skill areas are invalid or inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("catalogSkillIds", "INVALID")],
         )
     # Preserve request order

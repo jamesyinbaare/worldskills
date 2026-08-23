@@ -231,7 +231,7 @@ async def withdraw_competitor(
         raise AppError(
             "REASON_REQUIRED",
             "Withdrawal reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
     reason = str(reason).strip()

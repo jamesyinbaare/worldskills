@@ -622,7 +622,7 @@ async def send_skill_broadcast_sms(
         raise AppError(
             "VALIDATION_ERROR",
             "recipients must be competitors, coaches, or both",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("recipients", "INVALID")],
         )
 

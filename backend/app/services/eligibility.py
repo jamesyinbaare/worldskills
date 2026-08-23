@@ -39,7 +39,7 @@ async def screen_competitor(
         raise AppError(
             "VALIDATION_ERROR",
             "Competitor date of birth is required for screening",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("dateOfBirth", "REQUIRED")],
         )
 
@@ -154,7 +154,7 @@ async def override_eligibility(
         raise AppError(
             "REASON_REQUIRED",
             "Override reason is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("reason", "REASON_REQUIRED")],
         )
 

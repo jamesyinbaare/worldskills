@@ -2,24 +2,42 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import uuid
+import warnings
 
 import pytest
+from fastapi import HTTPException, status
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import StarletteDeprecationWarning
+from starlette.requests import Request
 
-from app.core.errors import AppError, error_envelope
+from app.core.errors import (
+    AppError,
+    app_error_handler,
+    error_envelope,
+    http_exception_handler,
+    public_message,
+    unhandled_error_handler,
+)
 from app.core.rbac import (
     Capability,
     check_conflict_of_interest,
     check_segregation_of_duties,
     has_capability,
 )
+from app.main import app
 from app.models import Competition, CompetitionStatus, User, UserRole
 from app.services.audit import verify_audit_signature, write_audit_event
 from app.services.config_resolution import ConfigIncompleteError, load_competition_config
 from app.services.storage import InfectedScanner, LocalObjectStorage, ScanResult
 from pytest_tests.conftest import competition_payload
+
+
+def _dummy_request() -> Request:
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": []})
 
 
 @pytest.mark.asyncio
@@ -37,7 +55,137 @@ async def test_unauthenticated_uses_envelope(client: AsyncClient) -> None:
     assert resp.status_code == 401
     data = resp.json()
     assert data["error"]["code"] == "UNAUTHORIZED"
+    assert data["error"]["message"] == "Please sign in again."
     assert "traceId" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_http_exception_uses_envelope() -> None:
+    response = await http_exception_handler(
+        _dummy_request(),
+        HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unavailable"),
+    )
+    assert response.status_code == 503
+    body = json.loads(response.body)
+    assert "detail" not in body
+    assert body["error"]["code"] == "SERVICE_UNAVAILABLE"
+    assert "database" not in body["error"]["message"].lower()
+    assert "temporarily unavailable" in body["error"]["message"].lower()
+    assert "traceId" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_storage_misconfigured_message_is_humanized(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="app"):
+        response = await app_error_handler(
+            _dummy_request(),
+            AppError(
+                "STORAGE_MISCONFIGURED",
+                "GCS bucket not configured (set GCS_BUCKET_NAME)",
+                status_code=500,
+            ),
+        )
+    body = json.loads(response.body)
+    assert body["error"]["code"] == "STORAGE_MISCONFIGURED"
+    assert "GCS" not in body["error"]["message"]
+    assert "bucket" not in body["error"]["message"].lower()
+    assert "Something went wrong" in body["error"]["message"]
+    assert "GCS bucket not configured" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_forbidden_capability_message_is_humanized() -> None:
+    response = await app_error_handler(
+        _dummy_request(),
+        AppError("FORBIDDEN", "Missing capability: CONFIGURE_CYCLE", status_code=403),
+    )
+    body = json.loads(response.body)
+    assert body["error"]["code"] == "FORBIDDEN"
+    assert "capability" not in body["error"]["message"].lower()
+    assert body["error"]["message"] == public_message("FORBIDDEN", 403, "x")
+
+
+@pytest.mark.asyncio
+async def test_http_exception_route_uses_envelope(client: AsyncClient) -> None:
+    path = f"/__test_http_exc_{uuid.uuid4().hex[:8]}"
+
+    @app.get(path)
+    async def _raise_http_exc() -> None:
+        raise HTTPException(status_code=404, detail="missing thing")
+
+    try:
+        resp = await client.get(path)
+        assert resp.status_code == 404
+        data = resp.json()
+        assert "detail" not in data
+        assert data["error"]["code"] == "NOT_FOUND"
+        assert data["error"]["message"] == "We could not find what you were looking for."
+        assert "traceId" in data["error"]
+    finally:
+        app.router.routes[:] = [
+            r for r in app.router.routes if getattr(r, "path", None) != path
+        ]
+
+
+@pytest.mark.asyncio
+async def test_unhandled_error_logs_and_envelopes(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="app"):
+        response = await unhandled_error_handler(_dummy_request(), RuntimeError("boom"))
+    assert response.status_code == 500
+    body = json.loads(response.body)
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    assert "boom" not in body["error"]["message"]
+    assert "Something went wrong" in body["error"]["message"]
+    assert "unhandled error" in caplog.text
+    assert "boom" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unhandled_route_uses_envelope(
+    client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = f"/__test_boom_{uuid.uuid4().hex[:8]}"
+
+    @app.get(path)
+    async def _boom() -> None:
+        raise RuntimeError("intentional boom")
+
+    try:
+        with caplog.at_level(logging.ERROR):
+            resp = await client.get(path)
+        assert resp.status_code == 500
+        data = resp.json()
+        assert data["error"]["code"] == "INTERNAL_ERROR"
+        assert "traceId" in data["error"]
+        # BaseHTTPMiddleware logs the failure; handler also logs when it runs.
+        assert "intentional boom" in caplog.text
+    finally:
+        app.router.routes[:] = [
+            r for r in app.router.routes if getattr(r, "path", None) != path
+        ]
+
+
+def test_app_error_422_uses_content_constant_without_deprecation() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", StarletteDeprecationWarning)
+        err = AppError(
+            "FILE_TYPE",
+            "bad type",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+    assert err.status_code == 422
+    assert not any(issubclass(w.category, StarletteDeprecationWarning) for w in caught)
+
+
+@pytest.mark.asyncio
+async def test_validation_error_uses_envelope(client: AsyncClient) -> None:
+    resp = await client.post("/auth/login", json={})
+    assert resp.status_code == 422
+    data = resp.json()
+    assert "detail" not in data
+    assert data["error"]["code"] == "VALIDATION_ERROR"
+    assert "traceId" in data["error"]
+    assert isinstance(data["error"]["fields"], list)
 
 
 @pytest.mark.asyncio

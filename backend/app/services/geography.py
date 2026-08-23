@@ -59,7 +59,7 @@ async def create_competition_zone(
         raise AppError(
             "VALIDATION_ERROR",
             "Zone name is required",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("name", "REQUIRED")],
         )
 
@@ -119,7 +119,7 @@ async def patch_cycle_zone(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Zone name is required",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("name", "REQUIRED")],
             )
         dup = await session.execute(
@@ -188,7 +188,7 @@ async def put_region_zone_map(
             raise AppError(
                 "DUPLICATE",
                 "Each region may appear only once in the map",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("mappings", "DUPLICATE")],
             )
         seen_regions.add(item.regionId)
@@ -198,7 +198,7 @@ async def put_region_zone_map(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Invalid region",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("regionId", "INVALID")],
             )
         zone = await session.get(Zone, item.zoneId)
@@ -261,7 +261,7 @@ async def resolve_zone_for_registration(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Invalid institution",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("institutionId", "REQUIRED")],
             )
 
@@ -272,7 +272,7 @@ async def resolve_zone_for_registration(
         raise AppError(
             "REGION_REQUIRED",
             "A region is required to derive the competitor zone",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("regionId", "REGION_REQUIRED")],
         )
 
@@ -281,7 +281,7 @@ async def resolve_zone_for_registration(
         raise AppError(
             "VALIDATION_ERROR",
             "Invalid region",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("regionId", "INVALID")],
         )
 

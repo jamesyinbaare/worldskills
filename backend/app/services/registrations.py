@@ -533,7 +533,7 @@ def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]
         raise AppError(
             "VALIDATION_ERROR",
             "Coach / team leader details are incomplete or invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=fields,
         ) from exc
 
@@ -541,14 +541,14 @@ def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]
         raise AppError(
             "VALIDATION_ERROR",
             "Coach date of birth is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("coach.dateOfBirth", "INVALID_DATE")],
         )
     if not is_valid_ghana_phone(coach.contactNumber):
         raise AppError(
             "VALIDATION_ERROR",
             "Coach contact number is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("coach.contactNumber", "PHONE_INVALID")],
         )
     whatsapp = coach.resolved_whatsapp()
@@ -556,14 +556,14 @@ def _validate_and_normalize_coach(payload: RegistrationCreate) -> dict[str, Any]
         raise AppError(
             "VALIDATION_ERROR",
             "Coach WhatsApp number is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("coach.contactNumber", "PHONE_INVALID")],
         )
     if not _EMAIL_RE.match(coach.email):
         raise AppError(
             "VALIDATION_ERROR",
             "Coach email is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("coach.email", "EMAIL_INVALID")],
         )
     data = coach.model_dump(mode="json")
@@ -579,7 +579,7 @@ def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreat
             raise AppError(
                 "PHOTO_INVALID",
                 "Photo is required",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("photo", "PHOTO_INVALID")],
             )
         return None
@@ -590,7 +590,7 @@ def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreat
         raise AppError(
             "PHOTO_INVALID",
             f"Accepted formats: {', '.join(formats)}; max {form.photo_max_mb}MB",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("photo", "PHOTO_INVALID")],
         )
     try:
@@ -599,7 +599,7 @@ def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreat
         raise AppError(
             "PHOTO_INVALID",
             f"Accepted formats: {', '.join(formats)}; max {form.photo_max_mb}MB",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("photo", "PHOTO_INVALID")],
         ) from exc
 
@@ -608,7 +608,7 @@ def _validate_photo(form: RegistrationFormDefinition, payload: RegistrationCreat
         raise AppError(
             "PHOTO_INVALID",
             f"Accepted formats: {', '.join(formats)}; max {form.photo_max_mb}MB",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("photo", "PHOTO_INVALID")],
         )
     # Minimal EXIF strip stub: JPEG APP1 segment removal is best-effort; store raw for MVP.
@@ -632,7 +632,7 @@ async def _enforce_institution_nomination_quota(
         raise AppError(
             "SKILL_SELECTION_INVALID",
             "Selected skill is invalid",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillIds", "SKILL_SELECTION_INVALID")],
         )
     if skill.school_quota is None:
@@ -1130,7 +1130,7 @@ def _validate_photo_optional(form: RegistrationFormDefinition, photo) -> tuple[b
             raise AppError(
                 "PHOTO_INVALID",
                 "Photo is invalid",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("photo", "PHOTO_INVALID")],
             )
         return result
@@ -1283,7 +1283,7 @@ async def create_registration(
         raise AppError(
             "VALIDATION_ERROR",
             "Registration validation failed",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=field_errors,
         )
 
@@ -1291,7 +1291,7 @@ async def create_registration(
         raise AppError(
             "SKILL_SELECTION_INVALID",
             f"Exactly {form.max_skills} skill(s) must be selected",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillIds", "SKILL_SELECTION_INVALID")],
         )
 
@@ -1301,7 +1301,7 @@ async def create_registration(
         raise AppError(
             "SKILL_SELECTION_INVALID",
             "Selected skill is invalid or inactive",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("skillIds", "SKILL_SELECTION_INVALID")],
         )
 
@@ -1318,7 +1318,7 @@ async def create_registration(
         raise AppError(
             "VALIDATION_ERROR",
             "zoneId must not be supplied; zone is derived from region",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("zoneId", "NOT_ACCEPTED")],
         )
 
@@ -1335,7 +1335,7 @@ async def create_registration(
             raise AppError(
                 "VALIDATION_ERROR",
                 "Invalid institution",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[FieldError("institutionId", "REQUIRED")],
             )
 
@@ -1728,7 +1728,7 @@ async def upsert_registration_window(
         raise AppError(
             "VALIDATION_ERROR",
             "closesAt must be after opensAt",
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             fields=[FieldError("closesAt", "BEFORE_OPENS")],
         )
     window = (
